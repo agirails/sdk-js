@@ -1,0 +1,134 @@
+[
+  {
+    "inputs": [
+      {"name": "provider", "type": "address"},
+      {"name": "requester", "type": "address"},
+      {"name": "amount", "type": "uint256"},
+      {"name": "deadline", "type": "uint256"},
+      {"name": "disputeWindow", "type": "uint256"},
+      {"name": "serviceHash", "type": "bytes32"}
+    ],
+    "name": "createTransaction",
+    "outputs": [{"name": "transactionId", "type": "bytes32"}],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {"name": "transactionId", "type": "bytes32"},
+      {"name": "newState", "type": "uint8"},
+      {"name": "proof", "type": "bytes"}
+    ],
+    "name": "transitionState",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {"name": "transactionId", "type": "bytes32"},
+      {"name": "escrowContract", "type": "address"},
+      {"name": "escrowId", "type": "bytes32"}
+    ],
+    "name": "linkEscrow",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {"name": "transactionId", "type": "bytes32"},
+      {"name": "milestoneId", "type": "uint8"},
+      {"name": "amount", "type": "uint256"}
+    ],
+    "name": "releaseMilestone",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {"name": "transactionId", "type": "bytes32"}
+    ],
+    "name": "releaseEscrow",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {"name": "transactionId", "type": "bytes32"}
+    ],
+    "name": "transactions",
+    "outputs": [
+      {"name": "transactionId", "type": "bytes32"},
+      {"name": "requester", "type": "address"},
+      {"name": "provider", "type": "address"},
+      {"name": "state", "type": "uint8"},
+      {"name": "amount", "type": "uint256"},
+      {"name": "createdAt", "type": "uint256"},
+      {"name": "updatedAt", "type": "uint256"},
+      {"name": "deadline", "type": "uint256"},
+      {"name": "serviceHash", "type": "bytes32"},
+      {"name": "escrowContract", "type": "address"},
+      {"name": "escrowId", "type": "bytes32"},
+      {"name": "attestationUID", "type": "bytes32"},
+      {"name": "disputeWindow", "type": "uint256"}
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "getEconomicParams",
+    "outputs": [
+      {"name": "platformFeeBps", "type": "uint16"},
+      {"name": "requesterPenaltyBps", "type": "uint16"},
+      {"name": "feeRecipient", "type": "address"}
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {"indexed": true, "name": "transactionId", "type": "bytes32"},
+      {"indexed": true, "name": "provider", "type": "address"},
+      {"indexed": true, "name": "requester", "type": "address"},
+      {"indexed": false, "name": "amount", "type": "uint256"}
+    ],
+    "name": "TransactionCreated",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {"indexed": true, "name": "transactionId", "type": "bytes32"},
+      {"indexed": false, "name": "from", "type": "uint8"},
+      {"indexed": false, "name": "to", "type": "uint8"}
+    ],
+    "name": "StateTransitioned",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {"indexed": true, "name": "transactionId", "type": "bytes32"},
+      {"indexed": false, "name": "escrowContract", "type": "address"},
+      {"indexed": false, "name": "escrowId", "type": "bytes32"}
+    ],
+    "name": "EscrowLinked",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {"indexed": true, "name": "transactionId", "type": "bytes32"},
+      {"indexed": false, "name": "amount", "type": "uint256"}
+    ],
+    "name": "EscrowReleased",
+    "type": "event"
+  }
+]
+
+
