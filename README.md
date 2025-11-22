@@ -73,24 +73,54 @@ npm install
 # Build
 npm run build
 
-# Test
+# Unit tests (Jest - fast, no network)
 npm test
+
+# Integration tests (Hardhat - requires Base Sepolia RPC)
+npm run test:integration
 
 # Lint
 npm run lint
 ```
 
+### Integration Testing
+
+Integration tests run against **deployed contracts** on Base Sepolia testnet:
+
+**Prerequisites:**
+1. Create `.env` file:
+   ```bash
+   BASE_SEPOLIA_RPC=https://sepolia.base.org  # or your Alchemy URL
+   PRIVATE_KEY=0x...  # Account with Base Sepolia ETH for gas
+   ```
+
+2. Get testnet ETH:
+   - [Base Sepolia Faucet](https://www.coinbase.com/faucets/base-ethereum-goerli-faucet)
+
+**Run tests:**
+```bash
+npx hardhat test --network base-sepolia
+```
+
+Tests will:
+- ✅ Connect to deployed ACTPKernel, EscrowVault, MockUSDC
+- ✅ Mint test USDC (MockUSDC has open minting on testnet)
+- ✅ Run full transaction lifecycle (INITIATED → SETTLED)
+- ✅ Verify escrow release and fund transfers
+
 ## Contract Addresses
 
-### Base Sepolia
-- **ACTPKernel:** `0x...` *(after deployment)*
-- **EscrowVault:** `0x...` *(after deployment)*
-- **MockUSDC:** `0x...` *(after deployment)*
+### Base Sepolia (Testnet) ✅ Deployed & Verified
+- **ACTPKernel:** `0xb5B002A73743765450d427e2F8a472C24FDABF9b` ([view](https://sepolia.basescan.org/address/0xb5B002A73743765450d427e2F8a472C24FDABF9b#code))
+- **EscrowVault:** `0x67770791c83eA8e46D8a08E09682488ba584744f` ([view](https://sepolia.basescan.org/address/0x67770791c83eA8e46D8a08E09682488ba584744f#code))
+- **MockUSDC:** `0x444b4e1A65949AB2ac75979D5d0166Eb7A248Ccb` ([view](https://sepolia.basescan.org/address/0x444b4e1A65949AB2ac75979D5d0166Eb7A248Ccb#code))
 
-### Base Mainnet
-- **ACTPKernel:** TBD
-- **EscrowVault:** TBD
-- **USDC:** `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`
+*Deployed: 2025-01-22 | Verified on Basescan | All smoke tests passed (5/5)*
+
+### Base Mainnet (Production)
+- **ACTPKernel:** TBD *(pending mainnet deployment)*
+- **EscrowVault:** TBD *(pending mainnet deployment)*
+- **USDC:** `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` (official USDC on Base)
 
 ## License
 

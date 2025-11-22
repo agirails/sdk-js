@@ -1,16 +1,28 @@
 import { HardhatUserConfig } from 'hardhat/config';
 import '@nomiclabs/hardhat-ethers';
 
+/**
+ * Hardhat config for ACTP SDK integration tests
+ *
+ * NOTE: We test against deployed contracts on Base Sepolia testnet,
+ * not local mock contracts. See src/config/networks.ts for addresses.
+ */
 const config: HardhatUserConfig = {
-  solidity: '0.8.21',
+  solidity: '0.8.20', // Match production contract compiler version
   paths: {
-    sources: './contracts',
     tests: './hardhat/test',
     cache: './hardhat/cache',
     artifacts: './hardhat/artifacts'
   },
+  networks: {
+    'base-sepolia': {
+      url: process.env.BASE_SEPOLIA_RPC || 'https://sepolia.base.org',
+      accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
+      chainId: 84532
+    }
+  },
   mocha: {
-    timeout: 60000
+    timeout: 120000 // Increased for network tests
   }
 };
 
