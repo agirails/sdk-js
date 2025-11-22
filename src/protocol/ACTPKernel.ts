@@ -1,0 +1,429 @@
+import { Contract, Signer, BigNumber, BytesLike, ContractReceipt, utils } from 'ethers';
+import ACTPKernelABI from '../abi/ACTPKernel.json';
+import {
+  State,
+  StateMachine,
+  Transaction,
+  CreateTransactionParams,
+  DisputeResolution,
+  EconomicParams
+} from '../types';
+import {
+  TransactionNotFoundError,
+  TransactionRevertedError,
+  InvalidStateTransitionError,
+  ValidationError
+} from '../errors';
+import {
+  validateAddress,
+  validateAmount,
+  validateDeadline,
+  validateDisputeWindow,
+  validateTxId
+} from '../utils/validation';
+
+/**
+ * Gas options for transactions
+ */
+interface GasOptions {
+  maxFeePerGas?: BigNumber;
+  maxPriorityFeePerGas?: BigNumber;
+}
+
+/**
+ * ACTPKernel - Smart contract wrapper
+ * Reference: Yellow Paper §3 (ACTP Kernel Specification)
+ */
+export class ACTPKernel {
+  private contract: Contract;
+  private readonly gasSettings?: GasOptions;
+
+  constructor(
+    private readonly address: string,
+    signer: Signer,
+    gasSettings?: GasOptions
+  ) {
+    this.contract = new Contract(address, ACTPKernelABI, signer);
+    this.gasSettings = gasSettings;
+  }
+
+  /**
+   * Get kernel contract address
+   */
+  getAddress(): string {
+    return this.address;
+  }
+
+  /**
+   * Get gas buffer multiplier based on operation complexity
+   * V6 Security Enhancement: Operation-specific gas buffers
+   * Reference: SDK_SECURITY_ANALYSIS-Ultra-Think.md Lines 326-337
+   */
+  private getGasBufferMultiplier(operation: string): number {
+    const buffers: Record<string, number> = {
+      'createTransaction': 1.15,  // 15% - Simple state initialization
+      'transitionState': 1.20,    // 20% - Standard state change
+      'releaseEscrow': 1.30,      // 30% - Multi-recipient disbursement
+      'raiseDispute': 1.25,       // 25% - Large proof data handling
+      'resolveDispute': 1.30,     // 30% - Complex multi-party settlement
+      'cancelTransaction': 1.15   // 15% - Simple state change
+    };
+
+    return buffers[operation] || 1.20; // Default 20% for unknown operations
+  }
+
+  /**
+   * Build transaction options with gas settings and estimated gas
+   * V6 Enhancement: Dynamic buffer based on operation type
+   */
+  private buildTxOptions(estimatedGas: BigNumber, operation: string = 'default'): any {
+    const bufferMultiplier = this.getGasBufferMultiplier(operation);
+
+    const options: any = {
+      gasLimit: estimatedGas.mul(Math.round(bufferMultiplier * 100)).div(100)
+    };
+
+    if (this.gasSettings?.maxFeePerGas) {
+      options.maxFeePerGas = this.gasSettings.maxFeePerGas;
+    }
+    if (this.gasSettings?.maxPriorityFeePerGas) {
+      options.maxPriorityFeePerGas = this.gasSettings.maxPriorityFeePerGas;
+    }
+
+    return options;
+  }
+
+  /**
+   * Create a new transaction
+   * Reference: Yellow Paper §3.4.1
+   */
+  async createTransaction(params: CreateTransactionParams): Promise<string> {
+    const {
+      provider,
+      requester,
+      amount,
+      deadline,
+      disputeWindow,
+      metadata = '0x0000000000000000000000000000000000000000000000000000000000000000'
+    } = params;
+
+    // Input validation
+    validateAddress(provider, 'provider');
+    validateAddress(requester, 'requester');
+    validateAmount(amount, 'amount');
+    validateDeadline(deadline, 'deadline');
+    validateDisputeWindow(disputeWindow, 'disputeWindow');
+
+    try {
+      // Estimate gas first
+      const estimatedGas = await this.contract.estimateGas.createTransaction(
+        provider,
+        requester,
+        amount,
+        deadline,
+        disputeWindow,
+        metadata
+      );
+
+      // Build tx options with gas settings (15% buffer for simple state initialization)
+      const txOptions = this.buildTxOptions(estimatedGas, 'createTransaction');
+
+      const tx = await this.contract.createTransaction(
+        provider,
+        requester,
+        amount,
+        deadline,
+        disputeWindow,
+        metadata,
+        txOptions
+      );
+
+      const receipt: ContractReceipt = await tx.wait();
+      return this.extractTransactionId(receipt);
+    } catch (error: any) {
+      throw new TransactionRevertedError(error.transactionHash, error.reason || error.message);
+    }
+  }
+
+  /**
+   * Transition transaction state
+   * Reference: Yellow Paper §3.2
+   */
+  async transitionState(
+    txId: string,
+    newState: State,
+    proof: BytesLike = '0x'
+  ): Promise<void> {
+    // Input validation
+    validateTxId(txId, 'txId');
+
+    // Validate transition
+    const currentTx = await this.getTransaction(txId);
+    if (!StateMachine.isValidTransition(currentTx.state, newState)) {
+      const validStates = StateMachine.getNextValidStates(currentTx.state).map((s) =>
+        State[s]
+      );
+      throw new InvalidStateTransitionError(currentTx.state, newState, validStates);
+    }
+
+    try {
+      // Estimate gas with safety buffer (20% for standard state transitions)
+      const estimatedGas = await this.contract.estimateGas.transitionState(txId, newState, proof);
+      const txOptions = this.buildTxOptions(estimatedGas, 'transitionState');
+
+      const tx = await this.contract.transitionState(txId, newState, proof, txOptions);
+
+      await tx.wait();
+    } catch (error: any) {
+      throw new TransactionRevertedError(error.transactionHash, error.reason || error.message);
+    }
+  }
+
+  /**
+   * Link escrow to transaction
+   * Reference: Yellow Paper §3.4.2
+   */
+  async linkEscrow(
+    txId: string,
+    escrowContract: string,
+    escrowId: string
+  ): Promise<void> {
+    // Input validation
+    validateTxId(txId, 'txId');
+    validateAddress(escrowContract, 'escrowContract');
+    validateTxId(escrowId, 'escrowId'); // escrowId is also bytes32
+
+    try {
+      // Estimate gas with safety buffer (20% for linking escrow)
+      const estimatedGas = await this.contract.estimateGas.linkEscrow(txId, escrowContract, escrowId);
+      const txOptions = this.buildTxOptions(estimatedGas, 'transitionState');
+
+      const tx = await this.contract.linkEscrow(txId, escrowContract, escrowId, txOptions);
+
+      await tx.wait();
+    } catch (error: any) {
+      throw new TransactionRevertedError(error.transactionHash, error.reason || error.message);
+    }
+  }
+
+  /**
+   * Release milestone payment
+   */
+  async releaseMilestone(
+    txId: string,
+    milestoneId: number,
+    amount: BigNumber
+  ): Promise<void> {
+    // Input validation
+    validateTxId(txId, 'txId');
+    validateAmount(amount, 'amount');
+    if (milestoneId < 0) {
+      throw new ValidationError('milestoneId', 'Milestone ID cannot be negative');
+    }
+
+    try {
+      // Estimate gas with safety buffer (30% for escrow release operations)
+      const estimatedGas = await this.contract.estimateGas.releaseMilestone(txId, milestoneId, amount);
+      const txOptions = this.buildTxOptions(estimatedGas, 'releaseEscrow');
+
+      const tx = await this.contract.releaseMilestone(txId, milestoneId, amount, txOptions);
+
+      await tx.wait();
+    } catch (error: any) {
+      throw new TransactionRevertedError(error.transactionHash, error.reason || error.message);
+    }
+  }
+
+  /**
+   * Release full escrow (settle transaction)
+   */
+  async releaseEscrow(txId: string): Promise<void> {
+    // Input validation
+    validateTxId(txId, 'txId');
+
+    try {
+      // Estimate gas with safety buffer (30% for escrow release operations)
+      const estimatedGas = await this.contract.estimateGas.releaseEscrow(txId);
+      const txOptions = this.buildTxOptions(estimatedGas, 'releaseEscrow');
+
+      const tx = await this.contract.releaseEscrow(txId, txOptions);
+
+      await tx.wait();
+    } catch (error: any) {
+      throw new TransactionRevertedError(error.transactionHash, error.reason || error.message);
+    }
+  }
+
+  /**
+   * Get transaction by ID
+   */
+  async getTransaction(txId: string): Promise<Transaction> {
+    const txData = await this.contract.transactions(txId);
+
+    // Check if transaction exists (createdAt !== 0)
+    if (txData.createdAt.eq(0)) {
+      throw new TransactionNotFoundError(txId);
+    }
+
+    return {
+      txId: txData.transactionId,
+      requester: txData.requester,
+      provider: txData.provider,
+      amount: txData.amount,
+      state: txData.state as State,
+      createdAt: txData.createdAt.toNumber(),
+      deadline: txData.deadline.toNumber(),
+      disputeWindow: txData.disputeWindow.toNumber(),
+      escrowContract: txData.escrowContract,
+      escrowId: txData.escrowId,
+      metadata: txData.serviceHash
+    };
+  }
+
+  /**
+   * Get economic parameters (fee structure)
+   * Fixed: Don't hardcode values, read from contract
+   */
+  async getEconomicParams(): Promise<EconomicParams> {
+    const params = await this.contract.getEconomicParams();
+
+    // Contract returns: (platformFeeBps, requesterPenaltyBps, feeRecipient)
+    return {
+      baseFeeNumerator: params.platformFeeBps ? params.platformFeeBps.toNumber() : params[0].toNumber(),
+      baseFeeDenominator: 10000, // BPS is always out of 10000
+      feeRecipient: params.feeRecipient || params[2],
+      requesterPenaltyBps: params.requesterPenaltyBps ? params.requesterPenaltyBps.toNumber() : params[1].toNumber(),
+      providerPenaltyBps: 0 // Not in current contract ABI, will be added in future version
+    };
+  }
+
+  /**
+   * Estimate gas for transaction creation
+   */
+  async estimateCreateTransaction(params: CreateTransactionParams): Promise<BigNumber> {
+    const { provider, requester, amount, deadline, disputeWindow, metadata = '0x0000000000000000000000000000000000000000000000000000000000000000' } = params;
+
+    return await this.contract.estimateGas.createTransaction(
+      provider,
+      requester,
+      amount,
+      deadline,
+      disputeWindow,
+      metadata
+    );
+  }
+
+  /**
+   * Raise dispute on delivered transaction
+   * Reference: Yellow Paper §3.4 (Dispute Management)
+   */
+  async raiseDispute(txId: string, reason: string, evidence: string): Promise<void> {
+    validateTxId(txId, 'txId');
+
+    // Encode dispute proof with reason and evidence (IPFS hash)
+    const proofData = utils.defaultAbiCoder.encode(
+      ['string', 'string'],
+      [reason, evidence]
+    );
+
+    try {
+      // Estimate gas with safety buffer (25% for large proof data)
+      const estimatedGas = await this.contract.estimateGas.transitionState(
+        txId,
+        State.DISPUTED,
+        proofData
+      );
+
+      const txOptions = this.buildTxOptions(estimatedGas, 'raiseDispute');
+
+      const tx = await this.contract.transitionState(
+        txId,
+        State.DISPUTED,
+        proofData,
+        txOptions
+      );
+
+      await tx.wait();
+    } catch (error: any) {
+      throw new TransactionRevertedError(error.transactionHash, error.reason || error.message);
+    }
+  }
+
+  /**
+   * Resolve/settle dispute with payment split
+   * Reference: Yellow Paper §3.4
+   * 
+   * Disputes are settled via transitionState(SETTLED, proof) per §3.2
+   * The kernel contract decodes the proof and handles escrow disbursement
+   */
+  async resolveDispute(txId: string, resolution: DisputeResolution): Promise<void> {
+    validateTxId(txId, 'txId');
+
+    const { requesterAmount, providerAmount, mediatorAmount, mediator } = resolution;
+
+    // Validate amounts are non-negative
+    if (requesterAmount.isNegative() || providerAmount.isNegative() || mediatorAmount.isNegative()) {
+      throw new Error('Dispute resolution amounts cannot be negative');
+    }
+
+    // Validate mediator address if mediator amount > 0
+    if (mediatorAmount.gt(0)) {
+      if (!mediator) {
+        throw new Error('Mediator address required when mediator amount > 0');
+      }
+      validateAddress(mediator, 'mediator');
+    }
+
+    // Encode resolution proof (128 bytes: 3x uint256 + address)
+    // Kernel contract will decode this in _decodeResolutionProof and disburse funds
+    const proofData = utils.defaultAbiCoder.encode(
+      ['uint256', 'uint256', 'uint256', 'address'],
+      [
+        requesterAmount,
+        providerAmount,
+        mediatorAmount,
+        mediator || utils.getAddress('0x0000000000000000000000000000000000000000')
+      ]
+    );
+
+    try {
+      // Settle dispute via state transition to SETTLED with resolution proof (30% buffer)
+      const estimatedGas = await this.contract.estimateGas.transitionState(
+        txId,
+        State.SETTLED,
+        proofData
+      );
+
+      const txOptions = this.buildTxOptions(estimatedGas, 'resolveDispute');
+
+      const tx = await this.contract.transitionState(
+        txId,
+        State.SETTLED,
+        proofData,
+        txOptions
+      );
+
+      await tx.wait();
+    } catch (error: any) {
+      throw new TransactionRevertedError(error.transactionHash, error.reason || error.message);
+    }
+  }
+
+  /**
+   * Settle disputed transaction (alias for resolveDispute)
+   */
+  async settleDispute(txId: string, resolution: DisputeResolution): Promise<void> {
+    return this.resolveDispute(txId, resolution);
+  }
+
+  /**
+   * Extract transaction ID from receipt
+   */
+  private extractTransactionId(receipt: ContractReceipt): string {
+    const event = receipt.events?.find((e) => e.event === 'TransactionCreated');
+    if (!event || !event.args) {
+      throw new Error('TransactionCreated event not found in receipt');
+    }
+    return event.args.transactionId;
+  }
+}

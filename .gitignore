@@ -1,0 +1,10 @@
+node_modules/
+dist/
+coverage/
+hardhat/artifacts/
+hardhat/cache/
+.DS_Store
+*.log
+.env
+.env.*
+*.tsbuildinfo
