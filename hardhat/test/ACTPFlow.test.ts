@@ -36,7 +36,7 @@ describe('ACTP SDK - Base Sepolia Integration', () => {
 
     const signers = await ethers.getSigners();
     if (signers.length < 2) {
-      throw new Error('Need at least 2 signers for integration tests');
+      throw new Error('Need at least 2 signers for integration tests (set PRIVATE_KEY and PROVIDER_PRIVATE_KEY in .env)');
     }
 
     requester = signers[0];

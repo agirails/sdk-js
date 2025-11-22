@@ -28,9 +28,9 @@ export const BASE_SEPOLIA: NetworkConfig = {
   rpcUrl: 'https://sepolia.base.org',
   blockExplorer: 'https://sepolia.basescan.org',
   contracts: {
-    // Deployed 2025-01-22 by Justin (Final - Verified on Basescan)
-    actpKernel: '0xb5B002A73743765450d427e2F8a472C24FDABF9b',
-    escrowVault: '0x67770791c83eA8e46D8a08E09682488ba584744f',
+    // Deployed 2025-01-22 by Arha (with separate treasury wallet)
+    actpKernel: '0x7Cb7867C3D2BAd7AE4ee236B5FddC0AFEc633370',
+    escrowVault: '0x41D45491451C5AE318fdb4f0Bc224d628571FC0F',
     usdc: '0x444b4e1A65949AB2ac75979D5d0166Eb7A248Ccb' // MockUSDC
   },
   gasSettings: {
