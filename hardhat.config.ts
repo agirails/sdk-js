@@ -1,5 +1,9 @@
 import { HardhatUserConfig } from 'hardhat/config';
 import '@nomiclabs/hardhat-ethers';
+import * as dotenv from 'dotenv';
+
+// Load .env file
+dotenv.config();
 
 /**
  * Hardhat config for ACTP SDK integration tests
@@ -17,7 +21,10 @@ const config: HardhatUserConfig = {
   networks: {
     'base-sepolia': {
       url: process.env.BASE_SEPOLIA_RPC || 'https://sepolia.base.org',
-      accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
+      accounts: [
+        process.env.PRIVATE_KEY,
+        process.env.PROVIDER_PRIVATE_KEY
+      ].filter((key): key is string => !!key), // Filter out undefined values
       chainId: 84532
     }
   },
