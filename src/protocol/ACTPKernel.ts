@@ -1,4 +1,4 @@
-import { Contract, Signer, BigNumber, BytesLike, utils } from 'ethers';
+import { Contract, Signer, BytesLike, ethers, AbiCoder } from 'ethers';
 import ACTPKernelABI from '../abi/ACTPKernel.json';
 import {
   State,
@@ -26,8 +26,8 @@ import {
  * Gas options for transactions
  */
 interface GasOptions {
-  maxFeePerGas?: BigNumber;
-  maxPriorityFeePerGas?: BigNumber;
+  maxFeePerGas?: bigint;
+  maxPriorityFeePerGas?: bigint;
 }
 
 /**
@@ -66,7 +66,8 @@ export class ACTPKernel {
       'releaseEscrow': 1.30,      // 30% - Multi-recipient disbursement
       'raiseDispute': 1.25,       // 25% - Large proof data handling
       'resolveDispute': 1.30,     // 30% - Complex multi-party settlement
-      'cancelTransaction': 1.15   // 15% - Simple state change
+      'cancelTransaction': 1.15,  // 15% - Simple state change
+      'anchorAttestation': 1.15   // 15% - Simple attestation anchoring
     };
 
     return buffers[operation] || 1.20; // Default 20% for unknown operations
@@ -76,11 +77,11 @@ export class ACTPKernel {
    * Build transaction options with gas settings and estimated gas
    * V6 Enhancement: Dynamic buffer based on operation type
    */
-  private buildTxOptions(estimatedGas: BigNumber, operation: string = 'default'): any {
+  private buildTxOptions(estimatedGas: bigint, operation: string = 'default'): any {
     const bufferMultiplier = this.getGasBufferMultiplier(operation);
 
     const options: any = {
-      gasLimit: estimatedGas.mul(Math.round(bufferMultiplier * 100)).div(100)
+      gasLimit: (estimatedGas * BigInt(Math.round(bufferMultiplier * 100))) / 100n
     };
 
     if (this.gasSettings?.maxFeePerGas) {
@@ -118,8 +119,11 @@ export class ACTPKernel {
     validateDisputeWindow(disputeWindow, 'disputeWindow');
 
     try {
+      // ethers v6: use getFunction() for typed access
+      const createTxFunc = this.contract.getFunction('createTransaction');
+
       // Contract signature: createTransaction(provider, requester, amount, deadline, disputeWindow, serviceHash)
-      const estimatedGas = await this.contract.estimateGas.createTransaction(
+      const estimatedGas = await createTxFunc.estimateGas(
         provider,
         requester,
         amount,
@@ -131,7 +135,7 @@ export class ACTPKernel {
       // Build tx options with gas settings (15% buffer for simple state initialization)
       const txOptions = this.buildTxOptions(estimatedGas, 'createTransaction');
 
-      const tx = await this.contract.createTransaction(
+      const tx = await createTxFunc(
         provider,
         requester,
         amount,
@@ -143,13 +147,29 @@ export class ACTPKernel {
 
       const receipt = await tx.wait();
 
-      // Extract transactionId from event or return value
-      const event = receipt.events?.find((e: any) => e.event === 'TransactionCreated');
-      if (event && event.args && event.args.transactionId) {
-        return event.args.transactionId;
+      // Extract transactionId from logs (ethers v6)
+      if (!receipt || !receipt.logs) {
+        throw new Error('Transaction receipt not found or has no logs');
       }
 
-      // Fallback: try to get from logs
+      // Parse logs using contract interface (ethers v6)
+      for (const log of receipt.logs) {
+        try {
+          const parsedLog = this.contract.interface.parseLog({
+            topics: [...log.topics],
+            data: log.data
+          });
+
+          if (parsedLog && parsedLog.name === 'TransactionCreated') {
+            // Event signature: TransactionCreated(bytes32 indexed transactionId, ...)
+            return parsedLog.args.transactionId || parsedLog.args[0];
+          }
+        } catch (e) {
+          // Skip logs that don't match our interface
+          continue;
+        }
+      }
+
       throw new Error('TransactionCreated event not found in receipt');
     } catch (error: any) {
       throw new TransactionRevertedError(error.transactionHash, error.reason || error.message);
@@ -178,11 +198,14 @@ export class ACTPKernel {
     }
 
     try {
+      // ethers v6: use getFunction()
+      const transitionFunc = this.contract.getFunction('transitionState');
+
       // Estimate gas with safety buffer (20% for standard state transitions)
-      const estimatedGas = await this.contract.estimateGas.transitionState(txId, newState, proof);
+      const estimatedGas = await transitionFunc.estimateGas(txId, newState, proof);
       const txOptions = this.buildTxOptions(estimatedGas, 'transitionState');
 
-      const tx = await this.contract.transitionState(txId, newState, proof, txOptions);
+      const tx = await transitionFunc(txId, newState, proof, txOptions);
 
       await tx.wait();
     } catch (error: any) {
@@ -205,11 +228,14 @@ export class ACTPKernel {
     validateTxId(escrowId, 'escrowId'); // escrowId is also bytes32
 
     try {
+      // ethers v6: use getFunction()
+      const linkEscrowFunc = this.contract.getFunction('linkEscrow');
+
       // Estimate gas with safety buffer (20% for linking escrow)
-      const estimatedGas = await this.contract.estimateGas.linkEscrow(txId, escrowContract, escrowId);
+      const estimatedGas = await linkEscrowFunc.estimateGas(txId, escrowContract, escrowId);
       const txOptions = this.buildTxOptions(estimatedGas, 'transitionState');
 
-      const tx = await this.contract.linkEscrow(txId, escrowContract, escrowId, txOptions);
+      const tx = await linkEscrowFunc(txId, escrowContract, escrowId, txOptions);
 
       await tx.wait();
     } catch (error: any) {
@@ -223,7 +249,7 @@ export class ACTPKernel {
   async releaseMilestone(
     txId: string,
     milestoneId: number,
-    amount: BigNumber
+    amount: bigint
   ): Promise<void> {
     // Input validation
     validateTxId(txId, 'txId');
@@ -233,11 +259,14 @@ export class ACTPKernel {
     }
 
     try {
+      // ethers v6: use getFunction()
+      const releaseMilestoneFunc = this.contract.getFunction('releaseMilestone');
+
       // Estimate gas with safety buffer (30% for escrow release operations)
-      const estimatedGas = await this.contract.estimateGas.releaseMilestone(txId, milestoneId, amount);
+      const estimatedGas = await releaseMilestoneFunc.estimateGas(txId, milestoneId, amount);
       const txOptions = this.buildTxOptions(estimatedGas, 'releaseEscrow');
 
-      const tx = await this.contract.releaseMilestone(txId, milestoneId, amount, txOptions);
+      const tx = await releaseMilestoneFunc(txId, milestoneId, amount, txOptions);
 
       await tx.wait();
     } catch (error: any) {
@@ -247,17 +276,34 @@ export class ACTPKernel {
 
   /**
    * Release full escrow (settle transaction)
+   *
+   * SECURITY WARNING (V1): ACTPKernel V1 contract accepts any attestationUID without validation.
+   * This means a malicious provider could submit attestation from different transaction.
+   *
+   * To protect against this, you can either:
+   * 1. Use ACTPClient's wrapper method that automatically verifies
+   * 2. Manually verify attestation before calling this method (see EASHelper.verifyDeliveryAttestation)
+   *
+   * Note: Attestation verification is OPTIONAL here because some transactions may not use EAS.
+   * However, for transactions with delivery proofs, consumers SHOULD verify before settling.
+   *
+   * @param txId - Transaction ID to settle
+   * @throws {ValidationError} If txId is invalid
+   * @throws {TransactionRevertedError} If contract reverts
    */
   async releaseEscrow(txId: string): Promise<void> {
     // Input validation
     validateTxId(txId, 'txId');
 
     try {
+      // ethers v6: use getFunction()
+      const releaseEscrowFunc = this.contract.getFunction('releaseEscrow');
+
       // Estimate gas with safety buffer (30% for escrow release operations)
-      const estimatedGas = await this.contract.estimateGas.releaseEscrow(txId);
+      const estimatedGas = await releaseEscrowFunc.estimateGas(txId);
       const txOptions = this.buildTxOptions(estimatedGas, 'releaseEscrow');
 
-      const tx = await this.contract.releaseEscrow(txId, txOptions);
+      const tx = await releaseEscrowFunc(txId, txOptions);
 
       await tx.wait();
     } catch (error: any) {
@@ -272,7 +318,7 @@ export class ACTPKernel {
     const txData = await this.contract.getTransaction(txId);
 
     // Check if transaction exists (createdAt !== 0)
-    if (txData.createdAt === 0 || txData.createdAt.eq(0)) {
+    if (txData.createdAt === 0 || txData.createdAt === 0n) {
       throw new TransactionNotFoundError(txId);
     }
 
@@ -282,9 +328,9 @@ export class ACTPKernel {
       provider: txData.provider,
       amount: txData.amount,
       state: txData.state as State,
-      createdAt: typeof txData.createdAt === 'number' ? txData.createdAt : txData.createdAt.toNumber(),
-      deadline: typeof txData.deadline === 'number' ? txData.deadline : txData.deadline.toNumber(),
-      disputeWindow: typeof txData.disputeWindow === 'number' ? txData.disputeWindow : txData.disputeWindow.toNumber(),
+      createdAt: typeof txData.createdAt === 'bigint' ? Number(txData.createdAt) : txData.createdAt,
+      deadline: typeof txData.deadline === 'bigint' ? Number(txData.deadline) : txData.deadline,
+      disputeWindow: typeof txData.disputeWindow === 'bigint' ? Number(txData.disputeWindow) : txData.disputeWindow,
       escrowContract: txData.escrowContract,
       escrowId: txData.escrowId,
       metadata: txData.serviceHash
@@ -300,10 +346,10 @@ export class ACTPKernel {
 
     // Contract returns: (platformFeeBps, requesterPenaltyBps, feeRecipient)
     return {
-      baseFeeNumerator: params.platformFeeBps ? params.platformFeeBps.toNumber() : params[0].toNumber(),
+      baseFeeNumerator: Number(params.platformFeeBps || params[0]),
       baseFeeDenominator: 10000, // BPS is always out of 10000
       feeRecipient: params.feeRecipient || params[2],
-      requesterPenaltyBps: params.requesterPenaltyBps ? params.requesterPenaltyBps.toNumber() : params[1].toNumber(),
+      requesterPenaltyBps: Number(params.requesterPenaltyBps || params[1]),
       providerPenaltyBps: 0 // Not in current contract ABI, will be added in future version
     };
   }
@@ -311,10 +357,12 @@ export class ACTPKernel {
   /**
    * Estimate gas for transaction creation
    */
-  async estimateCreateTransaction(params: CreateTransactionParams): Promise<BigNumber> {
+  async estimateCreateTransaction(params: CreateTransactionParams): Promise<bigint> {
     const { provider, requester, amount, deadline, disputeWindow, metadata = '0x0000000000000000000000000000000000000000000000000000000000000000' } = params;
 
-    return await this.contract.estimateGas.createTransaction(
+    // ethers v6: use getFunction()
+    const createTxFunc = this.contract.getFunction('createTransaction');
+    return await createTxFunc.estimateGas(
       provider,
       requester,
       amount,
@@ -332,14 +380,18 @@ export class ACTPKernel {
     validateTxId(txId, 'txId');
 
     // Encode dispute proof with reason and evidence (IPFS hash)
-    const proofData = utils.defaultAbiCoder.encode(
+    const abiCoder = AbiCoder.defaultAbiCoder();
+    const proofData = abiCoder.encode(
       ['string', 'string'],
       [reason, evidence]
     );
 
     try {
+      // ethers v6: use getFunction()
+      const transitionFunc = this.contract.getFunction('transitionState');
+
       // Estimate gas with safety buffer (25% for large proof data)
-      const estimatedGas = await this.contract.estimateGas.transitionState(
+      const estimatedGas = await transitionFunc.estimateGas(
         txId,
         State.DISPUTED,
         proofData
@@ -347,7 +399,7 @@ export class ACTPKernel {
 
       const txOptions = this.buildTxOptions(estimatedGas, 'raiseDispute');
 
-      const tx = await this.contract.transitionState(
+      const tx = await transitionFunc(
         txId,
         State.DISPUTED,
         proofData,
@@ -363,7 +415,7 @@ export class ACTPKernel {
   /**
    * Resolve/settle dispute with payment split
    * Reference: Yellow Paper §3.4
-   * 
+   *
    * Disputes are settled via transitionState(SETTLED, proof) per §3.2
    * The kernel contract decodes the proof and handles escrow disbursement
    */
@@ -373,12 +425,12 @@ export class ACTPKernel {
     const { requesterAmount, providerAmount, mediatorAmount, mediator } = resolution;
 
     // Validate amounts are non-negative
-    if (requesterAmount.isNegative() || providerAmount.isNegative() || mediatorAmount.isNegative()) {
+    if (requesterAmount < 0n || providerAmount < 0n || mediatorAmount < 0n) {
       throw new Error('Dispute resolution amounts cannot be negative');
     }
 
     // Validate mediator address if mediator amount > 0
-    if (mediatorAmount.gt(0)) {
+    if (mediatorAmount > 0n) {
       if (!mediator) {
         throw new Error('Mediator address required when mediator amount > 0');
       }
@@ -387,19 +439,23 @@ export class ACTPKernel {
 
     // Encode resolution proof (128 bytes: 3x uint256 + address)
     // Kernel contract will decode this in _decodeResolutionProof and disburse funds
-    const proofData = utils.defaultAbiCoder.encode(
+    const abiCoder = AbiCoder.defaultAbiCoder();
+    const proofData = abiCoder.encode(
       ['uint256', 'uint256', 'uint256', 'address'],
       [
         requesterAmount,
         providerAmount,
         mediatorAmount,
-        mediator || utils.getAddress('0x0000000000000000000000000000000000000000')
+        mediator || ethers.getAddress('0x0000000000000000000000000000000000000000')
       ]
     );
 
     try {
+      // ethers v6: use getFunction()
+      const transitionFunc = this.contract.getFunction('transitionState');
+
       // Settle dispute via state transition to SETTLED with resolution proof (30% buffer)
-      const estimatedGas = await this.contract.estimateGas.transitionState(
+      const estimatedGas = await transitionFunc.estimateGas(
         txId,
         State.SETTLED,
         proofData
@@ -407,7 +463,7 @@ export class ACTPKernel {
 
       const txOptions = this.buildTxOptions(estimatedGas, 'resolveDispute');
 
-      const tx = await this.contract.transitionState(
+      const tx = await transitionFunc(
         txId,
         State.SETTLED,
         proofData,
@@ -425,6 +481,53 @@ export class ACTPKernel {
    */
   async settleDispute(txId: string, resolution: DisputeResolution): Promise<void> {
     return this.resolveDispute(txId, resolution);
+  }
+
+  /**
+   * Anchor an EAS attestation UID to a transaction (delivery proof)
+   * Reference: AIP-4 (Delivery Proof and EAS Attestation Standard)
+   *
+   * @param txId - Transaction ID
+   * @param attestationUID - EAS attestation UID from provider
+   * @throws {ValidationError} If inputs are invalid
+   * @throws {TransactionRevertedError} If contract reverts
+   *
+   * @example
+   * ```typescript
+   * const easHelper = new EASHelper(signer, easConfig);
+   * const attestation = await easHelper.attestDeliveryProof(proof, recipient);
+   * await kernel.anchorAttestation(txId, attestation.uid);
+   * ```
+   */
+  async anchorAttestation(txId: string, attestationUID: string): Promise<void> {
+    validateTxId(txId, 'txId');
+
+    // Validate attestationUID format (32-byte hex string)
+    if (!attestationUID || !/^0x[a-fA-F0-9]{64}$/.test(attestationUID)) {
+      throw new ValidationError('attestationUID', 'Must be 32-byte hex string (0x...)');
+    }
+
+    try {
+      // ethers v6: use getFunction()
+      const anchorFunc = this.contract.getFunction('anchorAttestation');
+
+      const estimatedGas = await anchorFunc.estimateGas(
+        txId,
+        attestationUID
+      );
+
+      const txOptions = this.buildTxOptions(estimatedGas, 'anchorAttestation');
+
+      const tx = await anchorFunc(
+        txId,
+        attestationUID,
+        txOptions
+      );
+
+      await tx.wait();
+    } catch (error: any) {
+      throw new TransactionRevertedError(error.transactionHash, error.reason || error.message);
+    }
   }
 
 }

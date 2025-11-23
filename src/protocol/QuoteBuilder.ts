@@ -1,5 +1,4 @@
-import { BigNumber } from 'ethers';
-import { keccak256, toUtf8Bytes } from 'ethers/lib/utils';
+import { keccak256, toUtf8Bytes } from 'ethers';
 import { QuoteResponseData } from '../types/eip712';
 import { MessageSigner } from './MessageSigner';
 
@@ -14,9 +13,9 @@ export interface QuoteParams {
   txId: string;
   provider: string;
   consumer: string;
-  quotedAmount: string | BigNumber;
-  originalAmount: string | BigNumber;
-  maxPrice: string | BigNumber;
+  quotedAmount: string | bigint;
+  originalAmount: string | bigint;
+  maxPrice: string | bigint;
   expiresAt?: number; // Optional, defaults to 1 hour from now
 }
 
@@ -73,9 +72,9 @@ export class QuoteBuilder {
       txId: params.txId,
       provider: params.provider,
       consumer: params.consumer,
-      quotedAmount: BigNumber.from(params.quotedAmount).toString(),
-      originalAmount: BigNumber.from(params.originalAmount).toString(),
-      maxPrice: BigNumber.from(params.maxPrice).toString(),
+      quotedAmount: BigInt(params.quotedAmount).toString(),
+      originalAmount: BigInt(params.originalAmount).toString(),
+      maxPrice: BigInt(params.maxPrice).toString(),
       quotedAt: now,
       expiresAt,
       chainId: this.chainId,
@@ -105,20 +104,20 @@ export class QuoteBuilder {
    */
   validateQuote(quote: QuoteMessage): boolean {
     // Validate amounts
-    const quotedAmount = BigNumber.from(quote.quotedAmount);
-    const originalAmount = BigNumber.from(quote.originalAmount);
-    const maxPrice = BigNumber.from(quote.maxPrice);
+    const quotedAmount = BigInt(quote.quotedAmount);
+    const originalAmount = BigInt(quote.originalAmount);
+    const maxPrice = BigInt(quote.maxPrice);
 
-    if (quotedAmount.lt(originalAmount)) {
+    if (quotedAmount < originalAmount) {
       throw new Error('Quoted amount must be >= original amount');
     }
 
-    if (quotedAmount.gt(maxPrice)) {
+    if (quotedAmount > maxPrice) {
       throw new Error('Quoted amount must be <= maxPrice');
     }
 
     // Platform minimum ($0.05 = 50000 with 6 decimals)
-    if (quotedAmount.lt(50000)) {
+    if (quotedAmount < 50000n) {
       throw new Error('Quoted amount below platform minimum ($0.05)');
     }
 
@@ -171,20 +170,20 @@ export class QuoteBuilder {
    */
   private validateParams(params: QuoteParams): void {
     // Amount validation
-    const quotedAmount = BigNumber.from(params.quotedAmount);
-    const originalAmount = BigNumber.from(params.originalAmount);
-    const maxPrice = BigNumber.from(params.maxPrice);
+    const quotedAmount = BigInt(params.quotedAmount);
+    const originalAmount = BigInt(params.originalAmount);
+    const maxPrice = BigInt(params.maxPrice);
 
-    if (quotedAmount.lt(originalAmount)) {
+    if (quotedAmount < originalAmount) {
       throw new Error('quotedAmount must be >= originalAmount');
     }
 
-    if (quotedAmount.gt(maxPrice)) {
+    if (quotedAmount > maxPrice) {
       throw new Error('quotedAmount must be <= maxPrice');
     }
 
     // Minimum transaction amount ($0.05 = 50000 base units)
-    if (quotedAmount.lt(50000)) {
+    if (quotedAmount < 50000n) {
       throw new Error('quotedAmount must be >= $0.05 (50000 base units)');
     }
 

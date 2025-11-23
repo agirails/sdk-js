@@ -14,21 +14,20 @@
  * - V1: EscrowVault Zero Test Coverage vulnerability
  */
 
-import { BigNumber } from 'ethers';
 import { EscrowVault } from '../../protocol/EscrowVault';
 
 // Mock ethers Contract
 const mockContract = {
   estimateGas: {
-    createEscrow: jest.fn().mockResolvedValue(BigNumber.from(100000)),
-    disburse: jest.fn().mockResolvedValue(BigNumber.from(80000)),
-    approve: jest.fn().mockResolvedValue(BigNumber.from(50000))
+    createEscrow: jest.fn().mockResolvedValue(BigInt(100000)),
+    disburse: jest.fn().mockResolvedValue(BigInt(80000)),
+    approve: jest.fn().mockResolvedValue(BigInt(50000))
   },
   createEscrow: jest.fn().mockResolvedValue({
     wait: jest.fn().mockResolvedValue({
-      events: [{
-        event: 'EscrowCreated',
-        args: { escrowId: '0x' + '1'.repeat(64) }
+      logs: [{
+        topics: ['0x' + '6'.repeat(64)],
+        data: '0x'
       }]
     })
   }),
@@ -39,15 +38,35 @@ const mockContract = {
     kernel: '0x' + '1'.repeat(40),
     txId: '0x' + '2'.repeat(64),
     token: '0x' + '3'.repeat(40),
-    amount: BigNumber.from('100000000'), // 100 USDC (6 decimals)
+    amount: BigInt('100000000'), // 100 USDC (6 decimals)
     beneficiary: '0x' + '4'.repeat(40),
     released: false
   }),
-  allowance: jest.fn().mockResolvedValue(BigNumber.from(0)),
-  balanceOf: jest.fn().mockResolvedValue(BigNumber.from('1000000000')), // 1000 USDC
+  allowance: jest.fn().mockResolvedValue(BigInt(0)),
+  balanceOf: jest.fn().mockResolvedValue(BigInt('1000000000')), // 1000 USDC
   approve: jest.fn().mockResolvedValue({
     wait: jest.fn().mockResolvedValue({})
-  })
+  }),
+  // ethers v6 requires getFunction
+  getFunction: jest.fn((name: string) => {
+    const functions: any = {
+      createEscrow: mockContract.createEscrow,
+      disburse: mockContract.disburse,
+      approve: mockContract.approve,
+      estimateGas: jest.fn().mockResolvedValue(BigInt(100000))
+    };
+    const func = functions[name] || jest.fn();
+    const estimateGasMap: any = mockContract.estimateGas;
+    func.estimateGas = estimateGasMap[name] || jest.fn().mockResolvedValue(BigInt(100000));
+    return func;
+  }),
+  // ethers v6: interface.parseLog for event parsing
+  interface: {
+    parseLog: jest.fn((_log: any) => ({
+      name: 'EscrowCreated',
+      args: { escrowId: '0x' + '1'.repeat(64) }
+    }))
+  }
 };
 
 // Mock signer
@@ -85,7 +104,7 @@ describe('EscrowVault - Fund Flow Integrity', () => {
         kernelAddress: KERNEL_ADDRESS,
         txId: TX_ID,
         token: TOKEN_ADDRESS,
-        amount: BigNumber.from('100000000'), // 100 USDC
+        amount: BigInt('100000000'), // 100 USDC
         beneficiary: BENEFICIARY_ADDRESS
       };
 
@@ -100,7 +119,7 @@ describe('EscrowVault - Fund Flow Integrity', () => {
         kernelAddress: '0x0000000000000000000000000000000000000000',
         txId: TX_ID,
         token: TOKEN_ADDRESS,
-        amount: BigNumber.from('100000000'),
+        amount: BigInt('100000000'),
         beneficiary: BENEFICIARY_ADDRESS
       };
 
@@ -112,7 +131,7 @@ describe('EscrowVault - Fund Flow Integrity', () => {
         kernelAddress: KERNEL_ADDRESS,
         txId: TX_ID,
         token: '0x0000000000000000000000000000000000000000',
-        amount: BigNumber.from('100000000'),
+        amount: BigInt('100000000'),
         beneficiary: BENEFICIARY_ADDRESS
       };
 
@@ -124,7 +143,7 @@ describe('EscrowVault - Fund Flow Integrity', () => {
         kernelAddress: KERNEL_ADDRESS,
         txId: TX_ID,
         token: TOKEN_ADDRESS,
-        amount: BigNumber.from('100000000'),
+        amount: BigInt('100000000'),
         beneficiary: '0x0000000000000000000000000000000000000000'
       };
 
@@ -136,7 +155,7 @@ describe('EscrowVault - Fund Flow Integrity', () => {
         kernelAddress: 'invalid-address',
         txId: TX_ID,
         token: TOKEN_ADDRESS,
-        amount: BigNumber.from('100000000'),
+        amount: BigInt('100000000'),
         beneficiary: BENEFICIARY_ADDRESS
       };
 
@@ -148,7 +167,7 @@ describe('EscrowVault - Fund Flow Integrity', () => {
         kernelAddress: KERNEL_ADDRESS,
         txId: TX_ID,
         token: TOKEN_ADDRESS,
-        amount: BigNumber.from(0),
+        amount: BigInt(0),
         beneficiary: BENEFICIARY_ADDRESS
       };
 
@@ -160,7 +179,7 @@ describe('EscrowVault - Fund Flow Integrity', () => {
         kernelAddress: KERNEL_ADDRESS,
         txId: TX_ID,
         token: TOKEN_ADDRESS,
-        amount: BigNumber.from(-1),
+        amount: BigInt(-1),
         beneficiary: BENEFICIARY_ADDRESS
       };
 
@@ -172,7 +191,7 @@ describe('EscrowVault - Fund Flow Integrity', () => {
         kernelAddress: KERNEL_ADDRESS,
         txId: TX_ID,
         token: TOKEN_ADDRESS,
-        amount: BigNumber.from(50000), // 0.05 USDC minimum
+        amount: BigInt(50000), // 0.05 USDC minimum
         beneficiary: BENEFICIARY_ADDRESS
       };
 
@@ -185,7 +204,7 @@ describe('EscrowVault - Fund Flow Integrity', () => {
         kernelAddress: KERNEL_ADDRESS,
         txId: TX_ID,
         token: TOKEN_ADDRESS,
-        amount: BigNumber.from('1000000000000'), // 1M USDC
+        amount: BigInt('1000000000000'), // 1M USDC
         beneficiary: BENEFICIARY_ADDRESS
       };
 
@@ -199,7 +218,7 @@ describe('EscrowVault - Fund Flow Integrity', () => {
         kernelAddress: KERNEL_ADDRESS,
         txId: 'invalid-tx-id',
         token: TOKEN_ADDRESS,
-        amount: BigNumber.from('100000000'),
+        amount: BigInt('100000000'),
         beneficiary: BENEFICIARY_ADDRESS
       };
 
@@ -210,7 +229,7 @@ describe('EscrowVault - Fund Flow Integrity', () => {
       // Mock contract to return receipt without event
       mockContract.createEscrow.mockResolvedValueOnce({
         wait: jest.fn().mockResolvedValue({
-          events: [] // No EscrowCreated event
+          logs: [] // No EscrowCreated event
         })
       });
 
@@ -218,7 +237,7 @@ describe('EscrowVault - Fund Flow Integrity', () => {
         kernelAddress: KERNEL_ADDRESS,
         txId: TX_ID,
         token: TOKEN_ADDRESS,
-        amount: BigNumber.from('100000000'),
+        amount: BigInt('100000000'),
         beneficiary: BENEFICIARY_ADDRESS
       };
 
@@ -236,7 +255,7 @@ describe('EscrowVault - Fund Flow Integrity', () => {
         kernelAddress: KERNEL_ADDRESS,
         txId: TX_ID,
         token: TOKEN_ADDRESS,
-        amount: BigNumber.from('100000000'),
+        amount: BigInt('100000000'),
         beneficiary: BENEFICIARY_ADDRESS
       };
 
@@ -249,7 +268,7 @@ describe('EscrowVault - Fund Flow Integrity', () => {
 
     it('should successfully release escrow to single recipient', async () => {
       const recipients = [BENEFICIARY_ADDRESS];
-      const amounts = [BigNumber.from('100000000')];
+      const amounts = [BigInt('100000000')];
 
       await escrowVault.releaseEscrow(ESCROW_ID, recipients, amounts);
 
@@ -268,9 +287,9 @@ describe('EscrowVault - Fund Flow Integrity', () => {
         '0x' + '6'.repeat(40)
       ];
       const amounts = [
-        BigNumber.from('50000000'), // 50 USDC
-        BigNumber.from('30000000'), // 30 USDC
-        BigNumber.from('20000000')  // 20 USDC
+        BigInt('50000000'), // 50 USDC
+        BigInt('30000000'), // 30 USDC
+        BigInt('20000000')  // 20 USDC
       ];
 
       await escrowVault.releaseEscrow(ESCROW_ID, recipients, amounts);
@@ -280,7 +299,7 @@ describe('EscrowVault - Fund Flow Integrity', () => {
 
     it('should reject release with mismatched recipients/amounts length', async () => {
       const recipients = [BENEFICIARY_ADDRESS, '0x' + '5'.repeat(40)];
-      const amounts = [BigNumber.from('100000000')]; // Only 1 amount for 2 recipients
+      const amounts = [BigInt('100000000')]; // Only 1 amount for 2 recipients
 
       await expect(escrowVault.releaseEscrow(ESCROW_ID, recipients, amounts))
         .rejects.toThrow('length mismatch');
@@ -288,7 +307,7 @@ describe('EscrowVault - Fund Flow Integrity', () => {
 
     it('should reject release with empty recipients array', async () => {
       const recipients: string[] = [];
-      const amounts: BigNumber[] = [];
+      const amounts: bigint[] = [];
 
       await expect(escrowVault.releaseEscrow(ESCROW_ID, recipients, amounts))
         .rejects.toThrow('at least one recipient');
@@ -296,7 +315,7 @@ describe('EscrowVault - Fund Flow Integrity', () => {
 
     it('should reject release with zero address recipient', async () => {
       const recipients = ['0x0000000000000000000000000000000000000000'];
-      const amounts = [BigNumber.from('100000000')];
+      const amounts = [BigInt('100000000')];
 
       await expect(escrowVault.releaseEscrow(ESCROW_ID, recipients, amounts))
         .rejects.toThrow('zero address');
@@ -304,7 +323,7 @@ describe('EscrowVault - Fund Flow Integrity', () => {
 
     it('should reject release with zero amount', async () => {
       const recipients = [BENEFICIARY_ADDRESS];
-      const amounts = [BigNumber.from(0)];
+      const amounts = [BigInt(0)];
 
       await expect(escrowVault.releaseEscrow(ESCROW_ID, recipients, amounts))
         .rejects.toThrow('Invalid amount');
@@ -312,7 +331,7 @@ describe('EscrowVault - Fund Flow Integrity', () => {
 
     it('should reject release with negative amount', async () => {
       const recipients = [BENEFICIARY_ADDRESS];
-      const amounts = [BigNumber.from(-1)];
+      const amounts = [BigInt(-1)];
 
       await expect(escrowVault.releaseEscrow(ESCROW_ID, recipients, amounts))
         .rejects.toThrow('Invalid amount');
@@ -320,7 +339,7 @@ describe('EscrowVault - Fund Flow Integrity', () => {
 
     it('should reject release with invalid escrow ID format', async () => {
       const recipients = [BENEFICIARY_ADDRESS];
-      const amounts = [BigNumber.from('100000000')];
+      const amounts = [BigInt('100000000')];
 
       await expect(escrowVault.releaseEscrow('invalid-id', recipients, amounts))
         .rejects.toThrow('Invalid transaction ID format');
@@ -334,7 +353,7 @@ describe('EscrowVault - Fund Flow Integrity', () => {
       });
 
       const recipients = [BENEFICIARY_ADDRESS];
-      const amounts = [BigNumber.from('100000000')];
+      const amounts = [BigInt('100000000')];
 
       await expect(escrowVault.releaseEscrow(ESCROW_ID, recipients, amounts))
         .rejects.toThrow('Transaction reverted');
@@ -347,9 +366,9 @@ describe('EscrowVault - Fund Flow Integrity', () => {
         '0x' + '6'.repeat(40)
       ];
       const amounts = [
-        BigNumber.from('50000000'),
-        BigNumber.from('30000000'),
-        BigNumber.from('20000000')
+        BigInt('50000000'),
+        BigInt('30000000'),
+        BigInt('20000000')
       ];
 
       await expect(escrowVault.releaseEscrow(ESCROW_ID, recipients, amounts))
@@ -363,7 +382,7 @@ describe('EscrowVault - Fund Flow Integrity', () => {
         kernelAddress: KERNEL_ADDRESS,
         txId: TX_ID,
         token: TOKEN_ADDRESS,
-        amount: BigNumber.from('100000000'),
+        amount: BigInt('100000000'),
         beneficiary: BENEFICIARY_ADDRESS
       };
 
@@ -375,13 +394,13 @@ describe('EscrowVault - Fund Flow Integrity', () => {
 
     it('should reset approval to zero before setting new value (USDC pattern)', async () => {
       // Mock existing allowance
-      mockContract.allowance.mockResolvedValueOnce(BigNumber.from('50000000'));
+      mockContract.allowance.mockResolvedValueOnce(BigInt('50000000'));
 
       const params = {
         kernelAddress: KERNEL_ADDRESS,
         txId: TX_ID,
         token: TOKEN_ADDRESS,
-        amount: BigNumber.from('100000000'),
+        amount: BigInt('100000000'),
         beneficiary: BENEFICIARY_ADDRESS
       };
 
@@ -393,13 +412,13 @@ describe('EscrowVault - Fund Flow Integrity', () => {
 
     it('should skip approval if current allowance is sufficient', async () => {
       // Mock sufficient allowance
-      mockContract.allowance.mockResolvedValueOnce(BigNumber.from('200000000'));
+      mockContract.allowance.mockResolvedValueOnce(BigInt('200000000'));
 
       const params = {
         kernelAddress: KERNEL_ADDRESS,
         txId: TX_ID,
         token: TOKEN_ADDRESS,
-        amount: BigNumber.from('100000000'),
+        amount: BigInt('100000000'),
         beneficiary: BENEFICIARY_ADDRESS
       };
 
@@ -420,7 +439,7 @@ describe('EscrowVault - Fund Flow Integrity', () => {
         kernelAddress: KERNEL_ADDRESS,
         txId: TX_ID,
         token: TOKEN_ADDRESS,
-        amount: BigNumber.from('100000000'),
+        amount: BigInt('100000000'),
         beneficiary: BENEFICIARY_ADDRESS
       };
 
@@ -429,13 +448,13 @@ describe('EscrowVault - Fund Flow Integrity', () => {
 
     it('should only approve if current allowance is less than required amount', async () => {
       // Mock allowance exactly equal to amount
-      mockContract.allowance.mockResolvedValueOnce(BigNumber.from('100000000'));
+      mockContract.allowance.mockResolvedValueOnce(BigInt('100000000'));
 
       const params = {
         kernelAddress: KERNEL_ADDRESS,
         txId: TX_ID,
         token: TOKEN_ADDRESS,
-        amount: BigNumber.from('100000000'),
+        amount: BigInt('100000000'),
         beneficiary: BENEFICIARY_ADDRESS
       };
 
@@ -446,13 +465,13 @@ describe('EscrowVault - Fund Flow Integrity', () => {
     });
 
     it('should estimate gas for both reset and set approval', async () => {
-      mockContract.allowance.mockResolvedValueOnce(BigNumber.from('50000000'));
+      mockContract.allowance.mockResolvedValueOnce(BigInt('50000000'));
 
       const params = {
         kernelAddress: KERNEL_ADDRESS,
         txId: TX_ID,
         token: TOKEN_ADDRESS,
-        amount: BigNumber.from('100000000'),
+        amount: BigInt('100000000'),
         beneficiary: BENEFICIARY_ADDRESS
       };
 
@@ -463,7 +482,7 @@ describe('EscrowVault - Fund Flow Integrity', () => {
     });
 
     it('should wait for reset approval before setting new approval', async () => {
-      mockContract.allowance.mockResolvedValueOnce(BigNumber.from('50000000'));
+      mockContract.allowance.mockResolvedValueOnce(BigInt('50000000'));
 
       const waitMock = jest.fn().mockResolvedValue({});
       mockContract.approve.mockResolvedValue({ wait: waitMock });
@@ -472,7 +491,7 @@ describe('EscrowVault - Fund Flow Integrity', () => {
         kernelAddress: KERNEL_ADDRESS,
         txId: TX_ID,
         token: TOKEN_ADDRESS,
-        amount: BigNumber.from('100000000'),
+        amount: BigInt('100000000'),
         beneficiary: BENEFICIARY_ADDRESS
       };
 
@@ -484,8 +503,8 @@ describe('EscrowVault - Fund Flow Integrity', () => {
 
     it('should include gas settings in approval transactions', async () => {
       const gasSettings = {
-        maxFeePerGas: BigNumber.from('2000000000'), // 2 gwei
-        maxPriorityFeePerGas: BigNumber.from('1000000000') // 1 gwei
+        maxFeePerGas: BigInt('2000000000'), // 2 gwei
+        maxPriorityFeePerGas: BigInt('1000000000') // 1 gwei
       };
 
       const vaultWithGas = new EscrowVault(ESCROW_ADDRESS, mockSigner as any, gasSettings);
@@ -494,7 +513,7 @@ describe('EscrowVault - Fund Flow Integrity', () => {
         kernelAddress: KERNEL_ADDRESS,
         txId: TX_ID,
         token: TOKEN_ADDRESS,
-        amount: BigNumber.from('100000000'),
+        amount: BigInt('100000000'),
         beneficiary: BENEFICIARY_ADDRESS
       };
 
@@ -502,13 +521,13 @@ describe('EscrowVault - Fund Flow Integrity', () => {
 
       // Should pass gas settings to transactions
       expect(mockContract.createEscrow).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.any(String),
-        expect.any(String),
-        expect.any(Object),
-        expect.any(String),
+        KERNEL_ADDRESS,
+        TX_ID,
+        TOKEN_ADDRESS,
+        BigInt('100000000'),
+        BENEFICIARY_ADDRESS,
         expect.objectContaining({
-          gasLimit: expect.any(Object),
+          gasLimit: expect.any(BigInt),
           maxFeePerGas: gasSettings.maxFeePerGas,
           maxPriorityFeePerGas: gasSettings.maxPriorityFeePerGas
         })
@@ -526,7 +545,7 @@ describe('EscrowVault - Fund Flow Integrity', () => {
       expect(escrow.kernel).toBe('0x' + '1'.repeat(40));
       expect(escrow.txId).toBe('0x' + '2'.repeat(64));
       expect(escrow.token).toBe('0x' + '3'.repeat(40));
-      expect(escrow.amount).toEqual(BigNumber.from('100000000'));
+      expect(escrow.amount).toEqual(BigInt('100000000'));
       expect(escrow.beneficiary).toBe('0x' + '4'.repeat(40));
       expect(escrow.released).toBe(false);
     });
@@ -536,7 +555,7 @@ describe('EscrowVault - Fund Flow Integrity', () => {
 
       const balance = await escrowVault.getEscrowBalance(ESCROW_ID);
 
-      expect(balance).toEqual(BigNumber.from('100000000'));
+      expect(balance).toEqual(BigInt('100000000'));
     });
   });
 
@@ -545,7 +564,7 @@ describe('EscrowVault - Fund Flow Integrity', () => {
       const USER_ADDRESS = '0x' + 'e'.repeat(40);
       const balance = await escrowVault.getTokenBalance(TOKEN_ADDRESS, USER_ADDRESS);
 
-      expect(balance).toEqual(BigNumber.from('1000000000'));
+      expect(balance).toEqual(BigInt('1000000000'));
       expect(mockContract.balanceOf).toHaveBeenCalledWith(USER_ADDRESS);
     });
 
@@ -563,13 +582,13 @@ describe('EscrowVault - Fund Flow Integrity', () => {
 
   describe('Gas Estimation - V6 Dynamic Buffers', () => {
     it('should apply 30% gas buffer to createEscrow', async () => {
-      mockContract.estimateGas.createEscrow.mockResolvedValueOnce(BigNumber.from(100000));
+      mockContract.estimateGas.createEscrow.mockResolvedValueOnce(BigInt(100000));
 
       const params = {
         kernelAddress: KERNEL_ADDRESS,
         txId: TX_ID,
         token: TOKEN_ADDRESS,
-        amount: BigNumber.from('100000000'),
+        amount: BigInt('100000000'),
         beneficiary: BENEFICIARY_ADDRESS
       };
 
@@ -577,23 +596,23 @@ describe('EscrowVault - Fund Flow Integrity', () => {
 
       // Should call with gasLimit = estimatedGas * 1.3 (30% buffer for external token transfer)
       expect(mockContract.createEscrow).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.any(String),
-        expect.any(String),
-        expect.any(Object),
-        expect.any(String),
+        KERNEL_ADDRESS,
+        TX_ID,
+        TOKEN_ADDRESS,
+        BigInt('100000000'),
+        BENEFICIARY_ADDRESS,
         expect.objectContaining({
-          gasLimit: BigNumber.from(130000) // 100000 * 1.30
+          gasLimit: BigInt(130000) // 100000 * 1.30
         })
       );
     });
 
     it('should apply 30% gas buffer to releaseEscrow', async () => {
-      mockContract.estimateGas.disburse.mockResolvedValueOnce(BigNumber.from(80000));
+      mockContract.estimateGas.disburse.mockResolvedValueOnce(BigInt(80000));
 
       const ESCROW_ID = '0x' + '1'.repeat(64);
       const recipients = [BENEFICIARY_ADDRESS];
-      const amounts = [BigNumber.from('100000000')];
+      const amounts = [BigInt('100000000')];
 
       await escrowVault.releaseEscrow(ESCROW_ID, recipients, amounts);
 
@@ -602,7 +621,7 @@ describe('EscrowVault - Fund Flow Integrity', () => {
         recipients,
         amounts,
         expect.objectContaining({
-          gasLimit: BigNumber.from(104000) // 80000 * 1.30 (30% buffer for multi-recipient disbursement)
+          gasLimit: BigInt(104000) // 80000 * 1.30 (30% buffer for multi-recipient disbursement)
         })
       );
     });

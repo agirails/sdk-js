@@ -1,4 +1,3 @@
-import { BigNumber } from 'ethers';
 import { State } from '../types';
 
 /**
@@ -21,7 +20,7 @@ export class ACTPError extends Error {
  * Transaction Errors
  */
 export class InsufficientFundsError extends ACTPError {
-  constructor(required: BigNumber, available: BigNumber) {
+  constructor(required: bigint, available: bigint) {
     super(
       `Insufficient funds: need ${required.toString()} wei, have ${available.toString()} wei`,
       'INSUFFICIENT_FUNDS',

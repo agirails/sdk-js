@@ -1,4 +1,4 @@
-import { BigNumber, Contract, Event } from 'ethers';
+import { Contract, EventLog } from 'ethers';
 import { State, Transaction } from '../types';
 
 /**
@@ -17,7 +17,7 @@ export class EventMonitor {
   watchTransaction(txId: string, callback: (state: State) => void): () => void {
     const filter = this.kernelContract.filters.StateTransitioned(txId);
 
-    const listener = (_eventTxId: string, _from: number, to: number, _event: Event) => {
+    const listener = (_eventTxId: string, _from: number, to: number) => {
       callback(to as State);
     };
 
@@ -72,7 +72,11 @@ export class EventMonitor {
 
     return Promise.all(
       events.map(async (event) => {
-        const txId = event.args?.transactionId;
+        // ethers v6: EventLog has args, Log does not
+        if (!('args' in event)) {
+          throw new Error('Event does not contain args (not an EventLog)');
+        }
+        const txId = (event as EventLog).args?.transactionId;
         const txData = await this.kernelContract.transactions(txId);
 
         return {
@@ -81,9 +85,9 @@ export class EventMonitor {
           provider: txData.provider,
           amount: txData.amount,
           state: txData.state as State,
-          createdAt: txData.createdAt.toNumber(),
-          deadline: txData.deadline.toNumber(),
-          disputeWindow: txData.disputeWindow.toNumber(),
+          createdAt: Number(txData.createdAt),
+          deadline: Number(txData.deadline),
+          disputeWindow: Number(txData.disputeWindow),
           escrowContract: txData.escrowContract,
           escrowId: txData.escrowId,
           metadata: txData.serviceHash
@@ -97,7 +101,7 @@ export class EventMonitor {
    * Fixed: Correct event parameter order (txId, provider, requester, amount)
    */
   onTransactionCreated(
-    callback: (tx: { txId: string; provider: string; requester: string; amount: BigNumber }) => void
+    callback: (tx: { txId: string; provider: string; requester: string; amount: bigint }) => void
   ): () => void {
     const filter = this.kernelContract.filters.TransactionCreated();
 
@@ -106,8 +110,7 @@ export class EventMonitor {
       txId: string,
       provider: string,
       requester: string,
-      amount: BigNumber,
-      _event: Event
+      amount: bigint
     ) => {
       callback({ txId, provider, requester, amount });
     };
@@ -141,10 +144,10 @@ export class EventMonitor {
   /**
    * Subscribe to escrow release events
    */
-  onEscrowReleased(callback: (txId: string, amount: BigNumber) => void): () => void {
+  onEscrowReleased(callback: (txId: string, amount: bigint) => void): () => void {
     const filter = this.kernelContract.filters.EscrowReleased();
 
-    const listener = (txId: string, amount: BigNumber) => {
+    const listener = (txId: string, amount: bigint) => {
       callback(txId, amount);
     };
 

@@ -16,7 +16,6 @@
  * - V3: Input Validation - Zero Address Bypass vulnerability
  */
 
-import { BigNumber } from 'ethers';
 import {
   validateAddress,
   validateAmount,
@@ -93,27 +92,27 @@ describe('Validation - Security Tests', () => {
 
   describe('validateAmount - Amount Security', () => {
     it('should accept positive amount', () => {
-      const amount = BigNumber.from('100000000');
+      const amount = BigInt('100000000');
       expect(() => validateAmount(amount)).not.toThrow();
     });
 
     it('should accept minimum amount (1 wei)', () => {
-      const minAmount = BigNumber.from(1);
+      const minAmount = BigInt(1);
       expect(() => validateAmount(minAmount)).not.toThrow();
     });
 
     it('should accept maximum uint256 amount', () => {
-      const maxAmount = BigNumber.from('0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff');
+      const maxAmount = BigInt('0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff');
       expect(() => validateAmount(maxAmount)).not.toThrow();
     });
 
     it('should reject zero amount', () => {
-      const zeroAmount = BigNumber.from(0);
+      const zeroAmount = BigInt(0);
       expect(() => validateAmount(zeroAmount)).toThrow('must be > 0');
     });
 
     it('should reject negative amount', () => {
-      const negativeAmount = BigNumber.from(-1);
+      const negativeAmount = BigInt(-1);
       expect(() => validateAmount(negativeAmount)).toThrow('Invalid amount');
     });
 
@@ -124,7 +123,7 @@ describe('Validation - Security Tests', () => {
 
     it('should include amount value in error message', () => {
       try {
-        validateAmount(BigNumber.from(0));
+        validateAmount(BigInt(0));
         fail('Should have thrown error');
       } catch (error: any) {
         expect(error.message).toContain('0');
@@ -133,7 +132,7 @@ describe('Validation - Security Tests', () => {
 
     it('should always use "amount" as field name', () => {
       try {
-        validateAmount(BigNumber.from(0), 'escrowAmount');
+        validateAmount(BigInt(0), 'escrowAmount');
         fail('Should have thrown error');
       } catch (error: any) {
         expect(error.details.field).toBe('amount');
@@ -314,7 +313,7 @@ describe('Validation - Security Tests', () => {
   describe('Edge Cases - Cross-Function Validation', () => {
     it('should handle all validation functions with custom field names', () => {
       const validAddress = '0x742d35cc6634c0532925a3b844bc9e7595f0beb0';
-      const validAmount = BigNumber.from('100000000');
+      const validAmount = BigInt('100000000');
       const validDeadline = Math.floor(Date.now() / 1000) + 3600;
       const validDisputeWindow = 7200;
       const validTxId = '0x' + '1'.repeat(64);
@@ -328,7 +327,7 @@ describe('Validation - Security Tests', () => {
 
     it('should throw appropriate error types for each validator', () => {
       expect(() => validateAddress('invalid')).toThrow('Invalid Ethereum address');
-      expect(() => validateAmount(BigNumber.from(0))).toThrow('Invalid amount');
+      expect(() => validateAmount(BigInt(0))).toThrow('Invalid amount');
       expect(() => validateDeadline(0)).toThrow('must be in the future');
       expect(() => validateDisputeWindow(-1)).toThrow('cannot be negative');
       expect(() => validateTxId('invalid')).toThrow('Invalid transaction ID format');
@@ -339,8 +338,8 @@ describe('Validation - Security Tests', () => {
       expect(() => validateAddress('0x0000000000000000000000000000000000000000')).toThrow();
 
       // Amount: 0 is the boundary (must be > 0)
-      expect(() => validateAmount(BigNumber.from(0))).toThrow();
-      expect(() => validateAmount(BigNumber.from(1))).not.toThrow();
+      expect(() => validateAmount(BigInt(0))).toThrow();
+      expect(() => validateAmount(BigInt(1))).not.toThrow();
 
       // Deadline: now is the boundary (must be in future)
       const now = Math.floor(Date.now() / 1000);
@@ -357,7 +356,7 @@ describe('Validation - Security Tests', () => {
     it('should preserve error details across all validators', () => {
       const testCases = [
         { fn: () => validateAddress('invalid', 'testAddress'), field: 'address' }, // InvalidAddressError hardcodes field
-        { fn: () => validateAmount(BigNumber.from(0), 'testAmount'), field: 'amount' }, // InvalidAmountError hardcodes field
+        { fn: () => validateAmount(BigInt(0), 'testAmount'), field: 'amount' }, // InvalidAmountError hardcodes field
         { fn: () => validateDeadline(0, 'testDeadline'), field: 'testDeadline' },
         { fn: () => validateDisputeWindow(-1, 'testWindow'), field: 'testWindow' },
         { fn: () => validateTxId('invalid', 'testTxId'), field: 'testTxId' }

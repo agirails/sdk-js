@@ -7,7 +7,7 @@
  */
 
 import stringify from 'fast-json-stable-stringify';
-import { keccak256, toUtf8Bytes } from 'ethers/lib/utils';
+import { keccak256, toUtf8Bytes } from 'ethers';
 
 /**
  * Canonical JSON stringify (sorted keys, no whitespace)

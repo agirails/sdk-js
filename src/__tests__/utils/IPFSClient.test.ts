@@ -27,9 +27,11 @@ const mockIPFSClient = {
 
 const mockCreate = jest.fn(() => mockIPFSClient);
 
-jest.mock('ipfs-http-client', () => ({
-  create: mockCreate
-}), { virtual: true });
+jest.mock('kubo-rpc-client', () => ({
+  create: mockCreate,
+  IPFSHTTPClient: jest.fn(),
+  Options: jest.fn()
+}));
 
 import { IPFSHTTPClientImpl, createIPFSClient } from '../../utils/IPFSClient';
 

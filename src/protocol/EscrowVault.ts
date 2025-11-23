@@ -1,4 +1,4 @@
-import { Contract, Signer, BigNumber, ContractReceipt } from 'ethers';
+import { Contract, Signer, ContractTransactionReceipt } from 'ethers';
 import EscrowVaultABI from '../abi/EscrowVault.json';
 import ERC20ABI from '../abi/ERC20.json';
 import { CreateEscrowParams, Escrow } from '../types';
@@ -13,8 +13,8 @@ import {
  * Gas options for transactions
  */
 interface GasOptions {
-  maxFeePerGas?: BigNumber;
-  maxPriorityFeePerGas?: BigNumber;
+  maxFeePerGas?: bigint;
+  maxPriorityFeePerGas?: bigint;
 }
 
 /**
@@ -52,11 +52,11 @@ export class EscrowVault {
    * Build transaction options with gas settings and estimated gas
    * V6 Enhancement: Dynamic buffer based on operation type
    */
-  private buildTxOptions(estimatedGas: BigNumber, operation: string = 'default'): any {
+  private buildTxOptions(estimatedGas: bigint, operation: string = 'default'): any {
     const bufferMultiplier = this.getGasBufferMultiplier(operation);
 
     const options: any = {
-      gasLimit: estimatedGas.mul(Math.round(bufferMultiplier * 100)).div(100)
+      gasLimit: (estimatedGas * BigInt(Math.round(bufferMultiplier * 100))) / 100n
     };
 
     if (this.gasSettings?.maxFeePerGas) {
@@ -94,8 +94,11 @@ export class EscrowVault {
       // Approve token transfer
       await this.approveToken(token, amount);
 
+      // ethers v6: use getFunction()
+      const createEscrowFunc = this.contract.getFunction('createEscrow');
+
       // Estimate gas with safety buffer (30% for external token transfer + storage)
-      const estimatedGas = await this.contract.estimateGas.createEscrow(
+      const estimatedGas = await createEscrowFunc.estimateGas(
         kernelAddress,
         txId,
         token,
@@ -107,7 +110,7 @@ export class EscrowVault {
       const txOptions = this.buildTxOptions(estimatedGas, 'createEscrow');
 
       // Create escrow
-      const tx = await this.contract.createEscrow(
+      const tx = await createEscrowFunc(
         kernelAddress,
         txId,
         token,
@@ -116,7 +119,8 @@ export class EscrowVault {
         txOptions
       );
 
-      const receipt: ContractReceipt = await tx.wait();
+      const receipt: ContractTransactionReceipt | null = await tx.wait();
+      if (!receipt) throw new Error('Transaction receipt not available');
       return this.extractEscrowId(receipt);
     } catch (error: any) {
       throw new TransactionRevertedError(error.transactionHash, error.reason || error.message);
@@ -144,7 +148,7 @@ export class EscrowVault {
   /**
    * Get escrow balance
    */
-  async getEscrowBalance(escrowId: string): Promise<BigNumber> {
+  async getEscrowBalance(escrowId: string): Promise<bigint> {
     const escrow = await this.getEscrow(escrowId);
     return escrow.amount;
   }
@@ -156,7 +160,7 @@ export class EscrowVault {
   async releaseEscrow(
     escrowId: string,
     recipients: string[],
-    amounts: BigNumber[]
+    amounts: bigint[]
   ): Promise<void> {
     // Input validation
     validateTxId(escrowId, 'escrowId');
@@ -176,11 +180,14 @@ export class EscrowVault {
     });
 
     try {
+      // ethers v6: use getFunction()
+      const disburseFunc = this.contract.getFunction('disburse');
+
       // Estimate gas with safety buffer (30% for multi-recipient disbursement)
-      const estimatedGas = await this.contract.estimateGas.disburse(escrowId, recipients, amounts);
+      const estimatedGas = await disburseFunc.estimateGas(escrowId, recipients, amounts);
       const txOptions = this.buildTxOptions(estimatedGas, 'releaseEscrow');
 
-      const tx = await this.contract.disburse(escrowId, recipients, amounts, txOptions);
+      const tx = await disburseFunc(escrowId, recipients, amounts, txOptions);
 
       await tx.wait();
     } catch (error: any) {
@@ -192,7 +199,7 @@ export class EscrowVault {
    * Approve token for escrow creation
    * Implements USDC-compatible approval pattern (reset to zero before setting new value)
    */
-  private async approveToken(tokenAddress: string, amount: BigNumber): Promise<void> {
+  private async approveToken(tokenAddress: string, amount: bigint): Promise<void> {
     // Validation already done in createEscrow, but double-check
     validateAddress(tokenAddress, 'tokenAddress');
     validateAmount(amount, 'amount');
@@ -207,18 +214,21 @@ export class EscrowVault {
       );
 
       // Only approve if needed
-      if (currentAllowance.lt(amount)) {
+      if (currentAllowance < amount) {
+        // ethers v6: use getFunction()
+        const approveFunc = tokenContract.getFunction('approve');
+
         // USDC-compatible approval pattern:
         // If any residual allowance exists, reset to zero first
-        if (currentAllowance.gt(0)) {
-          const resetGas = await tokenContract.estimateGas.approve(this.address, 0);
-          const resetTx = await tokenContract.approve(this.address, 0, this.buildTxOptions(resetGas, 'approveToken'));
+        if (currentAllowance > 0n) {
+          const resetGas = await approveFunc.estimateGas(this.address, 0);
+          const resetTx = await approveFunc(this.address, 0, this.buildTxOptions(resetGas, 'approveToken'));
           await resetTx.wait();
         }
 
         // Now set the new allowance
-        const approveGas = await tokenContract.estimateGas.approve(this.address, amount);
-        const approveTx = await tokenContract.approve(this.address, amount, this.buildTxOptions(approveGas, 'approveToken'));
+        const approveGas = await approveFunc.estimateGas(this.address, amount);
+        const approveTx = await approveFunc(this.address, amount, this.buildTxOptions(approveGas, 'approveToken'));
         await approveTx.wait();
       }
     } catch (error: any) {
@@ -232,7 +242,7 @@ export class EscrowVault {
   /**
    * Check token balance
    */
-  async getTokenBalance(tokenAddress: string, account: string): Promise<BigNumber> {
+  async getTokenBalance(tokenAddress: string, account: string): Promise<bigint> {
     const tokenContract = new Contract(tokenAddress, ERC20ABI, this.signer);
     return await tokenContract.balanceOf(account);
   }
@@ -244,7 +254,7 @@ export class EscrowVault {
     tokenAddress: string,
     owner: string,
     spender: string
-  ): Promise<BigNumber> {
+  ): Promise<bigint> {
     const tokenContract = new Contract(tokenAddress, ERC20ABI, this.signer);
     return await tokenContract.allowance(owner, spender);
   }
@@ -252,11 +262,25 @@ export class EscrowVault {
   /**
    * Extract escrow ID from receipt
    */
-  private extractEscrowId(receipt: ContractReceipt): string {
-    const event = receipt.events?.find((e) => e.event === 'EscrowCreated');
-    if (!event || !event.args) {
+  private extractEscrowId(receipt: ContractTransactionReceipt): string {
+    const event = receipt.logs.find((log) => {
+      try {
+        const parsedLog = this.contract.interface.parseLog(log);
+        return parsedLog?.name === 'EscrowCreated';
+      } catch {
+        return false;
+      }
+    });
+
+    if (!event) {
       throw new Error('EscrowCreated event not found in receipt');
     }
-    return event.args.escrowId;
+
+    const parsedLog = this.contract.interface.parseLog(event);
+    if (!parsedLog || !parsedLog.args) {
+      throw new Error('Failed to parse EscrowCreated event');
+    }
+
+    return parsedLog.args.escrowId;
   }
 }
