@@ -53,6 +53,30 @@ console.log('Transaction:', tx);
 - ✅ **TypeScript** - Full type safety
 - ✅ **Base L2** - Optimized for Base Sepolia & Mainnet
 
+## Known Limitations (V1)
+
+⚠️ **Important**: This is a V1 release with known limitations. Please review before production use.
+
+### Network Resilience
+- **No automatic retry** - Manual retry required for network failures
+- **No timeout handling** - `tx.wait()` may hang on RPC issues
+- **Single RPC dependency** - No automatic failover
+
+### State Transitions
+- **TOCTOU race condition** - State may change between SDK check and contract execution
+- **Contract provides final validation** - SDK-side checks are advisory only
+
+### Attestation Verification
+- **Revocation race window** - Attestation can be revoked between verify and settle
+- **Use `releaseEscrowWithVerification()`** - Minimizes race window
+
+See **[KNOWN_LIMITATIONS.md](./KNOWN_LIMITATIONS.md)** for detailed explanations, workarounds, and roadmap.
+
+**V1.1 Planned** (2-4 weeks): Automatic retry, timeout handling, nonce management
+**V2.0 Planned** (3-6 months): On-chain attestation validation, TOCTOU mitigation, multi-provider fallback
+
+---
+
 ## Network Support
 
 - **Base Sepolia** (testnet) - `chainId: 84532`

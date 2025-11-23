@@ -28,9 +28,14 @@ const mockContract = {
   },
   createTransaction: jest.fn().mockResolvedValue({
     wait: jest.fn().mockResolvedValue({
-      events: [{
-        event: 'TransactionCreated',
-        args: { transactionId: '0x' + '1'.repeat(64) }
+      transactionHash: '0x' + '5'.repeat(64),
+      logs: [{
+        topics: [
+          '0x' + '6'.repeat(64),  // Event signature hash
+          '0x' + '1'.repeat(64)   // Transaction ID (indexed param)
+        ],
+        data: '0x',
+        address: '0x' + 'a'.repeat(40)
       }]
     })
   }),
@@ -97,7 +102,24 @@ const mockContract = {
     const estimateGasMap: any = mockContract.estimateGas;
     func.estimateGas = estimateGasMap[name] || jest.fn().mockResolvedValue(BigInt(100000));
     return func;
-  })
+  }),
+  // ethers v6 interface.parseLog mock
+  interface: {
+    parseLog: jest.fn((log: any) => {
+      // Mock parsing TransactionCreated event
+      if (log.topics && log.topics[0] === '0x' + '6'.repeat(64)) {
+        return {
+          name: 'TransactionCreated',
+          args: {
+            transactionId: log.topics[1] || '0x' + '1'.repeat(64),
+            0: log.topics[1] || '0x' + '1'.repeat(64)  // Positional access
+          }
+        };
+      }
+      // Unknown event - throw to simulate parseLog failure
+      throw new Error('Unknown event signature');
+    })
+  }
 };
 
 // Mock signer
@@ -220,7 +242,8 @@ describe('ACTPKernel - Security Tests', () => {
     it('should handle TransactionCreated event extraction failure', async () => {
       mockContract.createTransaction.mockResolvedValueOnce({
         wait: jest.fn().mockResolvedValue({
-          events: []
+          transactionHash: '0x' + '5'.repeat(64),
+          logs: []  // Empty logs - no events emitted
         })
       });
 
@@ -841,6 +864,299 @@ describe('ACTPKernel - Security Tests', () => {
       const estimatedGas = await kernel.estimateCreateTransaction(params);
 
       expect(estimatedGas).toEqual(BigInt(85000));
+    });
+  });
+
+  describe('Event Parsing Edge Cases - Coverage Gap 1 (Lines 156-173)', () => {
+    it('should handle malformed log that causes parseLog error', async () => {
+      mockContract.createTransaction.mockResolvedValueOnce({
+        wait: jest.fn().mockResolvedValue({
+          transactionHash: '0x' + '5'.repeat(64),
+          logs: [
+            {
+              topics: ['0xINVALID_TOPIC'],  // Malformed topic
+              data: '0xGARBAGE_DATA',
+              address: KERNEL_ADDRESS
+            },
+            {
+              topics: ['0x' + '6'.repeat(64), '0x' + '1'.repeat(64)],
+              data: '0x',
+              address: KERNEL_ADDRESS
+            }
+          ]
+        })
+      });
+
+      // Mock parseLog to throw on first log, succeed on second
+      mockContract.interface.parseLog
+        .mockImplementationOnce(() => {
+          throw new Error('Invalid log data format');
+        })
+        .mockReturnValueOnce({
+          name: 'TransactionCreated',
+          args: {
+            transactionId: '0x' + '1'.repeat(64),
+            0: '0x' + '1'.repeat(64)
+          }
+        });
+
+      const params = {
+        provider: PROVIDER_ADDRESS,
+        requester: REQUESTER_ADDRESS,
+        amount: BigInt('100000000'),
+        deadline: Math.floor(Date.now() / 1000) + 86400,
+        disputeWindow: 7200
+      };
+
+      const txId = await kernel.createTransaction(params);
+
+      // Should skip malformed log via catch block (line 169) and find valid event
+      expect(txId).toBe('0x' + '1'.repeat(64));
+      expect(mockContract.interface.parseLog).toHaveBeenCalledTimes(2);
+    });
+
+    it('should skip non-matching events and find TransactionCreated in multiple logs', async () => {
+      mockContract.createTransaction.mockResolvedValueOnce({
+        wait: jest.fn().mockResolvedValue({
+          transactionHash: '0x' + '5'.repeat(64),
+          logs: [
+            {
+              topics: ['0x' + '7'.repeat(64)],  // Different event signature
+              data: '0x',
+              address: KERNEL_ADDRESS
+            },
+            {
+              topics: ['0x' + '8'.repeat(64)],  // Another different event
+              data: '0x',
+              address: KERNEL_ADDRESS
+            },
+            {
+              topics: ['0x' + '6'.repeat(64), '0x' + '1'.repeat(64)],  // TransactionCreated
+              data: '0x',
+              address: KERNEL_ADDRESS
+            }
+          ]
+        })
+      });
+
+      mockContract.interface.parseLog
+        .mockReturnValueOnce({
+          name: 'SomeOtherEvent',
+          args: {
+            transactionId: null,
+            0: null
+          }
+        })
+        .mockReturnValueOnce({
+          name: 'AnotherEvent',
+          args: {
+            transactionId: null,
+            0: null
+          }
+        })
+        .mockReturnValueOnce({
+          name: 'TransactionCreated',
+          args: {
+            transactionId: '0x' + '1'.repeat(64),
+            0: '0x' + '1'.repeat(64)
+          }
+        });
+
+      const params = {
+        provider: PROVIDER_ADDRESS,
+        requester: REQUESTER_ADDRESS,
+        amount: BigInt('100000000'),
+        deadline: Math.floor(Date.now() / 1000) + 86400,
+        disputeWindow: 7200
+      };
+
+      const txId = await kernel.createTransaction(params);
+
+      expect(txId).toBe('0x' + '1'.repeat(64));
+      expect(mockContract.interface.parseLog).toHaveBeenCalledTimes(3);
+    });
+
+    it('should throw error when no TransactionCreated event found in receipt (line 173)', async () => {
+      mockContract.createTransaction.mockResolvedValueOnce({
+        wait: jest.fn().mockResolvedValue({
+          transactionHash: '0x' + '5'.repeat(64),
+          logs: [
+            {
+              topics: ['0x' + '7'.repeat(64)],
+              data: '0x',
+              address: KERNEL_ADDRESS
+            },
+            {
+              topics: ['0x' + '8'.repeat(64)],
+              data: '0x',
+              address: KERNEL_ADDRESS
+            }
+          ]
+        })
+      });
+
+      // Mock parseLog to return non-matching events
+      mockContract.interface.parseLog
+        .mockReturnValueOnce({
+          name: 'SomeOtherEvent',
+          args: {
+            transactionId: null,
+            0: null
+          }
+        })
+        .mockReturnValueOnce({
+          name: 'YetAnotherEvent',
+          args: {
+            transactionId: null,
+            0: null
+          }
+        });
+
+      const params = {
+        provider: PROVIDER_ADDRESS,
+        requester: REQUESTER_ADDRESS,
+        amount: BigInt('100000000'),
+        deadline: Math.floor(Date.now() / 1000) + 86400,
+        disputeWindow: 7200
+      };
+
+      // Should throw "TransactionCreated event not found" (line 173)
+      await expect(kernel.createTransaction(params))
+        .rejects.toThrow('TransactionCreated event not found in receipt');
+    });
+  });
+
+  describe('anchorAttestation - Attestation Anchoring (Lines 502-530)', () => {
+    beforeEach(() => {
+      // Setup anchorAttestation mock
+      const anchorAttestationFunc: any = jest.fn().mockResolvedValue({
+        wait: jest.fn().mockResolvedValue({
+          transactionHash: '0x' + 'a'.repeat(64),
+          logs: []
+        })
+      });
+      anchorAttestationFunc.estimateGas = jest.fn().mockResolvedValue(BigInt(50000));
+
+      mockContract.getFunction.mockImplementation((name: string) => {
+        if (name === 'anchorAttestation') {
+          return anchorAttestationFunc;
+        }
+        // Fallback to existing mock implementation
+        const functions: any = {
+          createTransaction: mockContract.createTransaction,
+          transitionState: mockContract.transitionState,
+          linkEscrow: mockContract.linkEscrow,
+          releaseEscrow: mockContract.releaseEscrow,
+          releaseMilestone: mockContract.releaseMilestone,
+          getTransaction: mockContract.getTransaction,
+          raiseDispute: jest.fn().mockResolvedValue({ wait: jest.fn().mockResolvedValue({}) }),
+          resolveDispute: jest.fn().mockResolvedValue({ wait: jest.fn().mockResolvedValue({}) })
+        };
+        const func = functions[name] || jest.fn().mockResolvedValue({ wait: jest.fn().mockResolvedValue({}) });
+        const estimateGasMap: any = mockContract.estimateGas;
+        func.estimateGas = estimateGasMap[name] || jest.fn().mockResolvedValue(BigInt(100000));
+        return func;
+      });
+    });
+
+    it('should successfully anchor valid attestation', async () => {
+      const txId = '0x' + '1'.repeat(64);
+      const attestationUID = '0x' + '2'.repeat(64);
+
+      await kernel.anchorAttestation(txId, attestationUID);
+
+      const anchorFunc = mockContract.getFunction('anchorAttestation');
+      expect(anchorFunc).toHaveBeenCalledWith(
+        txId,
+        attestationUID,
+        expect.objectContaining({
+          gasLimit: expect.any(BigInt)
+        })
+      );
+    });
+
+    it('should validate attestationUID format - missing 0x prefix', async () => {
+      const txId = '0x' + '1'.repeat(64);
+      const invalidUID = '1'.repeat(64);  // Missing 0x prefix
+
+      await expect(kernel.anchorAttestation(txId, invalidUID))
+        .rejects.toThrow('Must be 32-byte hex string');
+    });
+
+    it('should validate attestationUID format - too short', async () => {
+      const txId = '0x' + '1'.repeat(64);
+      const invalidUID = '0x1234';  // Too short
+
+      await expect(kernel.anchorAttestation(txId, invalidUID))
+        .rejects.toThrow('Must be 32-byte hex string');
+    });
+
+    it('should validate attestationUID format - invalid hex characters', async () => {
+      const txId = '0x' + '1'.repeat(64);
+      const invalidUID = '0x' + 'G'.repeat(64);  // Invalid hex
+
+      await expect(kernel.anchorAttestation(txId, invalidUID))
+        .rejects.toThrow('Must be 32-byte hex string');
+    });
+
+    it('should validate attestationUID format - empty string', async () => {
+      const txId = '0x' + '1'.repeat(64);
+      const invalidUID = '';
+
+      await expect(kernel.anchorAttestation(txId, invalidUID))
+        .rejects.toThrow('Must be 32-byte hex string');
+    });
+
+    it('should apply 15% gas buffer for anchorAttestation', async () => {
+      const txId = '0x' + '1'.repeat(64);
+      const attestationUID = '0x' + '2'.repeat(64);
+
+      const estimateGasMock = jest.fn().mockResolvedValue(BigInt(100000));
+      const anchorFunc: any = jest.fn().mockResolvedValue({
+        wait: jest.fn().mockResolvedValue({
+          transactionHash: '0x' + 'a'.repeat(64),
+          logs: []
+        })
+      });
+      anchorFunc.estimateGas = estimateGasMock;
+
+      mockContract.getFunction.mockReturnValueOnce(anchorFunc);
+
+      await kernel.anchorAttestation(txId, attestationUID);
+
+      // 15% gas buffer for anchorAttestation (simple attestation anchoring)
+      expect(anchorFunc).toHaveBeenCalledWith(
+        txId,
+        attestationUID,
+        expect.objectContaining({
+          gasLimit: BigInt(115000)  // 100k * 1.15
+        })
+      );
+    });
+
+    it('should handle anchorAttestation contract revert', async () => {
+      const txId = '0x' + '1'.repeat(64);
+      const attestationUID = '0x' + '2'.repeat(64);
+
+      const anchorFunc: any = jest.fn().mockRejectedValueOnce({
+        transactionHash: '0x' + 'f'.repeat(64),
+        reason: 'Attestation already anchored',
+        message: 'execution reverted: Attestation already anchored'
+      });
+      anchorFunc.estimateGas = jest.fn().mockResolvedValue(BigInt(50000));
+
+      mockContract.getFunction.mockReturnValueOnce(anchorFunc);
+
+      await expect(kernel.anchorAttestation(txId, attestationUID))
+        .rejects.toThrow('Transaction reverted');
+    });
+
+    it('should validate transaction ID format in anchorAttestation', async () => {
+      const invalidTxId = 'not-a-valid-tx-id';
+      const attestationUID = '0x' + '2'.repeat(64);
+
+      await expect(kernel.anchorAttestation(invalidTxId, attestationUID))
+        .rejects.toThrow('Invalid transaction ID format');
     });
   });
 });
