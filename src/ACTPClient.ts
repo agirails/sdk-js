@@ -1,4 +1,5 @@
-import { Wallet, providers, Signer, BigNumber } from 'ethers';
+import { ethers, Wallet, Signer } from 'ethers';
+import type { JsonRpcProvider } from 'ethers';
 import { ACTPKernel } from './protocol/ACTPKernel';
 import { EscrowVault } from './protocol/EscrowVault';
 import { EventMonitor } from './protocol/EventMonitor';
@@ -15,7 +16,7 @@ export interface ACTPClientConfig {
   network: 'base-sepolia' | 'base-mainnet';
   privateKey?: string;
   signer?: Signer;
-  provider?: providers.Provider;
+  provider?: JsonRpcProvider;
   rpcUrl?: string;
   contracts?: {
     actpKernel?: string;
@@ -23,8 +24,8 @@ export interface ACTPClientConfig {
     usdc?: string;
   };
   gasSettings?: {
-    maxFeePerGas?: BigNumber;
-    maxPriorityFeePerGas?: BigNumber;
+    maxFeePerGas?: bigint;
+    maxPriorityFeePerGas?: bigint;
   };
   eas?: EASConfig;
 }
@@ -50,7 +51,7 @@ export class ACTPClient {
   public readonly messageSigner: MessageSigner;
   public readonly eas?: EASHelper;
 
-  private readonly provider: providers.Provider;
+  private readonly provider: JsonRpcProvider;
   private readonly signer: Signer;
   private readonly networkConfig: NetworkConfig;
 
@@ -96,7 +97,7 @@ export class ACTPClient {
       this.provider = config.provider;
     } else {
       const rpcUrl = config.rpcUrl || this.networkConfig.rpcUrl;
-      this.provider = new providers.JsonRpcProvider(rpcUrl, this.networkConfig.chainId);
+      this.provider = new ethers.JsonRpcProvider(rpcUrl, this.networkConfig.chainId);
     }
 
     // Setup signer
@@ -106,12 +107,8 @@ export class ACTPClient {
       this.signer = new Wallet(config.privateKey, this.provider);
     } else {
       // Attempt to derive signer from provider if possible
-      const jsonRpcProvider = this.provider as providers.JsonRpcProvider;
-      if (jsonRpcProvider.getSigner) {
-        this.signer = jsonRpcProvider.getSigner();
-      } else {
-        throw new ValidationError('signer', 'Either privateKey or signer must be provided');
-      }
+      // In ethers v6, getSigner() is async and returns a JsonRpcSigner
+      throw new ValidationError('signer', 'Either privateKey or signer must be provided');
     }
 
     // Initialize protocol modules
@@ -179,7 +176,7 @@ export class ACTPClient {
   /**
    * Get provider
    */
-  getProvider(): providers.Provider {
+  getProvider(): JsonRpcProvider {
     return this.provider;
   }
 
@@ -195,14 +192,55 @@ export class ACTPClient {
   }
 
   /**
-   * Get gas price
+   * Get gas price (ethers v6: use getFeeData instead)
    */
   async getGasPrice() {
     try {
-      return await this.provider.getGasPrice();
+      const feeData = await this.provider.getFeeData();
+      return feeData.gasPrice || 0n;
     } catch (error: any) {
       throw new NetworkError(this.networkConfig.name, error.message);
     }
+  }
+
+  /**
+   * Release escrow with automatic attestation verification (recommended for security).
+   *
+   * SECURITY: This method verifies the attestation belongs to the transaction BEFORE
+   * releasing escrow. This protects against malicious providers submitting attestations
+   * from different transactions.
+   *
+   * ACTPKernel V1 contract accepts any attestationUID without on-chain validation.
+   * This SDK-side verification is the recommended protection until V2 adds on-chain checks.
+   *
+   * @param txId - Transaction ID to settle
+   * @param attestationUID - EAS attestation UID to verify
+   * @throws {Error} If EAS is not configured (client.eas is undefined)
+   * @throws {Error} If attestation verification fails (revoked, expired, or txId mismatch)
+   * @throws {TransactionRevertedError} If escrow release fails
+   *
+   * @example
+   * ```typescript
+   * // Get transaction to find attestation UID
+   * const tx = await client.kernel.getTransaction(txId);
+   *
+   * // Verify and release escrow in one call
+   * await client.releaseEscrowWithVerification(txId, tx.attestationUID);
+   * ```
+   */
+  async releaseEscrowWithVerification(txId: string, attestationUID: string): Promise<void> {
+    // Ensure EAS is configured
+    if (!this.eas) {
+      throw new Error(
+        'EAS is not configured. Initialize ACTPClient with eas config or use kernel.releaseEscrow() directly (unsafe)'
+      );
+    }
+
+    // Step 1: Verify attestation belongs to this transaction
+    await this.eas.verifyDeliveryAttestation(txId, attestationUID);
+
+    // Step 2: Release escrow (verification passed)
+    await this.kernel.releaseEscrow(txId);
   }
 
   /**

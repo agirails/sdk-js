@@ -9,8 +9,7 @@
  * - Optional IPFS upload
  */
 
-import { Signer, BigNumber } from 'ethers';
-import { keccak256, toUtf8Bytes, verifyTypedData } from 'ethers/lib/utils';
+import { Signer, keccak256, toUtf8Bytes, verifyTypedData } from 'ethers';
 import { canonicalJsonStringify } from '../utils/canonicalJson';
 import { IPFSClient } from '../utils/IPFSClient';
 import { NonceManager } from '../utils/NonceManager';
@@ -176,20 +175,20 @@ export class QuoteBuilder {
     }
 
     // 3. Validate business rules
-    const quotedAmount = BigNumber.from(quote.quotedAmount);
-    const originalAmount = BigNumber.from(quote.originalAmount);
-    const maxPrice = BigNumber.from(quote.maxPrice);
+    const quotedAmount = BigInt(quote.quotedAmount);
+    const originalAmount = BigInt(quote.originalAmount);
+    const maxPrice = BigInt(quote.maxPrice);
 
-    if (quotedAmount.lt(originalAmount)) {
+    if (quotedAmount < originalAmount) {
       throw new Error('Quoted amount below original amount');
     }
 
-    if (quotedAmount.gt(maxPrice)) {
+    if (quotedAmount > maxPrice) {
       throw new Error('Quoted amount exceeds maxPrice');
     }
 
     // Platform minimum: $0.05 = 50000 base units (6 decimals)
-    if (quotedAmount.lt(50000)) {
+    if (quotedAmount < 50000n) {
       throw new Error('Quoted amount below platform minimum ($0.05)');
     }
 
@@ -273,9 +272,9 @@ export class QuoteBuilder {
       nonce: quote.nonce
     };
 
-    // Sign using ethers.js signTypedData
-    if ('_signTypedData' in this.signer && typeof (this.signer as any)._signTypedData === 'function') {
-      const signature = await (this.signer as any)._signTypedData(domain, AIP2QuoteTypes, message);
+    // Sign using ethers.js signTypedData (v6 API)
+    if ('signTypedData' in this.signer && typeof (this.signer as any).signTypedData === 'function') {
+      const signature = await (this.signer as any).signTypedData(domain, AIP2QuoteTypes, message);
       return signature;
     }
 
@@ -354,20 +353,20 @@ export class QuoteBuilder {
    */
   private validateParams(params: QuoteParams): void {
     // Amount validation
-    const quotedAmount = BigNumber.from(params.quotedAmount);
-    const originalAmount = BigNumber.from(params.originalAmount);
-    const maxPrice = BigNumber.from(params.maxPrice);
+    const quotedAmount = BigInt(params.quotedAmount);
+    const originalAmount = BigInt(params.originalAmount);
+    const maxPrice = BigInt(params.maxPrice);
 
-    if (quotedAmount.lt(originalAmount)) {
+    if (quotedAmount < originalAmount) {
       throw new Error('quotedAmount must be >= originalAmount');
     }
 
-    if (quotedAmount.gt(maxPrice)) {
+    if (quotedAmount > maxPrice) {
       throw new Error('quotedAmount must be <= maxPrice');
     }
 
     // Platform minimum: $0.05 = 50000 base units (6 decimals)
-    if (quotedAmount.lt(50000)) {
+    if (quotedAmount < 50000n) {
       throw new Error('quotedAmount must be >= $0.05 (50000 base units)');
     }
 

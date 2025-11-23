@@ -8,8 +8,8 @@ import * as dotenv from 'dotenv';
 dotenv.config(); // Load .env file
 
 import { ACTPClient } from '../src/ACTPClient';
-import { parseUnits, formatUnits } from 'ethers/lib/utils';
-import { ethers } from 'ethers';
+import { parseUnits, formatUnits, keccak256, toUtf8Bytes, AbiCoder, Wallet, Contract } from 'ethers';
+import { EAS, SchemaEncoder } from '@ethereum-attestation-service/eas-sdk';
 
 // Test wallets
 const CLIENT_ADDRESS = '0xe174bd855aaA8d907334288323044d4cf79BfAfC';
@@ -55,7 +55,7 @@ async function main() {
   const amount = parseUnits('100', 6); // 100 USDC
   const deadline = Math.floor(Date.now() / 1000) + 86400; // 24 hours
   const disputeWindow = 7200; // 2 hours
-  const metadata = ethers.utils.keccak256(ethers.utils.toUtf8Bytes('Test service - translation with EAS proof'));
+  const metadata = keccak256(toUtf8Bytes('Test service - translation with EAS proof'));
 
   try {
     // STEP 1: Create transaction
@@ -94,8 +94,8 @@ async function main() {
     ];
 
     const provider = clientSDK.getProvider();
-    const signer = new ethers.Wallet(CLIENT_PRIVATE_KEY, provider);
-    const usdc = new ethers.Contract(networkConfig.contracts.usdc, usdcABI, signer);
+    const signer = new Wallet(CLIENT_PRIVATE_KEY, provider);
+    const usdc = new Contract(networkConfig.contracts.usdc, usdcABI, signer);
 
     // Check balance
     const balance = await usdc.balanceOf(await signer.getAddress());
@@ -106,8 +106,9 @@ async function main() {
     await sleep(3000); // Wait for state propagation
 
     // Generate escrowId
-    const escrowId = ethers.utils.keccak256(
-      ethers.utils.defaultAbiCoder.encode(
+    const abiCoder = AbiCoder.defaultAbiCoder();
+    const escrowId = keccak256(
+      abiCoder.encode(
         ['bytes32', 'address', 'uint256'],
         [txId, networkConfig.contracts.escrowVault, Date.now()]
       )
@@ -149,7 +150,7 @@ async function main() {
       wordCount: 1500,
       quality: 'professional'
     });
-    const resultHash = ethers.utils.keccak256(ethers.utils.toUtf8Bytes(resultData));
+    const resultHash = keccak256(toUtf8Bytes(resultData));
     const deliveredAt = Math.floor(Date.now() / 1000);
 
     console.log('   Delivery proof:');
@@ -157,28 +158,43 @@ async function main() {
     console.log('     Result hash:', resultHash);
     console.log('     Delivered at:', new Date(deliveredAt * 1000).toLocaleString());
 
-    const providerSigner = new ethers.Wallet(PROVIDER_PRIVATE_KEY, provider);
+    const providerSigner = new Wallet(PROVIDER_PRIVATE_KEY, provider);
 
-    // TODO: EAS attestation currently has encoding issues with ethers v5
-    // This will be fixed in next SDK version with proper EAS integration
-    console.log('   ⚠️  Skipping on-chain attestation (EAS integration in progress)');
-    console.log('');
-    console.log('   ℹ️  In production, provider would:');
-    console.log('      1. Create EAS attestation with delivery proof');
-    console.log('      2. Anchor attestation UID on-chain via Kernel');
-    console.log('      3. Store proof on IPFS/Arweave for permanent record');
-    console.log('');
+    // Create actual on-chain EAS attestation
+    console.log('   Creating on-chain EAS attestation...');
 
-    // Simulate attestation UID for demonstration
-    const attestationUID = ethers.utils.keccak256(
-      ethers.utils.defaultAbiCoder.encode(
-        ['bytes32', 'address', 'uint256'],
-        [txId, providerSigner.address, deliveredAt]
-      )
-    );
+    const eas = new EAS(EAS_CONTRACT_ADDRESS);
+    eas.connect(providerSigner);
 
-    console.log('   📝 Simulated Attestation UID:', attestationUID);
-    console.log('   📊 EAS Schema: https://base-sepolia.easscan.org/schema/view/' + EAS_DELIVERY_SCHEMA_UID);
+    // Schema: bytes32 txId, string resultCID, bytes32 resultHash, uint256 deliveredAt
+    const schemaEncoder = new SchemaEncoder('bytes32 txId,string resultCID,bytes32 resultHash,uint256 deliveredAt');
+    const encodedData = schemaEncoder.encodeData([
+      { name: 'txId', value: txId, type: 'bytes32' },
+      { name: 'resultCID', value: resultCID, type: 'string' },
+      { name: 'resultHash', value: resultHash, type: 'bytes32' },
+      { name: 'deliveredAt', value: deliveredAt, type: 'uint256' }
+    ]);
+
+    const attestationTx = await eas.attest({
+      schema: EAS_DELIVERY_SCHEMA_UID,
+      data: {
+        recipient: CLIENT_ADDRESS, // Attestation recipient is the client
+        expirationTime: BigInt(0), // No expiration
+        revocable: true, // Can be revoked if dispute resolution requires it
+        refUID: '0x0000000000000000000000000000000000000000000000000000000000000000',
+        data: encodedData,
+        value: BigInt(0)
+      }
+    });
+
+    const attestationReceipt = await attestationTx.wait();
+    const attestationUID = attestationReceipt;
+
+    console.log('   ✅ On-chain attestation created!');
+    console.log('   📝 Attestation UID:', attestationUID);
+    console.log('   📊 EAS Explorer: https://base-sepolia.easscan.org/attestation/view/' + attestationUID);
+    console.log('   📊 Schema: https://base-sepolia.easscan.org/schema/view/' + EAS_DELIVERY_SCHEMA_UID);
+    await sleep(2000);
     console.log('');
 
     // Note: anchorAttestation() will be implemented in SDK in future version

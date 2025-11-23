@@ -4,14 +4,14 @@
  * These tests validate SDK functionality without needing deployed contracts.
  */
 
-import { utils, Wallet } from 'ethers';
+import { keccak256, toUtf8Bytes, hexlify, Wallet, randomBytes, HDNodeWallet } from 'ethers';
 import { ProofGenerator } from '../protocol/ProofGenerator';
 import { MessageSigner } from '../protocol/MessageSigner';
 import { State, StateMachine } from '../types/state';
 import { ACTPMessage } from '../types/message';
 
 describe('SDK Integration Tests', () => {
-  let wallet: Wallet;
+  let wallet: HDNodeWallet;
   let proofGenerator: ProofGenerator;
   let messageSigner: MessageSigner;
 
@@ -122,7 +122,7 @@ describe('SDK Integration Tests', () => {
         from: messageSigner.addressToDID(wallet.address),
         to: messageSigner.addressToDID('0x' + '1'.repeat(40)),
         timestamp: Date.now(),
-        nonce: utils.hexlify(utils.randomBytes(32)),
+        nonce: hexlify(randomBytes(32)),
         serviceRequest: {
           capabilityType: 'translation',
           parameters: {}
@@ -145,7 +145,7 @@ describe('SDK Integration Tests', () => {
         from: messageSigner.addressToDID(wallet.address),
         to: messageSigner.addressToDID('0x' + '1'.repeat(40)),
         timestamp: Date.now(),
-        nonce: utils.hexlify(utils.randomBytes(32))
+        nonce: hexlify(randomBytes(32))
       };
 
       // Sign with this wallet
@@ -199,10 +199,10 @@ describe('SDK Integration Tests', () => {
 
     it('should match ethers.js keccak256', () => {
       const content = 'Hello, ACTP!';
-      const contentBytes = utils.toUtf8Bytes(content);
+      const contentBytes = toUtf8Bytes(content);
 
       const sdkHash = proofGenerator.hashContent(content);
-      const ethersHash = utils.keccak256(contentBytes);
+      const ethersHash = keccak256(contentBytes);
 
       expect(sdkHash).toBe(ethersHash);
     });
@@ -234,7 +234,7 @@ describe('SDK Integration Tests', () => {
       console.log('\n=== Mock Transaction Flow ===\n');
 
       // 1. Create transaction (INITIATED)
-      const txId = utils.hexlify(utils.randomBytes(32));
+      const txId = hexlify(randomBytes(32));
       let state = State.INITIATED;
       console.log(`1. Transaction created: ${txId}`);
       console.log(`   State: ${State[state]}`);

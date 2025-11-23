@@ -5,7 +5,7 @@
  * Run with: npx tsx src/utils/computeTypeHash.ts
  */
 
-import { _TypedDataEncoder } from 'ethers/lib/utils';
+import { TypedDataEncoder, keccak256, toUtf8Bytes } from 'ethers';
 import { AIP4DeliveryProofTypes } from '../types/eip712';
 
 /**
@@ -13,11 +13,10 @@ import { AIP4DeliveryProofTypes } from '../types/eip712';
  * @returns Type hash (bytes32)
  */
 export function computeDeliveryProofTypeHash(): string {
-  const encoder = _TypedDataEncoder.from(AIP4DeliveryProofTypes);
+  const encoder = TypedDataEncoder.from(AIP4DeliveryProofTypes);
   const typeString = encoder.encodeType('DeliveryProof');
 
   // Type hash is keccak256 of the encoded type string
-  const { keccak256, toUtf8Bytes } = require('ethers/lib/utils');
   const typeHash = keccak256(toUtf8Bytes(typeString));
 
   return typeHash;
@@ -28,7 +27,7 @@ export function computeDeliveryProofTypeHash(): string {
  * @returns Type string (for documentation)
  */
 export function getDeliveryProofTypeString(): string {
-  return _TypedDataEncoder.from(AIP4DeliveryProofTypes).encodeType('DeliveryProof');
+  return TypedDataEncoder.from(AIP4DeliveryProofTypes).encodeType('DeliveryProof');
 }
 
 // If run directly, compute and print type hash

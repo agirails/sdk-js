@@ -13,7 +13,6 @@
  * - EventMonitor.ts implementation
  */
 
-import { BigNumber } from 'ethers';
 import { EventMonitor } from '../../protocol/EventMonitor';
 import { State } from '../../types';
 
@@ -184,11 +183,11 @@ describe('EventMonitor - Event Watching & Subscriptions', () => {
           transactionId: txId,
           requester: requesterAddress,
           provider: '0x' + 'b'.repeat(40),
-          amount: BigNumber.from('100000000'),
+          amount: BigInt('100000000'),
           state: State.INITIATED,
-          createdAt: BigNumber.from(Math.floor(Date.now() / 1000)),
-          deadline: BigNumber.from(Math.floor(Date.now() / 1000) + 86400),
-          disputeWindow: BigNumber.from(7200),
+          createdAt: BigInt(Math.floor(Date.now() / 1000)),
+          deadline: BigInt(Math.floor(Date.now() / 1000) + 86400),
+          disputeWindow: BigInt(7200),
           escrowContract: '0x' + 'c'.repeat(40),
           escrowId: '0x' + '3'.repeat(64),
           serviceHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
@@ -260,7 +259,7 @@ describe('EventMonitor - Event Watching & Subscriptions', () => {
       const txId = '0x' + '1'.repeat(64);
       const provider = '0x' + 'b'.repeat(40);
       const requester = '0x' + 'a'.repeat(40);
-      const amount = BigNumber.from('100000000');
+      const amount = BigInt('100000000');
 
       eventListener(txId, provider, requester, amount, mockEvent);
 
@@ -361,7 +360,7 @@ describe('EventMonitor - Event Watching & Subscriptions', () => {
 
       // Simulate EscrowReleased event
       const txId = '0x' + '1'.repeat(64);
-      const amount = BigNumber.from('100000000');
+      const amount = BigInt('100000000');
 
       eventListener(txId, amount);
 

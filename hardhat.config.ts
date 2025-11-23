@@ -1,5 +1,5 @@
 import { HardhatUserConfig } from 'hardhat/config';
-import '@nomiclabs/hardhat-ethers';
+import '@nomicfoundation/hardhat-ethers';
 import * as dotenv from 'dotenv';
 
 // Load .env file

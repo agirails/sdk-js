@@ -3,6 +3,10 @@ module.exports = {
   testEnvironment: 'node',
   roots: ['<rootDir>/src'],
   testMatch: ['**/__tests__/**/*.ts', '**/?(*.)+(spec|test).ts'],
+  // Transform ESM modules (kubo-rpc-client) to CommonJS for Jest
+  transformIgnorePatterns: [
+    'node_modules/(?!(kubo-rpc-client|ipfs-core-utils|multiformats|@multiformats)/)'
+  ],
   collectCoverageFrom: [
     'src/**/*.ts',
     '!src/**/*.d.ts',
