@@ -1,0 +1,129 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://agirails.io/schemas/aip-2-quote-response.schema.json",
+  "title": "AIP-2 Quote Response",
+  "description": "Quote response message from provider to consumer (AIP-2 §2.1)",
+  "type": "object",
+  "required": [
+    "type",
+    "version",
+    "txId",
+    "provider",
+    "consumer",
+    "quotedAmount",
+    "originalAmount",
+    "maxPrice",
+    "currency",
+    "decimals",
+    "quotedAt",
+    "expiresAt",
+    "chainId",
+    "nonce",
+    "signature"
+  ],
+  "properties": {
+    "type": {
+      "type": "string",
+      "const": "agirails.quote.v1",
+      "description": "Message type identifier"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "description": "AIP-2 version (semver format)"
+    },
+    "txId": {
+      "type": "string",
+      "pattern": "^0x[a-fA-F0-9]{64}$",
+      "description": "ACTP transaction ID (bytes32)"
+    },
+    "provider": {
+      "type": "string",
+      "pattern": "^did:ethr:(\\d+:)?0x[a-fA-F0-9]{40}$",
+      "description": "Provider DID (did:ethr format)"
+    },
+    "consumer": {
+      "type": "string",
+      "pattern": "^did:ethr:(\\d+:)?0x[a-fA-F0-9]{40}$",
+      "description": "Consumer DID (did:ethr format)"
+    },
+    "quotedAmount": {
+      "type": "string",
+      "pattern": "^\\d+$",
+      "description": "Provider's quoted price in token base units (uint256 as string)"
+    },
+    "originalAmount": {
+      "type": "string",
+      "pattern": "^\\d+$",
+      "description": "Consumer's original offered amount (uint256 as string)"
+    },
+    "maxPrice": {
+      "type": "string",
+      "pattern": "^\\d+$",
+      "description": "Consumer's maximum acceptable price (uint256 as string)"
+    },
+    "currency": {
+      "type": "string",
+      "enum": ["USDC"],
+      "description": "Payment token symbol (currently USDC only)"
+    },
+    "decimals": {
+      "type": "integer",
+      "const": 6,
+      "description": "Token decimal places (USDC uses 6 decimals)"
+    },
+    "quotedAt": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Quote creation timestamp (Unix seconds)"
+    },
+    "expiresAt": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Quote expiry timestamp (Unix seconds, must be > quotedAt and <= quotedAt + 86400)"
+    },
+    "justification": {
+      "type": "object",
+      "description": "Provider's reasoning for quoted price (optional, informational only)",
+      "properties": {
+        "reason": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "Human-readable explanation"
+        },
+        "estimatedTime": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Estimated completion time (seconds)"
+        },
+        "computeCost": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Compute cost in USD"
+        },
+        "breakdown": {
+          "type": "object",
+          "description": "Itemized cost breakdown (provider-defined schema)",
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "chainId": {
+      "type": "integer",
+      "enum": [84532, 8453],
+      "description": "Blockchain network ID (84532=Base Sepolia, 8453=Base Mainnet)"
+    },
+    "nonce": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Monotonically increasing nonce per provider + message type"
+    },
+    "signature": {
+      "type": "string",
+      "pattern": "^0x[a-fA-F0-9]{130}$",
+      "description": "EIP-712 signature by provider (65 bytes hex)"
+    }
+  },
+  "additionalProperties": false
+}
