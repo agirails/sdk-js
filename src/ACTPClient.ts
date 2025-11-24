@@ -5,9 +5,12 @@ import { EscrowVault } from './protocol/EscrowVault';
 import { EventMonitor } from './protocol/EventMonitor';
 import { ProofGenerator } from './protocol/ProofGenerator';
 import { MessageSigner } from './protocol/MessageSigner';
+import { QuoteBuilder } from './builders/QuoteBuilder';
 import { NetworkConfig, getNetwork } from './config/networks';
 import { NetworkError, ValidationError } from './errors';
 import { EASHelper, EASConfig } from './protocol/EASHelper';
+import { NonceManager } from './utils/NonceManager';
+import { IPFSClient } from './utils/IPFSClient';
 
 /**
  * ACTPClient configuration
@@ -49,11 +52,14 @@ export class ACTPClient {
   public readonly events: EventMonitor;
   public readonly proofGenerator: ProofGenerator;
   public readonly messageSigner: MessageSigner;
+  public readonly quote: QuoteBuilder;
   public readonly eas?: EASHelper;
 
   private readonly provider: JsonRpcProvider;
   private readonly signer: Signer;
   private readonly networkConfig: NetworkConfig;
+  private readonly nonceManager: NonceManager;
+  private readonly ipfs?: IPFSClient;
 
   /**
    * Private constructor - use ACTPClient.create() instead
@@ -111,6 +117,15 @@ export class ACTPClient {
       throw new ValidationError('signer', 'Either privateKey or signer must be provided');
     }
 
+    // Initialize shared utilities
+    this.nonceManager = new NonceManager();
+
+    // Initialize IPFS client if configured
+    if (config.rpcUrl) {
+      // IPFS configuration could be added to ACTPClientConfig in the future
+      // For now, QuoteBuilder can work without IPFS (quotes stored only on-chain)
+    }
+
     // Initialize protocol modules
     this.kernel = new ACTPKernel(
       this.networkConfig.contracts.actpKernel,
@@ -132,6 +147,9 @@ export class ACTPClient {
     this.proofGenerator = new ProofGenerator();
 
     this.messageSigner = new MessageSigner(this.signer);
+
+    // Initialize QuoteBuilder (AIP-2)
+    this.quote = new QuoteBuilder(this.signer, this.nonceManager, this.ipfs);
 
     if (config.eas) {
       this.eas = new EASHelper(this.signer, config.eas);

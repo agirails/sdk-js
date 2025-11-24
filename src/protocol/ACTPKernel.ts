@@ -214,6 +214,45 @@ export class ACTPKernel {
   }
 
   /**
+   * Submit quote for transaction (AIP-2)
+   * Reference: AIP-2 §4.1 (Provider workflow)
+   *
+   * Transitions transaction from INITIATED → QUOTED with quote hash stored on-chain
+   *
+   * @param txId - Transaction ID (bytes32)
+   * @param quoteHash - Keccak256 hash of canonical JSON quote message
+   */
+  async submitQuote(txId: string, quoteHash: string): Promise<void> {
+    // Input validation
+    validateTxId(txId, 'txId');
+
+    if (!/^0x[a-fA-F0-9]{64}$/.test(quoteHash)) {
+      throw new ValidationError('quoteHash', 'Must be valid bytes32 hex string');
+    }
+
+    if (quoteHash === '0x0000000000000000000000000000000000000000000000000000000000000000') {
+      throw new ValidationError('quoteHash', 'Cannot be zero hash');
+    }
+
+    // Validate current state is INITIATED
+    const currentTx = await this.getTransaction(txId);
+    if (currentTx.state !== State.INITIATED) {
+      throw new InvalidStateTransitionError(
+        currentTx.state,
+        State.QUOTED,
+        ['INITIATED']
+      );
+    }
+
+    // Encode quote hash as bytes proof
+    const abiCoder = AbiCoder.defaultAbiCoder();
+    const proof = abiCoder.encode(['bytes32'], [quoteHash]);
+
+    // Transition to QUOTED state with quote hash
+    await this.transitionState(txId, State.QUOTED, proof);
+  }
+
+  /**
    * Link escrow to transaction
    * Reference: Yellow Paper §3.4.2
    */
