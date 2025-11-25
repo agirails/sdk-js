@@ -33,9 +33,9 @@ export const BASE_SEPOLIA: NetworkConfig = {
   rpcUrl: 'https://sepolia.base.org',
   blockExplorer: 'https://sepolia.basescan.org',
   contracts: {
-    // Deployed 2025-01-22 by Arha (with separate treasury wallet)
-    actpKernel: '0x7Cb7867C3D2BAd7AE4ee236B5FddC0AFEc633370',
-    escrowVault: '0x41D45491451C5AE318fdb4f0Bc224d628571FC0F',
+    // Redeployed 2025-11-25 by Arha (fixed auto-transition in linkEscrow, optimizer-runs 200)
+    actpKernel: '0x6aDB650e185b0ee77981AC5279271f0Fa6CFe7ba',
+    escrowVault: '0x921edE340770db5DB6059B5B866be987d1b7311F',
     usdc: '0x444b4e1A65949AB2ac75979D5d0166Eb7A248Ccb', // MockUSDC
     // EAS contracts (Base native deployment)
     eas: '0x4200000000000000000000000000000000000021',

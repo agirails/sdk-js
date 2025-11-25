@@ -170,23 +170,16 @@ describe('AIP-2 Quote Workflow - Base Sepolia Integration', () => {
     const escrowId = ethers.id(`quote-escrow-${Date.now()}`);
     console.log('   Escrow ID:', escrowId);
 
-    console.log('\n🔗 Step 6: Link escrow (deployed contract requires manual COMMITTED transition)');
+    console.log('\n🔗 Step 6: Link escrow (auto-transitions QUOTED → COMMITTED)');
     await requesterClient.kernel.linkEscrow(txId, requesterClient.escrow.getAddress(), escrowId);
     console.log('   ✅ Escrow created and linked via Kernel');
 
-    // Deployed contract does NOT auto-transition in linkEscrow()
-    // Must manually transition QUOTED → COMMITTED
+    // Verify QUOTED → COMMITTED auto-transition after linkEscrow (ACTPKernel.sol line 270)
     tx = await requesterClient.kernel.getTransaction(txId);
-    if (tx.state === State.QUOTED) {
-      console.log('⚡ Transitioning QUOTED → COMMITTED...');
-      await requesterClient.kernel.transitionState(txId, State.COMMITTED);
-      tx = await requesterClient.kernel.getTransaction(txId);
-    }
-
-    expect(tx.state).to.equal(State.COMMITTED);
+    expect(Number(tx.state)).to.equal(State.COMMITTED);
     expect(tx.escrowContract).to.equal(requesterClient.escrow.getAddress());
     expect(tx.escrowId).to.equal(escrowId);
-    console.log('   ✅ State: COMMITTED (auto-transitioned from QUOTED)');
+    console.log('   ✅ linkEscrow() auto-transitioned QUOTED → COMMITTED');
     console.log('   ✅ Escrow verification passed');
 
     console.log('\n✅ Quote workflow completed successfully!');

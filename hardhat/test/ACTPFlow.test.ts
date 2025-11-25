@@ -101,37 +101,30 @@ describe('ACTP SDK - Base Sepolia Integration', () => {
     await client.kernel.linkEscrow(txId, client.escrow.getAddress(), escrowId);
     console.log('   ✅ Escrow created and linked');
 
-    // Verify state after linkEscrow
+    // Verify linkEscrow auto-transitioned to COMMITTED (per AIP-3 spec, ACTPKernel.sol line 270)
     let tx = await client.kernel.getTransaction(txId);
-    console.log('   Current state after linkEscrow:', State[tx.state]);
+    expect(Number(tx.state)).to.equal(State.COMMITTED);
+    console.log('   ✅ linkEscrow() auto-transitioned to COMMITTED');
 
-    // IMPORTANT: Deployed contract does NOT auto-transition to COMMITTED in linkEscrow()
-    // We must manually transition INITIATED → COMMITTED after linking escrow
-    if (tx.state === State.INITIATED) {
-      console.log('⚡ Transitioning INITIATED → COMMITTED...');
-      await client.kernel.transitionState(txId, State.COMMITTED);
-      tx = await client.kernel.getTransaction(txId);
-      console.log('   → COMMITTED');
-    } else if (tx.state === State.QUOTED) {
-      console.log('⚡ Transitioning QUOTED → COMMITTED...');
-      await client.kernel.transitionState(txId, State.COMMITTED);
-      tx = await client.kernel.getTransaction(txId);
-      console.log('   → COMMITTED');
-    }
-
-    console.log('⚡ Transitioning COMMITTED → IN_PROGRESS...');
-    await client.kernel.transitionState(txId, State.IN_PROGRESS);
+    console.log('⚡ Transitioning COMMITTED → IN_PROGRESS (provider action)...');
+    // Create provider client to transition to IN_PROGRESS (only provider can do this)
+    const providerClient = await ACTPClient.create({
+      network: 'base-sepolia',
+      signer: provider,
+      provider: provider.provider
+    });
+    await providerClient.kernel.transitionState(txId, State.IN_PROGRESS);
     console.log('   → IN_PROGRESS');
 
-    console.log('📦 Generating delivery proof...');
-    const proof = client.proofGenerator.generateDeliveryProof({
+    console.log('📦 Generating delivery proof (provider action)...');
+    const proof = providerClient.proofGenerator.generateDeliveryProof({
       txId,
       deliverable: 'Integration test deliverable on Base Sepolia',
       metadata: { description: 'hardhat-integration-test', network: 'base-sepolia' }
     });
-    const encodedProof = client.proofGenerator.encodeProof(proof);
+    const encodedProof = providerClient.proofGenerator.encodeProof(proof);
 
-    await client.kernel.transitionState(txId, State.DELIVERED, encodedProof);
+    await providerClient.kernel.transitionState(txId, State.DELIVERED, encodedProof);
     console.log('   → DELIVERED');
 
     console.log('💸 Releasing escrow...');
