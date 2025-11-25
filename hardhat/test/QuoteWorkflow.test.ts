@@ -93,7 +93,7 @@ describe('AIP-2 Quote Workflow - Base Sepolia Integration', () => {
 
     // Verify initial state
     let tx = await requesterClient.kernel.getTransaction(txId);
-    expect(tx.state).to.equal(State.INITIATED);
+    expect(Number(tx.state)).to.equal(State.INITIATED);
     console.log('   ✅ State: INITIATED');
 
     console.log('\n💬 Step 2: Provider builds and signs quote message (off-chain)');
@@ -135,7 +135,7 @@ describe('AIP-2 Quote Workflow - Base Sepolia Integration', () => {
 
     // Verify state changed to QUOTED
     tx = await requesterClient.kernel.getTransaction(txId);
-    expect(tx.state).to.equal(State.QUOTED);
+    expect(Number(tx.state)).to.equal(State.QUOTED);
     expect(tx.metadata).to.equal(quoteHash); // Quote hash stored on-chain
     console.log('   ✅ State: QUOTED');
     console.log('   ✅ Quote hash verified on-chain');
