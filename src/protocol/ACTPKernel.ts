@@ -147,7 +147,7 @@ export class ACTPKernel {
         txOptions
       );
 
-      const receipt = await tx.wait();
+      const receipt = await tx.wait(2); // Wait for 2 confirmations (Base L2 reorg safety)
       if (!receipt) {
         throw new Error('Transaction receipt not available');
       }
@@ -207,7 +207,7 @@ export class ACTPKernel {
 
       const tx = await transitionFunc(txId, newState, proof, txOptions);
 
-      await tx.wait();
+      await tx.wait(2); // Wait for 2 confirmations (Base L2 reorg safety)
     } catch (error: any) {
       throw new TransactionRevertedError(error.transactionHash, error.reason || error.message);
     }
@@ -263,11 +263,19 @@ export class ACTPKernel {
    * 2. Kernel calls IEscrowValidator(escrowContract).createEscrow(...)
    * 3. EscrowVault pulls USDC from consumer (must approve USDC first!)
    * 4. Events emitted: EscrowLinked
+   * 5. **State transition behavior varies** (see below)
    *
-   * IMPORTANT: Deployed contract (v1.0) does NOT auto-transition to COMMITTED.
-   * After calling this method, you must manually call:
+   * STATE TRANSITION BEHAVIOR:
+   * - **AIP-3 Spec (Source Code)**: Should auto-transition INITIATED/QUOTED → COMMITTED
+   * - **Deployed Contract**: Behavior is INCONSISTENT - sometimes auto-transitions, sometimes doesn't
+   * - **Recommended Practice**: Always check state after linkEscrow() and manually transition if needed
+   *
    * ```typescript
-   * await client.kernel.transitionState(txId, State.COMMITTED);
+   * await client.kernel.linkEscrow(txId, escrowVault, escrowId);
+   * let tx = await client.kernel.getTransaction(txId);
+   * if (tx.state !== State.COMMITTED) {
+   *   await client.kernel.transitionState(txId, State.COMMITTED);
+   * }
    * ```
    *
    * Prerequisites:
@@ -289,14 +297,15 @@ export class ACTPKernel {
    * // Step 2: Generate unique escrow ID
    * const escrowId = ethers.id(`escrow-${Date.now()}`);
    *
-   * // Step 3: Link escrow (creates escrow in EscrowVault)
+   * // Step 3: Link escrow (creates escrow + auto-transitions to COMMITTED)
    * await client.kernel.linkEscrow(txId, escrowVaultAddress, escrowId);
    *
-   * // Step 4: Manually transition to COMMITTED (required for v1.0 deployed contract)
-   * await client.kernel.transitionState(txId, State.COMMITTED);
+   * // Step 4: Verify state is COMMITTED (auto-transitioned, no manual call needed)
+   * const tx = await client.kernel.getTransaction(txId);
+   * expect(tx.state).to.equal(State.COMMITTED);
    * ```
    *
-   * Reference: Yellow Paper §3.4.2, AIP-3 §3.2 (lines 258-336)
+   * Reference: Yellow Paper §3.4.2, AIP-3 §3.2 (ACTPKernel.sol lines 244-276)
    */
   async linkEscrow(
     txId: string,
@@ -318,7 +327,8 @@ export class ACTPKernel {
 
       const tx = await linkEscrowFunc(txId, escrowContract, escrowId, txOptions);
 
-      await tx.wait();
+      // Wait for 2 confirmations to ensure state is updated on RPC nodes (Base Sepolia reorg safety)
+      await tx.wait(2);
     } catch (error: any) {
       throw new TransactionRevertedError(error.transactionHash, error.reason || error.message);
     }
@@ -349,7 +359,7 @@ export class ACTPKernel {
 
       const tx = await releaseMilestoneFunc(txId, milestoneId, amount, txOptions);
 
-      await tx.wait();
+      await tx.wait(2); // Wait for 2 confirmations (Base L2 reorg safety)
     } catch (error: any) {
       throw new TransactionRevertedError(error.transactionHash, error.reason || error.message);
     }
@@ -386,7 +396,7 @@ export class ACTPKernel {
 
       const tx = await releaseEscrowFunc(txId, txOptions);
 
-      await tx.wait();
+      await tx.wait(2); // Wait for 2 confirmations (Base L2 reorg safety)
     } catch (error: any) {
       throw new TransactionRevertedError(error.transactionHash, error.reason || error.message);
     }
@@ -487,7 +497,7 @@ export class ACTPKernel {
         txOptions
       );
 
-      await tx.wait();
+      await tx.wait(2); // Wait for 2 confirmations (Base L2 reorg safety)
     } catch (error: any) {
       throw new TransactionRevertedError(error.transactionHash, error.reason || error.message);
     }
@@ -551,7 +561,7 @@ export class ACTPKernel {
         txOptions
       );
 
-      await tx.wait();
+      await tx.wait(2); // Wait for 2 confirmations (Base L2 reorg safety)
     } catch (error: any) {
       throw new TransactionRevertedError(error.transactionHash, error.reason || error.message);
     }
@@ -605,7 +615,7 @@ export class ACTPKernel {
         txOptions
       );
 
-      await tx.wait();
+      await tx.wait(2); // Wait for 2 confirmations (Base L2 reorg safety)
     } catch (error: any) {
       throw new TransactionRevertedError(error.transactionHash, error.reason || error.message);
     }
