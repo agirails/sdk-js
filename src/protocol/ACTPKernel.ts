@@ -418,13 +418,14 @@ export class ACTPKernel {
       requester: txData.requester,
       provider: txData.provider,
       amount: txData.amount,
-      state: txData.state as State,
+      state: (typeof txData.state === 'bigint' ? Number(txData.state) : txData.state) as State,
       createdAt: typeof txData.createdAt === 'bigint' ? Number(txData.createdAt) : txData.createdAt,
       deadline: typeof txData.deadline === 'bigint' ? Number(txData.deadline) : txData.deadline,
       disputeWindow: typeof txData.disputeWindow === 'bigint' ? Number(txData.disputeWindow) : txData.disputeWindow,
       escrowContract: txData.escrowContract,
       escrowId: txData.escrowId,
-      metadata: txData.serviceHash
+      // Use metadata field (quote hash for QUOTED state) if available, fallback to serviceHash
+      metadata: txData.metadata || txData.serviceHash
     };
   }
 

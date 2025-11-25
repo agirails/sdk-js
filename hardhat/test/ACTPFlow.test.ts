@@ -122,16 +122,20 @@ describe('ACTP SDK - Base Sepolia Integration', () => {
       deliverable: 'Integration test deliverable on Base Sepolia',
       metadata: { description: 'hardhat-integration-test', network: 'base-sepolia' }
     });
-    const encodedProof = providerClient.proofGenerator.encodeProof(proof);
 
-    await providerClient.kernel.transitionState(txId, State.DELIVERED, encodedProof);
+    // Encode dispute window for DELIVERED transition (contract expects uint256 as bytes32)
+    const disputeWindowSeconds = ONE_HOUR; // 3600 seconds
+    const abiCoder = ethers.AbiCoder.defaultAbiCoder();
+    const disputeWindowProof = abiCoder.encode(['uint256'], [disputeWindowSeconds]);
+
+    await providerClient.kernel.transitionState(txId, State.DELIVERED, disputeWindowProof);
     console.log('   → DELIVERED');
 
-    console.log('💸 Releasing escrow...');
-    await client.kernel.releaseEscrow(txId);
-    console.log('   → SETTLED');
-
-    await client.escrow.releaseEscrow(escrowId, [provider.address], [amount]);
+    console.log('✅ Accepting delivery and transitioning to SETTLED...');
+    // Requester accepts the delivery (transitions DELIVERED → SETTLED)
+    // Note: Transition to SETTLED automatically releases funds to provider
+    await client.kernel.transitionState(txId, State.SETTLED);
+    console.log('   → SETTLED (funds auto-distributed to provider)');
 
     // Verify provider received funds
     const usdcContract = new ethers.Contract(
@@ -185,7 +189,14 @@ describe('ACTP SDK - Base Sepolia Integration', () => {
     await client.kernel.linkEscrow(txId2, client.escrow.getAddress(), escrowId2);
     console.log('   ✅ Transaction 2 escrow linked');
 
-    // Check allowance increased correctly
+    // Verify both transactions are in COMMITTED state (escrow linked successfully)
+    const tx1 = await client.kernel.getTransaction(txId1);
+    const tx2 = await client.kernel.getTransaction(txId2);
+
+    expect(Number(tx1.state)).to.equal(State.COMMITTED);
+    expect(Number(tx2.state)).to.equal(State.COMMITTED);
+
+    // Check that allowance was consumed after transfers (should be 0 or minimal)
     const usdcContract = new ethers.Contract(
       BASE_SEPOLIA.contracts.usdc,
       ['function allowance(address owner, address spender) view returns (uint256)'],
@@ -198,7 +209,10 @@ describe('ACTP SDK - Base Sepolia Integration', () => {
     );
 
     console.log('✅ USDC allowance:', ethers.formatUnits(allowance, 6), 'USDC');
-    expect(allowance >= amount2).to.be.true;
+    console.log('✅ Both transactions successfully linked escrow and transitioned to COMMITTED');
+
+    // Allowance should be consumed (0 or close to 0) after successful transfers
+    expect(allowance).to.equal(0n);
   });
 
   it('signs typed delivery proofs with correct EIP-712 format', async () => {
