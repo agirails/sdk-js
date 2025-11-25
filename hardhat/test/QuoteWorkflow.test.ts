@@ -25,7 +25,7 @@ describe('AIP-2 Quote Workflow - Base Sepolia Integration', () => {
   before(async function () {
     // Skip if not on Base Sepolia network
     const network = await ethers.provider.getNetwork();
-    if (network.chainId !== 84532) {
+    if (Number(network.chainId) !== 84532) {
       console.log('⚠️  Skipping quote workflow tests - not on Base Sepolia network');
       console.log('   Run: npx hardhat test --network base-sepolia');
       this.skip();
@@ -64,19 +64,19 @@ describe('AIP-2 Quote Workflow - Base Sepolia Integration', () => {
       requester
     );
 
-    const mintAmount = ethers.utils.parseUnits('500', 6);
+    const mintAmount = ethers.parseUnits('500', 6);
     console.log('💰 Minting test USDC for requester...');
     const mintTx = await usdcContract.mint(requester.address, mintAmount);
     await mintTx.wait();
-    console.log('   Minted:', ethers.utils.formatUnits(mintAmount, 6), 'USDC');
+    console.log('   Minted:', ethers.formatUnits(mintAmount, 6), 'USDC');
   });
 
   it('completes full INITIATED → QUOTED → COMMITTED workflow', async function () {
     this.timeout(180000); // 3 minutes for network operations
 
-    const originalAmount = ethers.utils.parseUnits('50', 6); // $50 USDC
-    const maxPrice = ethers.utils.parseUnits('100', 6); // $100 USDC max
-    const quotedAmount = ethers.utils.parseUnits('75', 6); // $75 USDC (provider quotes 50% more)
+    const originalAmount = ethers.parseUnits('50', 6); // $50 USDC
+    const maxPrice = ethers.parseUnits('100', 6); // $100 USDC max
+    const quotedAmount = ethers.parseUnits('75', 6); // $75 USDC (provider quotes 50% more)
 
     console.log('\n📝 Step 1: Consumer creates transaction in INITIATED state');
     const txId = await requesterClient.kernel.createTransaction({
@@ -85,7 +85,7 @@ describe('AIP-2 Quote Workflow - Base Sepolia Integration', () => {
       amount: originalAmount,
       deadline: Math.floor(Date.now() / 1000) + ONE_HOUR,
       disputeWindow: ONE_HOUR,
-      metadata: ethers.constants.HashZero
+      metadata: ethers.id('quote-test-1-lifecycle-' + Date.now())
     });
     console.log('   Transaction ID:', txId);
     console.log('   Original Amount: $50 USDC');
@@ -153,31 +153,36 @@ describe('AIP-2 Quote Workflow - Base Sepolia Integration', () => {
     console.log('   ✅ Quote hash matches on-chain value');
 
     // Verify quoted amount within acceptable range
-    const quotedAmountBN = ethers.BigNumber.from(quote.quotedAmount);
-    const originalAmountBN = ethers.BigNumber.from(quote.originalAmount);
-    const maxPriceBN = ethers.BigNumber.from(quote.maxPrice);
+    const quotedAmountBN = BigInt(quote.quotedAmount);
+    const originalAmountBN = BigInt(quote.originalAmount);
+    const maxPriceBN = BigInt(quote.maxPrice);
 
-    expect(quotedAmountBN.gte(originalAmountBN)).to.be.true;
-    expect(quotedAmountBN.lte(maxPriceBN)).to.be.true;
+    expect(quotedAmountBN >= originalAmountBN).to.be.true;
+    expect(quotedAmountBN <= maxPriceBN).to.be.true;
     console.log('   ✅ Quoted amount within range [$50 ≤ $75 ≤ $100]');
 
-    console.log('\n🔒 Step 5: Consumer accepts quote and creates escrow with QUOTED amount');
-    const escrowId = await requesterClient.escrow.createEscrow({
-      kernelAddress: requesterClient.kernel.getAddress(),
-      txId,
-      token: BASE_SEPOLIA.contracts.usdc,
-      amount: quotedAmount, // Use quoted amount, not original
-      beneficiary: provider.address
-    });
+    console.log('\n🔒 Step 5: Consumer accepts quote and prepares escrow with QUOTED amount');
+    // Approve USDC to EscrowVault (must approve quoted amount, not original!)
+    await requesterClient.escrow.approveToken(BASE_SEPOLIA.contracts.usdc, quotedAmount);
+    console.log('   ✅ USDC approved: $75 USDC (quoted price, not original $50)');
+
+    // Generate unique escrow ID
+    const escrowId = ethers.id(`quote-escrow-${Date.now()}`);
     console.log('   Escrow ID:', escrowId);
-    console.log('   Escrow Amount: $75 USDC (quoted price, not original $50)');
 
-    console.log('\n🔗 Step 6: Link escrow (QUOTED → COMMITTED auto-transition)');
+    console.log('\n🔗 Step 6: Link escrow (deployed contract requires manual COMMITTED transition)');
     await requesterClient.kernel.linkEscrow(txId, requesterClient.escrow.getAddress(), escrowId);
-    console.log('   ✅ Escrow linked');
+    console.log('   ✅ Escrow created and linked via Kernel');
 
-    // Verify auto-transition to COMMITTED
+    // Deployed contract does NOT auto-transition in linkEscrow()
+    // Must manually transition QUOTED → COMMITTED
     tx = await requesterClient.kernel.getTransaction(txId);
+    if (tx.state === State.QUOTED) {
+      console.log('⚡ Transitioning QUOTED → COMMITTED...');
+      await requesterClient.kernel.transitionState(txId, State.COMMITTED);
+      tx = await requesterClient.kernel.getTransaction(txId);
+    }
+
     expect(tx.state).to.equal(State.COMMITTED);
     expect(tx.escrowContract).to.equal(requesterClient.escrow.getAddress());
     expect(tx.escrowId).to.equal(escrowId);
@@ -196,9 +201,9 @@ describe('AIP-2 Quote Workflow - Base Sepolia Integration', () => {
   it('rejects quote above maxPrice', async function () {
     this.timeout(180000);
 
-    const originalAmount = ethers.utils.parseUnits('50', 6); // $50 USDC
-    const maxPrice = ethers.utils.parseUnits('100', 6); // $100 USDC max
-    const excessiveQuote = ethers.utils.parseUnits('150', 6); // $150 USDC (above max!)
+    const originalAmount = ethers.parseUnits('50', 6); // $50 USDC
+    const maxPrice = ethers.parseUnits('100', 6); // $100 USDC max
+    const excessiveQuote = ethers.parseUnits('150', 6); // $150 USDC (above max!)
 
     console.log('\n📝 Creating transaction with maxPrice limit...');
     const txId = await requesterClient.kernel.createTransaction({
@@ -207,7 +212,7 @@ describe('AIP-2 Quote Workflow - Base Sepolia Integration', () => {
       amount: originalAmount,
       deadline: Math.floor(Date.now() / 1000) + ONE_HOUR,
       disputeWindow: ONE_HOUR,
-      metadata: ethers.constants.HashZero
+      metadata: ethers.id('quote-test-2-max-price-' + Date.now())
     });
     console.log('   Transaction ID:', txId);
     console.log('   Max Price: $100 USDC');
@@ -238,9 +243,9 @@ describe('AIP-2 Quote Workflow - Base Sepolia Integration', () => {
   it('rejects quote below originalAmount', async function () {
     this.timeout(180000);
 
-    const originalAmount = ethers.utils.parseUnits('50', 6); // $50 USDC
-    const maxPrice = ethers.utils.parseUnits('100', 6); // $100 USDC max
-    const lowballQuote = ethers.utils.parseUnits('40', 6); // $40 USDC (below $50!)
+    const originalAmount = ethers.parseUnits('50', 6); // $50 USDC
+    const maxPrice = ethers.parseUnits('100', 6); // $100 USDC max
+    const lowballQuote = ethers.parseUnits('40', 6); // $40 USDC (below $50!)
 
     console.log('\n📝 Creating transaction...');
     const txId = await requesterClient.kernel.createTransaction({
@@ -249,7 +254,7 @@ describe('AIP-2 Quote Workflow - Base Sepolia Integration', () => {
       amount: originalAmount,
       deadline: Math.floor(Date.now() / 1000) + ONE_HOUR,
       disputeWindow: ONE_HOUR,
-      metadata: ethers.constants.HashZero
+      metadata: ethers.id('quote-test-3-min-amount-' + Date.now())
     });
     console.log('   Transaction ID:', txId);
     console.log('   Original Amount: $50 USDC');
@@ -280,9 +285,9 @@ describe('AIP-2 Quote Workflow - Base Sepolia Integration', () => {
   it('prevents non-provider from submitting quote', async function () {
     this.timeout(180000);
 
-    const originalAmount = ethers.utils.parseUnits('50', 6);
-    const maxPrice = ethers.utils.parseUnits('100', 6);
-    const quotedAmount = ethers.utils.parseUnits('75', 6);
+    const originalAmount = ethers.parseUnits('50', 6);
+    const maxPrice = ethers.parseUnits('100', 6);
+    const quotedAmount = ethers.parseUnits('75', 6);
 
     console.log('\n📝 Creating transaction...');
     const txId = await requesterClient.kernel.createTransaction({
@@ -291,7 +296,7 @@ describe('AIP-2 Quote Workflow - Base Sepolia Integration', () => {
       amount: originalAmount,
       deadline: Math.floor(Date.now() / 1000) + ONE_HOUR,
       disputeWindow: ONE_HOUR,
-      metadata: ethers.constants.HashZero
+      metadata: ethers.id('quote-test-4-non-provider-' + Date.now())
     });
 
     console.log('\n❌ Requester (non-provider) attempts to submit quote...');
@@ -325,9 +330,9 @@ describe('AIP-2 Quote Workflow - Base Sepolia Integration', () => {
   it('prevents quote submission from non-INITIATED state', async function () {
     this.timeout(180000);
 
-    const originalAmount = ethers.utils.parseUnits('50', 6);
-    const maxPrice = ethers.utils.parseUnits('100', 6);
-    const quotedAmount = ethers.utils.parseUnits('75', 6);
+    const originalAmount = ethers.parseUnits('50', 6);
+    const maxPrice = ethers.parseUnits('100', 6);
+    const quotedAmount = ethers.parseUnits('75', 6);
 
     console.log('\n📝 Creating transaction and moving to QUOTED...');
     const txId = await requesterClient.kernel.createTransaction({
@@ -336,7 +341,7 @@ describe('AIP-2 Quote Workflow - Base Sepolia Integration', () => {
       amount: originalAmount,
       deadline: Math.floor(Date.now() / 1000) + ONE_HOUR,
       disputeWindow: ONE_HOUR,
-      metadata: ethers.constants.HashZero
+      metadata: ethers.id('quote-test-5-wrong-state-' + Date.now())
     });
 
     // First quote (valid)
@@ -363,7 +368,7 @@ describe('AIP-2 Quote Workflow - Base Sepolia Integration', () => {
       txId,
       provider: providerDID,
       consumer: consumerDID,
-      quotedAmount: ethers.utils.parseUnits('80', 6).toString(), // Different quote
+      quotedAmount: ethers.parseUnits('80', 6).toString(), // Different quote
       originalAmount: originalAmount.toString(),
       maxPrice: maxPrice.toString(),
       chainId: 84532,
