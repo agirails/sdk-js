@@ -138,7 +138,7 @@ describe('ACTPClient - Module Access', () => {
 
   it('should access escrow module', () => {
     expect(client.escrow).toBeDefined();
-    expect(typeof client.escrow.createEscrow).toBe('function');
+    expect(typeof client.escrow.approveToken).toBe('function');
     expect(typeof client.escrow.releaseEscrow).toBe('function');
   });
 
