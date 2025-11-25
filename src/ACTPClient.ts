@@ -9,7 +9,7 @@ import { QuoteBuilder } from './builders/QuoteBuilder';
 import { NetworkConfig, getNetwork } from './config/networks';
 import { NetworkError, ValidationError } from './errors';
 import { EASHelper, EASConfig } from './protocol/EASHelper';
-import { NonceManager } from './utils/NonceManager';
+import { NonceManager, InMemoryNonceManager } from './utils/NonceManager';
 import { IPFSClient } from './utils/IPFSClient';
 
 /**
@@ -118,7 +118,7 @@ export class ACTPClient {
     }
 
     // Initialize shared utilities
-    this.nonceManager = new NonceManager();
+    this.nonceManager = new InMemoryNonceManager();
 
     // Initialize IPFS client if configured
     if (config.rpcUrl) {

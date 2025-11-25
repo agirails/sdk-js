@@ -135,6 +135,8 @@ export class ACTPKernel {
       // Build tx options with gas settings (15% buffer for simple state initialization)
       const txOptions = this.buildTxOptions(estimatedGas, 'createTransaction');
 
+      // Per ABI: createTransaction returns transactionId directly
+      // Contract signature: function createTransaction(...) external returns (bytes32 transactionId)
       const tx = await createTxFunc(
         provider,
         requester,
@@ -146,13 +148,12 @@ export class ACTPKernel {
       );
 
       const receipt = await tx.wait();
-
-      // Extract transactionId from logs (ethers v6)
-      if (!receipt || !receipt.logs) {
-        throw new Error('Transaction receipt not found or has no logs');
+      if (!receipt) {
+        throw new Error('Transaction receipt not available');
       }
 
-      // Parse logs using contract interface (ethers v6)
+      // Extract transactionId from TransactionCreated event
+      // Event signature: TransactionCreated(bytes32 indexed transactionId, ...)
       for (const log of receipt.logs) {
         try {
           const parsedLog = this.contract.interface.parseLog({
@@ -161,7 +162,6 @@ export class ACTPKernel {
           });
 
           if (parsedLog && parsedLog.name === 'TransactionCreated') {
-            // Event signature: TransactionCreated(bytes32 indexed transactionId, ...)
             return parsedLog.args.transactionId || parsedLog.args[0];
           }
         } catch (e) {
@@ -254,7 +254,49 @@ export class ACTPKernel {
 
   /**
    * Link escrow to transaction
-   * Reference: Yellow Paper §3.4.2
+   *
+   * CRITICAL: This is the ONLY way to create escrow per AIP-3 spec.
+   * SDK should NOT call EscrowVault.createEscrow() directly (onlyKernel modifier).
+   *
+   * What happens internally:
+   * 1. ACTPKernel validates transaction state, permissions, deadline
+   * 2. Kernel calls IEscrowValidator(escrowContract).createEscrow(...)
+   * 3. EscrowVault pulls USDC from consumer (must approve USDC first!)
+   * 4. Events emitted: EscrowLinked
+   *
+   * IMPORTANT: Deployed contract (v1.0) does NOT auto-transition to COMMITTED.
+   * After calling this method, you must manually call:
+   * ```typescript
+   * await client.kernel.transitionState(txId, State.COMMITTED);
+   * ```
+   *
+   * Prerequisites:
+   * - Transaction in INITIATED or QUOTED state
+   * - Consumer has approved USDC to EscrowVault address
+   *   (use EscrowVault.approveToken() before calling this)
+   *
+   * @param txId - Transaction ID (bytes32)
+   * @param escrowContract - EscrowVault contract address
+   * @param escrowId - Unique escrow identifier (bytes32, consumer-generated)
+   * @throws {ValidationError} If inputs invalid
+   * @throws {TransactionRevertedError} If state invalid, deadline passed, or insufficient USDC
+   *
+   * @example
+   * ```typescript
+   * // Step 1: Approve USDC to EscrowVault (NOT to Kernel!)
+   * await client.escrow.approveToken(BASE_SEPOLIA.contracts.usdc, amount);
+   *
+   * // Step 2: Generate unique escrow ID
+   * const escrowId = ethers.id(`escrow-${Date.now()}`);
+   *
+   * // Step 3: Link escrow (creates escrow in EscrowVault)
+   * await client.kernel.linkEscrow(txId, escrowVaultAddress, escrowId);
+   *
+   * // Step 4: Manually transition to COMMITTED (required for v1.0 deployed contract)
+   * await client.kernel.transitionState(txId, State.COMMITTED);
+   * ```
+   *
+   * Reference: Yellow Paper §3.4.2, AIP-3 §3.2 (lines 258-336)
    */
   async linkEscrow(
     txId: string,

@@ -23,7 +23,6 @@ export {
   CreateTransactionParams,
   DisputeResolution,
   EconomicParams,
-  CreateEscrowParams,
   Escrow,
   ACTPMessage,
   QuoteRequest,

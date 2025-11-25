@@ -135,11 +135,11 @@ Tests will:
 ## Contract Addresses
 
 ### Base Sepolia (Testnet) ✅ Deployed & Verified
-- **ACTPKernel:** `0xb5B002A73743765450d427e2F8a472C24FDABF9b` ([view](https://sepolia.basescan.org/address/0xb5B002A73743765450d427e2F8a472C24FDABF9b#code))
-- **EscrowVault:** `0x67770791c83eA8e46D8a08E09682488ba584744f` ([view](https://sepolia.basescan.org/address/0x67770791c83eA8e46D8a08E09682488ba584744f#code))
+- **ACTPKernel:** `0x7Cb7867C3D2BAd7AE4ee236B5FddC0AFEc633370` ([view](https://sepolia.basescan.org/address/0x7Cb7867C3D2BAd7AE4ee236B5FddC0AFEc633370#code))
+- **EscrowVault:** `0x41D45491451C5AE318fdb4f0Bc224d628571FC0F` ([view](https://sepolia.basescan.org/address/0x41D45491451C5AE318fdb4f0Bc224d628571FC0F#code))
 - **MockUSDC:** `0x444b4e1A65949AB2ac75979D5d0166Eb7A248Ccb` ([view](https://sepolia.basescan.org/address/0x444b4e1A65949AB2ac75979D5d0166Eb7A248Ccb#code))
 
-*Deployed: 2025-01-22 | Verified on Basescan | All smoke tests passed (5/5)*
+*Deployed: 2025-11-22 21:14 UTC | Latest deployment from Foundry broadcast | Matches src/config/networks.ts*
 
 ### Base Mainnet (Production)
 - **ACTPKernel:** TBD *(pending mainnet deployment)*
