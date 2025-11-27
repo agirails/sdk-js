@@ -129,14 +129,16 @@ npm run test:setup
 
 ## Contract Addresses
 
+*Redeployed: 2025-11-25 | Fixed auto-transition in linkEscrow, optimizer-runs 200*
+
 ```
 Network:     Base Sepolia (chainId: 84532)
 RPC:         https://sepolia.base.org
 Explorer:    https://sepolia.basescan.org
 
 MockUSDC:    0x444b4e1A65949AB2ac75979D5d0166Eb7A248Ccb
-ACTPKernel:  0xb5B002A73743765450d427e2F8a472C24FDABF9b
-EscrowVault: 0x67770791c83eA8e46D8a08E09682488ba584744f
+ACTPKernel:  0x6aDB650e185b0ee77981AC5279271f0Fa6CFe7ba
+EscrowVault: 0x921edE340770db5DB6059B5B866be987d1b7311F
 ```
 
 ## Support
