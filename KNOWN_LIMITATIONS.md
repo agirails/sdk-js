@@ -435,6 +435,9 @@ if (contractVersion !== '1.0.0') {
 - ✅ Contract version negotiation
 - ✅ Event-driven architecture (webhooks)
 
+### Research / Investigation
+- 🔍 **IPFS vs Arweave for delivery proofs** - Current IPFS dependency (`kubo-rpc-client`) adds 400+ transitive packages. Evaluate Arweave as lighter-weight alternative with permanent storage guarantees. Consider making storage provider optional/pluggable.
+
 ---
 
 ## Support
