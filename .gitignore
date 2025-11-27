@@ -8,3 +8,4 @@ hardhat/cache/
 .env
 .env.*
 *.tsbuildinfo
+DEVELOPMENT_REPORT*.md
