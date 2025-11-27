@@ -5,14 +5,30 @@ All notable changes to the AGIRAILS TypeScript SDK will be documented in this fi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
-### Added
-- Runtime validation for zero contract addresses - SDK now throws helpful error if contracts not yet deployed
-- Validation function `validateNetworkConfig()` in `src/config/networks.ts`
+## [2.0.1-beta] - 2025-11-27
 
 ### Fixed
-- Zero address validation prevents SDK initialization with undeployed contracts
+- Corrected repository URLs in package.json and README
+- Cleaned up broken documentation links for npm publish
+
+## [2.0.0-beta] - 2025-11-27
+
+### Added
+- EAS (Ethereum Attestation Service) integration for delivery proofs
+- Schema UID verification in `verifyDeliveryAttestation()`
+- txId match verification for attestation security
+- `releaseEscrowWithVerification()` - atomic verify + release pattern
+- Comprehensive V1 Limitations documentation
+
+### Changed
+- Upgraded to ethers.js v6
+- Contract addresses updated to 2025-11-25 deployment
+- ACTPKernel: `0x6aDB650e185b0ee77981AC5279271f0Fa6CFe7ba`
+- EscrowVault: `0x921edE340770db5DB6059B5B866be987d1b7311F`
+
+### Security
+- SDK-enforced attestation verification (B1-B4 blockers resolved)
+- ABI decode error handling for malformed attestations
 
 ## [0.1.0-beta.1] - 2025-11-19
 
