@@ -53,27 +53,45 @@ console.log('Transaction:', tx);
 - ✅ **TypeScript** - Full type safety
 - ✅ **Base L2** - Optimized for Base Sepolia & Mainnet
 
-## Known Limitations (V1)
+## V1 Limitations
 
-⚠️ **Important**: This is a V1 release with known limitations. Please review before production use.
+⚠️ **Important**: ACTP SDK v2.0.0-beta is designed for **Base Sepolia testnet** and controlled partner usage. The following limitations apply:
 
-### Network Resilience
-- **No automatic retry** - Manual retry required for network failures
-- **No timeout handling** - `tx.wait()` may hang on RPC issues
-- **Single RPC dependency** - No automatic failover
+### 1. Attestation Validation is SDK-Enforced, Not Protocol-Enforced
 
-### State Transitions
-- **TOCTOU race condition** - State may change between SDK check and contract execution
-- **Contract provides final validation** - SDK-side checks are advisory only
+The V1 ACTPKernel accepts attestation UIDs without on-chain validation. All verification (existence, schema, txId, revocation, expiry) is performed by SDK helpers like `releaseEscrowWithVerification()`.
 
-### Attestation Verification
-- **Revocation race window** - Attestation can be revoked between verify and settle
-- **Use `releaseEscrowWithVerification()`** - Minimizes race window
+**Security checks performed by SDK:**
+- Attestation exists and UID matches
+- Schema UID matches canonical delivery schema (`0x1b0e...ffce`)
+- txId in attestation matches expected transaction
+- Attestation is not revoked (`revocationTime === 0`)
+- Attestation has not expired
 
-See **[KNOWN_LIMITATIONS.md](./KNOWN_LIMITATIONS.md)** for detailed explanations, workarounds, and roadmap.
+**Integrators who bypass the SDK must implement equivalent verification logic.**
 
-**V1.1 Planned** (2-4 weeks): Automatic retry, timeout handling, nonce management
-**V2.0 Planned** (3-6 months): On-chain attestation validation, TOCTOU mitigation, multi-provider fallback
+### 2. Multiple Attestations Per Transaction Are Possible
+
+EAS does not enforce uniqueness - multiple attestations can exist for the same `txId`. The SDK uses the **first valid (non-revoked) attestation** provided. This policy is testnet-appropriate; V2 will enforce uniqueness at the protocol level.
+
+### 3. This SDK is Not For Unrestricted Mainnet Usage
+
+V2 will move critical verification on-chain. Until then, use only on Base Sepolia testnet with testnet USDC.
+
+### Additional Limitations
+
+| Area | Limitation | Workaround |
+|------|------------|------------|
+| Network Resilience | No automatic retry | Manual retry required |
+| Timeout Handling | `tx.wait()` may hang | Set custom timeout |
+| State Transitions | TOCTOU race condition | Contract provides final validation |
+| Revocation Window | Attestation can be revoked between verify and settle | Use `releaseEscrowWithVerification()` |
+
+See **[KNOWN_LIMITATIONS.md](./KNOWN_LIMITATIONS.md)** for detailed explanations and roadmap.
+
+For full details, see the [EAS V1 Scope Governance Document](../../Docs/Governance/).
+
+**V2.0 Planned**: On-chain attestation validation, uniqueness enforcement, multi-provider fallback
 
 ---
 
@@ -135,11 +153,14 @@ Tests will:
 ## Contract Addresses
 
 ### Base Sepolia (Testnet) ✅ Deployed & Verified
-- **ACTPKernel:** `0x7Cb7867C3D2BAd7AE4ee236B5FddC0AFEc633370` ([view](https://sepolia.basescan.org/address/0x7Cb7867C3D2BAd7AE4ee236B5FddC0AFEc633370#code))
-- **EscrowVault:** `0x41D45491451C5AE318fdb4f0Bc224d628571FC0F` ([view](https://sepolia.basescan.org/address/0x41D45491451C5AE318fdb4f0Bc224d628571FC0F#code))
+- **ACTPKernel:** `0x6aDB650e185b0ee77981AC5279271f0Fa6CFe7ba` ([view](https://sepolia.basescan.org/address/0x6aDB650e185b0ee77981AC5279271f0Fa6CFe7ba#code))
+- **EscrowVault:** `0x921edE340770db5DB6059B5B866be987d1b7311F` ([view](https://sepolia.basescan.org/address/0x921edE340770db5DB6059B5B866be987d1b7311F#code))
 - **MockUSDC:** `0x444b4e1A65949AB2ac75979D5d0166Eb7A248Ccb` ([view](https://sepolia.basescan.org/address/0x444b4e1A65949AB2ac75979D5d0166Eb7A248Ccb#code))
+- **EAS Contract:** `0x4200000000000000000000000000000000000021` (Base native)
+- **EAS Schema Registry:** `0x4200000000000000000000000000000000000020` (Base native)
+- **Delivery Schema UID:** `0x1b0ebdf0bd20c28ec9d5362571ce8715a55f46e81c3de2f9b0d8e1b95fb5ffce`
 
-*Deployed: 2025-11-22 21:14 UTC | Latest deployment from Foundry broadcast | Matches src/config/networks.ts*
+*Redeployed: 2025-11-25 | Fixed auto-transition in linkEscrow, optimizer-runs 200 | Matches src/config/networks.ts*
 
 ### Base Mainnet (Production)
 - **ACTPKernel:** TBD *(pending mainnet deployment)*

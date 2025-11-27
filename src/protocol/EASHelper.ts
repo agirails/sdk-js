@@ -112,13 +112,14 @@ export class EASHelper {
    * for Transaction B. This method provides SDK-side protection by verifying:
    *
    * 1. Attestation exists and is not revoked
-   * 2. Attestation's txId matches the expected transaction ID
-   * 3. Attestation has not expired
+   * 2. Attestation uses the canonical delivery schema UID
+   * 3. Attestation's txId matches the expected transaction ID
+   * 4. Attestation has not expired
    *
    * @param txId - Expected transaction ID (bytes32)
    * @param attestationUID - Attestation UID to verify (bytes32)
    * @returns true if attestation is valid for this transaction, false otherwise
-   * @throws Error if attestation is revoked, expired, or txId mismatch
+   * @throws Error if attestation is revoked, expired, schema mismatch, or txId mismatch
    */
   async verifyDeliveryAttestation(
     txId: string,
@@ -132,7 +133,16 @@ export class EASHelper {
       throw new Error(`Attestation not found: ${attestationUID}`);
     }
 
-    // 3. Check revocation - EAS uses revocationTime field (not revoked boolean)
+    // 3. Check schema UID matches canonical delivery schema (B2 blocker fix)
+    // This prevents accepting attestations from unrelated EAS schemas
+    if (attestation.schema !== this.config.deliveryProofSchemaId) {
+      throw new Error(
+        `Schema UID mismatch: expected canonical delivery schema ${this.config.deliveryProofSchemaId}, ` +
+        `got ${attestation.schema}. Attestation may be from a different schema!`
+      );
+    }
+
+    // 4. Check revocation - EAS uses revocationTime field (not revoked boolean)
     // revocationTime = 0 means not revoked
     // revocationTime > 0 means revoked at that timestamp
     // NOTE: attestation.revoked field does NOT exist! (see genetic-memory.md)
@@ -143,7 +153,7 @@ export class EASHelper {
       );
     }
 
-    // 4. Check expiration
+    // 5. Check expiration
     // expirationTime = 0 means no expiration
     // expirationTime > 0 means expires at that timestamp
     if (attestation.expirationTime > 0n) {
@@ -155,7 +165,7 @@ export class EASHelper {
       }
     }
 
-    // 5. Decode attestation data to extract txId
+    // 6. Decode attestation data to extract txId
     // Schema: bytes32 txId, bytes32 contentHash, uint256 timestamp, string deliveryUrl, uint256 size, string mimeType
     const abiCoder = AbiCoder.defaultAbiCoder();
     const decoded = abiCoder.decode(
@@ -165,7 +175,7 @@ export class EASHelper {
 
     const attestedTxId = decoded[0]; // First field is txId
 
-    // 6. Verify attestation txId matches expected transaction ID
+    // 7. Verify attestation txId matches expected transaction ID
     if (attestedTxId !== txId) {
       throw new Error(
         `Attestation txId mismatch: expected ${txId}, got ${attestedTxId}. ` +
