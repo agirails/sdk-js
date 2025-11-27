@@ -87,9 +87,7 @@ V2 will move critical verification on-chain. Until then, use only on Base Sepoli
 | State Transitions | TOCTOU race condition | Contract provides final validation |
 | Revocation Window | Attestation can be revoked between verify and settle | Use `releaseEscrowWithVerification()` |
 
-See **[KNOWN_LIMITATIONS.md](./KNOWN_LIMITATIONS.md)** for detailed explanations and roadmap.
-
-For full details, see the [EAS V1 Scope Governance Document](../../Docs/Governance/).
+For detailed documentation, visit the [GitHub repository](https://github.com/agirails/sdk-js).
 
 **V2.0 Planned**: On-chain attestation validation, uniqueness enforcement, multi-provider fallback
 
@@ -102,9 +100,7 @@ For full details, see the [EAS V1 Scope Governance Document](../../Docs/Governan
 
 ## Documentation
 
-- [SDK Specification](./sdk-specification.md)
-- [Yellow Paper](../../Docs/99. Final Public Papers/Core/AGIRAILS_Yellow_Paper.md)
-- [Examples](./examples/) *(coming soon)*
+For full documentation, examples, and specifications, visit the [GitHub repository](https://github.com/agirails/sdk-js).
 
 ## Development
 
@@ -171,13 +167,8 @@ Tests will:
 
 Apache-2.0
 
-## Contributing
-
-See [CONTRIBUTING.md](./CONTRIBUTING.md) *(coming soon)*
-
 ## Support
 
 - **Email:** developers@agirails.io
-- **GitHub:** [github.com/agirails/actp-sdk-typescript](https://github.com/agirails/actp-sdk-typescript)
-- **Discord:** [discord.gg/agirails](https://discord.gg/agirails)
+- **GitHub:** [github.com/agirails/sdk-js](https://github.com/agirails/sdk-js)
 
