@@ -444,14 +444,13 @@ if (contractVersion !== '1.0.0') {
 
 For questions or issues related to these limitations:
 
-- **GitHub Issues**: https://github.com/agirails/sdk/issues
-- **Discord**: https://discord.gg/agirails
+- **GitHub Issues**: https://github.com/agirails/sdk-js/issues
 - **Email**: developers@agirails.io
 
 **Security Issues**: security@agirails.io (do not disclose publicly)
 
 ---
 
-**Document Version**: 1.0.0
-**Last Updated**: 2025-11-23
-**SDK Version**: 0.1.0-beta.2
+**Document Version**: 1.1.0
+**Last Updated**: 2025-11-27
+**SDK Version**: 2.0.1-beta
