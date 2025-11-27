@@ -351,18 +351,23 @@ describe('ACTPKernel - Security Tests', () => {
     });
 
     it('should reject backwards state transition DELIVERED -> COMMITTED', async () => {
-      mockContract.transactions.mockResolvedValueOnce({
+      mockContract.getTransaction.mockResolvedValueOnce({
+        txId: TX_ID,
         transactionId: TX_ID,
         requester: REQUESTER_ADDRESS,
         provider: PROVIDER_ADDRESS,
         amount: BigInt('100000000'),
         state: State.DELIVERED,
         createdAt: BigInt(Math.floor(Date.now() / 1000)),
+        updatedAt: BigInt(Math.floor(Date.now() / 1000)),
         deadline: BigInt(Math.floor(Date.now() / 1000) + 86400),
         disputeWindow: BigInt(7200),
         escrowContract: ESCROW_ADDRESS,
         escrowId: ESCROW_ID,
-        serviceHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
+        serviceHash: '0x0000000000000000000000000000000000000000000000000000000000000000',
+        contentHash: '0x0000000000000000000000000000000000000000000000000000000000000000',
+        attestationUID: '0x0000000000000000000000000000000000000000000000000000000000000000',
+        platformFeeBpsLocked: BigInt(100)
       });
 
       await expect(kernel.transitionState(TX_ID, State.COMMITTED))
