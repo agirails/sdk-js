@@ -167,13 +167,21 @@ export class EASHelper {
 
     // 6. Decode attestation data to extract txId
     // Schema: bytes32 txId, bytes32 contentHash, uint256 timestamp, string deliveryUrl, uint256 size, string mimeType
-    const abiCoder = AbiCoder.defaultAbiCoder();
-    const decoded = abiCoder.decode(
-      ['bytes32', 'bytes32', 'uint256', 'string', 'uint256', 'string'],
-      attestation.data
-    );
-
-    const attestedTxId = decoded[0]; // First field is txId
+    let attestedTxId: string;
+    try {
+      const abiCoder = AbiCoder.defaultAbiCoder();
+      const decoded = abiCoder.decode(
+        ['bytes32', 'bytes32', 'uint256', 'string', 'uint256', 'string'],
+        attestation.data
+      );
+      attestedTxId = decoded[0]; // First field is txId
+    } catch (error: any) {
+      throw new Error(
+        `Attestation data format mismatch: cannot decode attestation ${attestationUID}. ` +
+        `Expected AIP-4 delivery proof schema format. ` +
+        `Original error: ${error.message}`
+      );
+    }
 
     // 7. Verify attestation txId matches expected transaction ID
     if (attestedTxId !== txId) {
