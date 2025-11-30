@@ -1,4 +1,4 @@
-import { ethers, Wallet, Signer } from 'ethers';
+import { ethers, Wallet, Signer, id } from 'ethers';
 import type { JsonRpcProvider } from 'ethers';
 import { ACTPKernel } from './protocol/ACTPKernel';
 import { EscrowVault } from './protocol/EscrowVault';
@@ -14,6 +14,7 @@ import { IPFSClient } from './utils/IPFSClient';
 
 /**
  * ACTPClient configuration
+ * @since v0.1.0
  */
 export interface ACTPClientConfig {
   network: 'base-sepolia' | 'base-mainnet';
@@ -259,6 +260,48 @@ export class ACTPClient {
 
     // Step 2: Release escrow (verification passed)
     await this.kernel.releaseEscrow(txId);
+  }
+
+  /**
+   * Fund a transaction by approving USDC and linking escrow.
+   *
+   * This is a convenience method that combines:
+   * 1. Get transaction details (amount + 1% fee)
+   * 2. Approve USDC to EscrowVault
+   * 3. Generate unique escrow ID
+   * 4. Link escrow to transaction (moves to COMMITTED state)
+   *
+   * @param txId - Transaction ID to fund
+   * @returns The escrow ID created
+   * @throws {Error} If transaction not found or already funded
+   *
+   * @example
+   * ```typescript
+   * // Create transaction first
+   * const txId = await client.kernel.createTransaction({...});
+   *
+   * // Fund it in one call
+   * const escrowId = await client.fundTransaction(txId);
+   * ```
+   */
+  async fundTransaction(txId: string): Promise<string> {
+    // Get transaction to determine amount
+    const tx = await this.kernel.getTransaction(txId);
+
+    // Calculate total with 1% fee
+    const fee = (tx.amount * 100n) / 10000n; // 1% = 100 basis points
+    const total = tx.amount + fee;
+
+    // Approve USDC to escrow vault
+    await this.escrow.approveToken(this.networkConfig.contracts.usdc, total);
+
+    // Generate unique escrow ID
+    const escrowId = id(`escrow-${txId}-${Date.now()}`);
+
+    // Link escrow (auto-transitions to COMMITTED)
+    await this.kernel.linkEscrow(txId, this.networkConfig.contracts.escrowVault, escrowId);
+
+    return escrowId;
   }
 
   /**
