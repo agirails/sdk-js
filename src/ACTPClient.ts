@@ -265,35 +265,52 @@ export class ACTPClient {
   /**
    * Fund a transaction by approving USDC and linking escrow.
    *
-   * This is a convenience method that combines:
-   * 1. Get transaction details (amount + 1% fee)
-   * 2. Approve USDC to EscrowVault
-   * 3. Generate unique escrow ID
-   * 4. Link escrow to transaction (moves to COMMITTED state)
+   * This convenience method:
+   * 1. Validates transaction exists and is in fundable state
+   * 2. Validates deadline hasn't passed
+   * 3. Approves USDC to EscrowVault (exact amount - contract handles fee internally)
+   * 4. Generates unique escrow ID
+   * 5. Links escrow to transaction (auto-transitions to COMMITTED)
    *
-   * @param txId - Transaction ID to fund
-   * @returns The escrow ID created
-   * @throws {Error} If transaction not found or already funded
+   * Note: The 1% platform fee is deducted BY THE CONTRACT when releasing escrow,
+   * not added here. We approve exactly tx.amount.
+   *
+   * @param txId - Transaction ID to fund (bytes32 hex string)
+   * @returns The escrow ID created (bytes32 hex string)
+   * @throws {ValidationError} If transaction not found, already funded, or expired
+   * @throws {TransactionRevertedError} If on-chain operation fails
    *
    * @example
    * ```typescript
-   * // Create transaction first
    * const txId = await client.kernel.createTransaction({...});
-   *
-   * // Fund it in one call
    * const escrowId = await client.fundTransaction(txId);
    * ```
    */
   async fundTransaction(txId: string): Promise<string> {
-    // Get transaction to determine amount
+    // Get transaction to determine amount and validate state
     const tx = await this.kernel.getTransaction(txId);
 
-    // Calculate total with 1% fee
-    const fee = (tx.amount * 100n) / 10000n; // 1% = 100 basis points
-    const total = tx.amount + fee;
+    // Validate transaction exists (zero address = not found)
+    if (tx.requester === ethers.ZeroAddress) {
+      throw new ValidationError('txId', 'Transaction not found');
+    }
 
-    // Approve USDC to escrow vault
-    await this.escrow.approveToken(this.networkConfig.contracts.usdc, total);
+    // Validate state is fundable (INITIATED or QUOTED)
+    // Import State enum or use numeric comparison
+    const INITIATED = 0;
+    const QUOTED = 1;
+    if (tx.state !== INITIATED && tx.state !== QUOTED) {
+      throw new ValidationError('state', `Cannot fund transaction in current state. Must be INITIATED or QUOTED.`);
+    }
+
+    // Validate deadline hasn't passed
+    const now = Math.floor(Date.now() / 1000);
+    if (now > tx.deadline) {
+      throw new ValidationError('deadline', 'Cannot fund expired transaction');
+    }
+
+    // Approve USDC to escrow vault (exact amount - contract deducts fee internally)
+    await this.escrow.approveToken(this.networkConfig.contracts.usdc, tx.amount);
 
     // Generate unique escrow ID
     const escrowId = id(`escrow-${txId}-${Date.now()}`);
