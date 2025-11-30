@@ -1,21 +1,26 @@
-import { Wallet, providers, Signer, BigNumber } from 'ethers';
+import { ethers, Wallet, Signer, id } from 'ethers';
+import type { JsonRpcProvider } from 'ethers';
 import { ACTPKernel } from './protocol/ACTPKernel';
 import { EscrowVault } from './protocol/EscrowVault';
 import { EventMonitor } from './protocol/EventMonitor';
 import { ProofGenerator } from './protocol/ProofGenerator';
 import { MessageSigner } from './protocol/MessageSigner';
+import { QuoteBuilder } from './builders/QuoteBuilder';
 import { NetworkConfig, getNetwork } from './config/networks';
 import { NetworkError, ValidationError } from './errors';
 import { EASHelper, EASConfig } from './protocol/EASHelper';
+import { NonceManager, InMemoryNonceManager } from './utils/NonceManager';
+import { IPFSClient } from './utils/IPFSClient';
 
 /**
  * ACTPClient configuration
+ * @since v0.1.0
  */
 export interface ACTPClientConfig {
   network: 'base-sepolia' | 'base-mainnet';
   privateKey?: string;
   signer?: Signer;
-  provider?: providers.Provider;
+  provider?: JsonRpcProvider;
   rpcUrl?: string;
   contracts?: {
     actpKernel?: string;
@@ -23,8 +28,8 @@ export interface ACTPClientConfig {
     usdc?: string;
   };
   gasSettings?: {
-    maxFeePerGas?: BigNumber;
-    maxPriorityFeePerGas?: BigNumber;
+    maxFeePerGas?: bigint;
+    maxPriorityFeePerGas?: bigint;
   };
   eas?: EASConfig;
 }
@@ -48,11 +53,14 @@ export class ACTPClient {
   public readonly events: EventMonitor;
   public readonly proofGenerator: ProofGenerator;
   public readonly messageSigner: MessageSigner;
+  public readonly quote: QuoteBuilder;
   public readonly eas?: EASHelper;
 
-  private readonly provider: providers.Provider;
+  private readonly provider: JsonRpcProvider;
   private readonly signer: Signer;
   private readonly networkConfig: NetworkConfig;
+  private readonly nonceManager: NonceManager;
+  private readonly ipfs?: IPFSClient;
 
   /**
    * Private constructor - use ACTPClient.create() instead
@@ -96,7 +104,7 @@ export class ACTPClient {
       this.provider = config.provider;
     } else {
       const rpcUrl = config.rpcUrl || this.networkConfig.rpcUrl;
-      this.provider = new providers.JsonRpcProvider(rpcUrl, this.networkConfig.chainId);
+      this.provider = new ethers.JsonRpcProvider(rpcUrl, this.networkConfig.chainId);
     }
 
     // Setup signer
@@ -106,12 +114,17 @@ export class ACTPClient {
       this.signer = new Wallet(config.privateKey, this.provider);
     } else {
       // Attempt to derive signer from provider if possible
-      const jsonRpcProvider = this.provider as providers.JsonRpcProvider;
-      if (jsonRpcProvider.getSigner) {
-        this.signer = jsonRpcProvider.getSigner();
-      } else {
-        throw new ValidationError('signer', 'Either privateKey or signer must be provided');
-      }
+      // In ethers v6, getSigner() is async and returns a JsonRpcSigner
+      throw new ValidationError('signer', 'Either privateKey or signer must be provided');
+    }
+
+    // Initialize shared utilities
+    this.nonceManager = new InMemoryNonceManager();
+
+    // Initialize IPFS client if configured
+    if (config.rpcUrl) {
+      // IPFS configuration could be added to ACTPClientConfig in the future
+      // For now, QuoteBuilder can work without IPFS (quotes stored only on-chain)
     }
 
     // Initialize protocol modules
@@ -135,6 +148,9 @@ export class ACTPClient {
     this.proofGenerator = new ProofGenerator();
 
     this.messageSigner = new MessageSigner(this.signer);
+
+    // Initialize QuoteBuilder (AIP-2)
+    this.quote = new QuoteBuilder(this.signer, this.nonceManager, this.ipfs);
 
     if (config.eas) {
       this.eas = new EASHelper(this.signer, config.eas);
@@ -179,7 +195,7 @@ export class ACTPClient {
   /**
    * Get provider
    */
-  getProvider(): providers.Provider {
+  getProvider(): JsonRpcProvider {
     return this.provider;
   }
 
@@ -195,14 +211,114 @@ export class ACTPClient {
   }
 
   /**
-   * Get gas price
+   * Get gas price (ethers v6: use getFeeData instead)
    */
   async getGasPrice() {
     try {
-      return await this.provider.getGasPrice();
+      const feeData = await this.provider.getFeeData();
+      return feeData.gasPrice || 0n;
     } catch (error: any) {
       throw new NetworkError(this.networkConfig.name, error.message);
     }
+  }
+
+  /**
+   * Release escrow with automatic attestation verification (recommended for security).
+   *
+   * SECURITY: This method verifies the attestation belongs to the transaction BEFORE
+   * releasing escrow. This protects against malicious providers submitting attestations
+   * from different transactions.
+   *
+   * ACTPKernel V1 contract accepts any attestationUID without on-chain validation.
+   * This SDK-side verification is the recommended protection until V2 adds on-chain checks.
+   *
+   * @param txId - Transaction ID to settle
+   * @param attestationUID - EAS attestation UID to verify
+   * @throws {Error} If EAS is not configured (client.eas is undefined)
+   * @throws {Error} If attestation verification fails (revoked, expired, or txId mismatch)
+   * @throws {TransactionRevertedError} If escrow release fails
+   *
+   * @example
+   * ```typescript
+   * // Get transaction to find attestation UID
+   * const tx = await client.kernel.getTransaction(txId);
+   *
+   * // Verify and release escrow in one call
+   * await client.releaseEscrowWithVerification(txId, tx.attestationUID);
+   * ```
+   */
+  async releaseEscrowWithVerification(txId: string, attestationUID: string): Promise<void> {
+    // Ensure EAS is configured
+    if (!this.eas) {
+      throw new Error(
+        'EAS is not configured. Initialize ACTPClient with eas config or use kernel.releaseEscrow() directly (unsafe)'
+      );
+    }
+
+    // Step 1: Verify attestation belongs to this transaction
+    await this.eas.verifyDeliveryAttestation(txId, attestationUID);
+
+    // Step 2: Release escrow (verification passed)
+    await this.kernel.releaseEscrow(txId);
+  }
+
+  /**
+   * Fund a transaction by approving USDC and linking escrow.
+   *
+   * This convenience method:
+   * 1. Validates transaction exists and is in fundable state
+   * 2. Validates deadline hasn't passed
+   * 3. Approves USDC to EscrowVault (exact amount - contract handles fee internally)
+   * 4. Generates unique escrow ID
+   * 5. Links escrow to transaction (auto-transitions to COMMITTED)
+   *
+   * Note: The 1% platform fee is deducted BY THE CONTRACT when releasing escrow,
+   * not added here. We approve exactly tx.amount.
+   *
+   * @param txId - Transaction ID to fund (bytes32 hex string)
+   * @returns The escrow ID created (bytes32 hex string)
+   * @throws {ValidationError} If transaction not found, already funded, or expired
+   * @throws {TransactionRevertedError} If on-chain operation fails
+   *
+   * @example
+   * ```typescript
+   * const txId = await client.kernel.createTransaction({...});
+   * const escrowId = await client.fundTransaction(txId);
+   * ```
+   */
+  async fundTransaction(txId: string): Promise<string> {
+    // Get transaction to determine amount and validate state
+    const tx = await this.kernel.getTransaction(txId);
+
+    // Validate transaction exists (zero address = not found)
+    if (tx.requester === ethers.ZeroAddress) {
+      throw new ValidationError('txId', 'Transaction not found');
+    }
+
+    // Validate state is fundable (INITIATED or QUOTED)
+    // Import State enum or use numeric comparison
+    const INITIATED = 0;
+    const QUOTED = 1;
+    if (tx.state !== INITIATED && tx.state !== QUOTED) {
+      throw new ValidationError('state', `Cannot fund transaction in current state. Must be INITIATED or QUOTED.`);
+    }
+
+    // Validate deadline hasn't passed
+    const now = Math.floor(Date.now() / 1000);
+    if (now > tx.deadline) {
+      throw new ValidationError('deadline', 'Cannot fund expired transaction');
+    }
+
+    // Approve USDC to escrow vault (exact amount - contract deducts fee internally)
+    await this.escrow.approveToken(this.networkConfig.contracts.usdc, tx.amount);
+
+    // Generate unique escrow ID
+    const escrowId = id(`escrow-${txId}-${Date.now()}`);
+
+    // Link escrow (auto-transitions to COMMITTED)
+    await this.kernel.linkEscrow(txId, this.networkConfig.contracts.escrowVault, escrowId);
+
+    return escrowId;
   }
 
   /**

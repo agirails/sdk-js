@@ -1,4 +1,4 @@
-import { BigNumber, utils } from 'ethers';
+import { ethers } from 'ethers';
 
 /**
  * Network configuration
@@ -12,10 +12,15 @@ export interface NetworkConfig {
     actpKernel: string;
     escrowVault: string;
     usdc: string;
+    eas: string; // EAS contract address
+    easSchemaRegistry: string; // EAS SchemaRegistry contract
+  };
+  eas: {
+    deliverySchemaUID: string; // AIP-4 delivery proof schema
   };
   gasSettings: {
-    maxFeePerGas: BigNumber;
-    maxPriorityFeePerGas: BigNumber;
+    maxFeePerGas: bigint;
+    maxPriorityFeePerGas: bigint;
   };
 }
 
@@ -28,14 +33,21 @@ export const BASE_SEPOLIA: NetworkConfig = {
   rpcUrl: 'https://sepolia.base.org',
   blockExplorer: 'https://sepolia.basescan.org',
   contracts: {
-    // Deployed 2025-01-22 by Justin (Final - Verified on Basescan)
-    actpKernel: '0xb5B002A73743765450d427e2F8a472C24FDABF9b',
-    escrowVault: '0x67770791c83eA8e46D8a08E09682488ba584744f',
-    usdc: '0x444b4e1A65949AB2ac75979D5d0166Eb7A248Ccb' // MockUSDC
+    // Redeployed 2025-11-25 by Arha (fixed auto-transition in linkEscrow, optimizer-runs 200)
+    actpKernel: '0x6aDB650e185b0ee77981AC5279271f0Fa6CFe7ba',
+    escrowVault: '0x921edE340770db5DB6059B5B866be987d1b7311F',
+    usdc: '0x444b4e1A65949AB2ac75979D5d0166Eb7A248Ccb', // MockUSDC
+    // EAS contracts (Base native deployment)
+    eas: '0x4200000000000000000000000000000000000021',
+    easSchemaRegistry: '0x4200000000000000000000000000000000000020'
+  },
+  eas: {
+    // Deployed 2025-11-23 - AIP-4 delivery proof schema
+    deliverySchemaUID: '0x1b0ebdf0bd20c28ec9d5362571ce8715a55f46e81c3de2f9b0d8e1b95fb5ffce'
   },
   gasSettings: {
-    maxFeePerGas: utils.parseUnits('2', 'gwei'),
-    maxPriorityFeePerGas: utils.parseUnits('1', 'gwei')
+    maxFeePerGas: ethers.parseUnits('2', 'gwei'),
+    maxPriorityFeePerGas: ethers.parseUnits('1', 'gwei')
   }
 };
 
@@ -51,11 +63,18 @@ export const BASE_MAINNET: NetworkConfig = {
     // TODO: Update after mainnet deployment
     actpKernel: '0x0000000000000000000000000000000000000000',
     escrowVault: '0x0000000000000000000000000000000000000000',
-    usdc: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' // Official USDC on Base
+    usdc: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', // Official USDC on Base
+    // EAS contracts (Base native deployment)
+    eas: '0x4200000000000000000000000000000000000021',
+    easSchemaRegistry: '0x4200000000000000000000000000000000000020'
+  },
+  eas: {
+    // TODO: Deploy delivery schema to mainnet
+    deliverySchemaUID: '0x0000000000000000000000000000000000000000000000000000000000000000'
   },
   gasSettings: {
-    maxFeePerGas: utils.parseUnits('0.5', 'gwei'),
-    maxPriorityFeePerGas: utils.parseUnits('0.1', 'gwei')
+    maxFeePerGas: ethers.parseUnits('0.5', 'gwei'),
+    maxPriorityFeePerGas: ethers.parseUnits('0.1', 'gwei')
   }
 };
 
@@ -90,7 +109,12 @@ export function getNetwork(network: string): NetworkConfig {
     contracts: {
       actpKernel: config.contracts.actpKernel,
       escrowVault: config.contracts.escrowVault,
-      usdc: config.contracts.usdc
+      usdc: config.contracts.usdc,
+      eas: config.contracts.eas,
+      easSchemaRegistry: config.contracts.easSchemaRegistry
+    },
+    eas: {
+      deliverySchemaUID: config.eas.deliverySchemaUID
     },
     gasSettings: {
       maxFeePerGas: config.gasSettings.maxFeePerGas,

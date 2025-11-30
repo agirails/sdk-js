@@ -1,4 +1,4 @@
-import { BigNumber, utils } from 'ethers';
+import { isAddress, getAddress } from 'ethers';
 import {
   InvalidAddressError,
   InvalidAmountError,
@@ -13,11 +13,11 @@ import {
  * Validate Ethereum address
  */
 export function validateAddress(address: string, fieldName: string = 'address'): void {
-  if (!address || !utils.isAddress(address)) {
+  if (!address || !isAddress(address)) {
     throw new InvalidAddressError(address);
   }
-  
-  if (address === utils.getAddress('0x0000000000000000000000000000000000000000')) {
+
+  if (address === getAddress('0x0000000000000000000000000000000000000000')) {
     throw new ValidationError(fieldName, 'Address cannot be zero address');
   }
 }
@@ -25,13 +25,13 @@ export function validateAddress(address: string, fieldName: string = 'address'):
 /**
  * Validate amount (must be > 0)
  */
-export function validateAmount(amount: BigNumber, _fieldName: string = 'amount'): void {
+export function validateAmount(amount: bigint, _fieldName: string = 'amount'): void {
   // Handle null/undefined before calling toString()
   if (!amount) {
     throw new InvalidAmountError(String(amount)); // Convert safely to string
   }
-  
-  if (amount.lte(0)) {
+
+  if (amount <= 0n) {
     throw new InvalidAmountError(amount.toString());
   }
 }

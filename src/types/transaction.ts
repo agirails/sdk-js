@@ -1,4 +1,3 @@
-import { BigNumber } from 'ethers';
 import { State } from './state';
 
 /**
@@ -9,7 +8,7 @@ export interface Transaction {
   txId: string;
   requester: string;
   provider: string;
-  amount: BigNumber;
+  amount: bigint;
   state: State;
   createdAt: number;
   deadline: number;
@@ -25,7 +24,7 @@ export interface Transaction {
 export interface CreateTransactionParams {
   provider: string;
   requester: string;
-  amount: BigNumber;
+  amount: bigint;
   deadline: number;
   disputeWindow: number;
   metadata?: string;
@@ -35,9 +34,9 @@ export interface CreateTransactionParams {
  * Dispute resolution split
  */
 export interface DisputeResolution {
-  requesterAmount: BigNumber;
-  providerAmount: BigNumber;
-  mediatorAmount: BigNumber;
+  requesterAmount: bigint;
+  providerAmount: bigint;
+  mediatorAmount: bigint;
   mediator?: string;
 }
 

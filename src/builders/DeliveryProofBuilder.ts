@@ -9,8 +9,7 @@
  * - Canonical JSON hashing
  */
 
-import { Signer } from 'ethers';
-import { _TypedDataEncoder, verifyTypedData } from 'ethers/lib/utils';
+import { Signer, verifyTypedData } from 'ethers';
 import { EAS, SchemaEncoder } from '@ethereum-attestation-service/eas-sdk';
 import { computeResultHash } from '../utils/canonicalJson';
 import { IPFSClient } from '../utils/IPFSClient';
@@ -245,11 +244,10 @@ export class DeliveryProofBuilder {
       nonce: deliveryProof.nonce
     };
 
-    // Sign using ethers.js signTypedData (Signer API)
-    // Note: For Wallet/JsonRpcSigner, use _signTypedData
-    // For compatibility, check if _signTypedData exists
-    if ('_signTypedData' in this.signer && typeof (this.signer as any)._signTypedData === 'function') {
-      const signature = await (this.signer as any)._signTypedData(
+    // Sign using ethers v6 signTypedData API
+    // ethers v6 uses signTypedData() (without underscore)
+    if ('signTypedData' in this.signer && typeof (this.signer as any).signTypedData === 'function') {
+      const signature = await (this.signer as any).signTypedData(
         domain,
         AIP4DeliveryProofTypes,
         message
@@ -257,7 +255,7 @@ export class DeliveryProofBuilder {
       return signature;
     }
 
-    throw new Error('Signer does not support EIP-712 typed data signing');
+    throw new Error('Signer does not support EIP-712 typed data signing (ethers v6+)');
 
   }
 

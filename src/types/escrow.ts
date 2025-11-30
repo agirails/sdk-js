@@ -1,5 +1,3 @@
-import { BigNumber } from 'ethers';
-
 /**
  * Escrow creation parameters
  */
@@ -7,7 +5,7 @@ export interface CreateEscrowParams {
   kernelAddress: string;
   txId: string;
   token: string;
-  amount: BigNumber;
+  amount: bigint;
   beneficiary: string;
 }
 
@@ -19,7 +17,7 @@ export interface Escrow {
   kernel: string;
   txId: string;
   token: string;
-  amount: BigNumber;
+  amount: bigint;
   beneficiary: string;
   createdAt: number;
   released: boolean;

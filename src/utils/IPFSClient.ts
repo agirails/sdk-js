@@ -1,9 +1,9 @@
 /**
  * IPFS Client Implementation
- * Wrapper around ipfs-http-client for AIP-4 delivery proof uploads
+ * Wrapper around kubo-rpc-client (formerly ipfs-http-client) for AIP-4 delivery proof uploads
  */
 
-import { create, IPFSHTTPClient, Options } from 'ipfs-http-client';
+import { create, IPFSHTTPClient, Options } from 'kubo-rpc-client';
 
 /**
  * IPFS Client Interface (from DeliveryProofBuilder)

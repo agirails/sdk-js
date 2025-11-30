@@ -3,7 +3,7 @@
  */
 
 import { canonicalJsonStringify, computeCanonicalHash, computeResultHash } from '../../utils/canonicalJson';
-import { keccak256, toUtf8Bytes } from 'ethers/lib/utils';
+import { keccak256, toUtf8Bytes } from 'ethers';
 
 describe('Canonical JSON Utilities', () => {
   describe('canonicalJsonStringify', () => {

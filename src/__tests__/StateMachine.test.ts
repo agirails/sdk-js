@@ -53,8 +53,9 @@ describe('StateMachine', () => {
     it('should return valid next states for INITIATED', () => {
       const next = StateMachine.getNextValidStates(State.INITIATED);
       expect(next).toContain(State.QUOTED);
+      expect(next).toContain(State.COMMITTED);
       expect(next).toContain(State.CANCELLED);
-      expect(next).toHaveLength(2);
+      expect(next).toHaveLength(3); // INITIATED can transition to QUOTED, COMMITTED, or CANCELLED
     });
 
     it('should return empty array for terminal states', () => {

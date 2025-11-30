@@ -3,15 +3,14 @@
  * Reference: AIP-2 §9 (Test Vectors), §10.2 (Validation Checklist)
  */
 
-import { Wallet } from 'ethers';
-import { parseUnits } from 'ethers/lib/utils';
+import { Wallet, parseUnits, HDNodeWallet } from 'ethers';
 import { QuoteBuilder, QuoteParams, QuoteMessage } from '../builders/QuoteBuilder';
 import { NonceManager, InMemoryNonceManager } from '../utils/NonceManager';
 import { IPFSClient } from '../utils/IPFSClient';
 
 describe('QuoteBuilder', () => {
   let quoteBuilder: QuoteBuilder;
-  let signer: Wallet;
+  let signer: HDNodeWallet;
   let nonceManager: NonceManager;
   let mockIPFS: jest.Mocked<IPFSClient>;
 

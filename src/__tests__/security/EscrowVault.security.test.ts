@@ -1,37 +1,35 @@
 /**
  * EscrowVault Security Test Suite
  *
- * CRITICAL: This module handles USDC fund custody
+ * CRITICAL: This module prepares token approvals for escrow creation.
+ * Actual escrow creation happens in ACTPKernel.linkEscrow() (tested in ACTPKernel integration tests).
+ *
+ * Per AIP-3 specification, escrow creation is atomic inside Kernel.linkEscrow(),
+ * not a separate EscrowVault SDK call. This test suite validates:
+ * 1. Token approval safety (USDC race condition mitigation)
+ * 2. Escrow release security (multi-recipient disbursement)
+ *
  * Coverage Target: 90%+ (statements, functions, lines), 85%+ (branches)
  *
  * Security Test Categories:
- * 1. Fund Flow Integrity (12 tests)
- * 2. Escrow Release Security (10 tests)
- * 3. Approval Race Condition Mitigation (8 tests)
+ * 1. Token Approval Safety (10+ tests) - Pre-escrow USDC approval
+ * 2. Escrow Release Security (10 tests) - Post-settlement disbursement
+ * 3. USDC Race Condition Mitigation (5+ tests) - Reset-to-zero pattern
+ * 4. Gas Estimation Buffers (2+ tests) - Dynamic gas buffers
  *
  * References:
  * - Security Analysis: /Testnet/tests/SDK_SECURITY_ANALYSIS-Ultra-Think.md
- * - V1: EscrowVault Zero Test Coverage vulnerability
+ * - AIP-3 §3.2: Escrow Linking Workflow
  */
 
-import { BigNumber } from 'ethers';
 import { EscrowVault } from '../../protocol/EscrowVault';
 
 // Mock ethers Contract
 const mockContract = {
   estimateGas: {
-    createEscrow: jest.fn().mockResolvedValue(BigNumber.from(100000)),
-    disburse: jest.fn().mockResolvedValue(BigNumber.from(80000)),
-    approve: jest.fn().mockResolvedValue(BigNumber.from(50000))
+    disburse: jest.fn().mockResolvedValue(BigInt(80000)),
+    approve: jest.fn().mockResolvedValue(BigInt(50000))
   },
-  createEscrow: jest.fn().mockResolvedValue({
-    wait: jest.fn().mockResolvedValue({
-      events: [{
-        event: 'EscrowCreated',
-        args: { escrowId: '0x' + '1'.repeat(64) }
-      }]
-    })
-  }),
   disburse: jest.fn().mockResolvedValue({
     wait: jest.fn().mockResolvedValue({})
   }),
@@ -39,15 +37,34 @@ const mockContract = {
     kernel: '0x' + '1'.repeat(40),
     txId: '0x' + '2'.repeat(64),
     token: '0x' + '3'.repeat(40),
-    amount: BigNumber.from('100000000'), // 100 USDC (6 decimals)
+    amount: BigInt('100000000'), // 100 USDC (6 decimals)
     beneficiary: '0x' + '4'.repeat(40),
     released: false
   }),
-  allowance: jest.fn().mockResolvedValue(BigNumber.from(0)),
-  balanceOf: jest.fn().mockResolvedValue(BigNumber.from('1000000000')), // 1000 USDC
+  allowance: jest.fn().mockResolvedValue(BigInt(0)),
+  balanceOf: jest.fn().mockResolvedValue(BigInt('1000000000')), // 1000 USDC
   approve: jest.fn().mockResolvedValue({
     wait: jest.fn().mockResolvedValue({})
-  })
+  }),
+  // ethers v6 requires getFunction
+  getFunction: jest.fn((name: string) => {
+    const functions: any = {
+      disburse: mockContract.disburse,
+      approve: mockContract.approve,
+      estimateGas: jest.fn().mockResolvedValue(BigInt(100000))
+    };
+    const func = functions[name] || jest.fn();
+    const estimateGasMap: any = mockContract.estimateGas;
+    func.estimateGas = estimateGasMap[name] || jest.fn().mockResolvedValue(BigInt(100000));
+    return func;
+  }),
+  // ethers v6: interface.parseLog for event parsing
+  interface: {
+    parseLog: jest.fn((_log: any) => ({
+      name: 'EscrowCreated',
+      args: { escrowId: '0x' + '1'.repeat(64) }
+    }))
+  }
 };
 
 // Mock signer
@@ -69,178 +86,162 @@ describe('EscrowVault - Fund Flow Integrity', () => {
   let escrowVault: EscrowVault;
 
   const ESCROW_ADDRESS = '0x' + 'a'.repeat(40);
-  const KERNEL_ADDRESS = '0x' + 'b'.repeat(40);
   const TOKEN_ADDRESS = '0x' + 'c'.repeat(40);
   const BENEFICIARY_ADDRESS = '0x' + 'd'.repeat(40);
-  const TX_ID = '0x' + '1'.repeat(64);
 
   beforeEach(() => {
     jest.clearAllMocks();
     escrowVault = new EscrowVault(ESCROW_ADDRESS, mockSigner as any);
   });
 
-  describe('createEscrow - Fund Safety', () => {
-    it('should successfully create escrow with valid parameters', async () => {
-      const params = {
-        kernelAddress: KERNEL_ADDRESS,
-        txId: TX_ID,
-        token: TOKEN_ADDRESS,
-        amount: BigNumber.from('100000000'), // 100 USDC
-        beneficiary: BENEFICIARY_ADDRESS
-      };
+  describe('approveToken - Token Approval Safety', () => {
+    // NOTE: These tests cover PRE-escrow workflow (USDC approval).
+    // Escrow linking atomicity (approve → Kernel.linkEscrow → state transition)
+    // is tested in ACTPKernel integration tests.
 
-      const escrowId = await escrowVault.createEscrow(params);
+    it('should successfully approve token with valid parameters', async () => {
+      await escrowVault.approveToken(TOKEN_ADDRESS, BigInt('100000000'));
 
-      expect(escrowId).toBe('0x' + '1'.repeat(64));
-      expect(mockContract.createEscrow).toHaveBeenCalled();
+      expect(mockContract.approve).toHaveBeenCalledWith(
+        ESCROW_ADDRESS,
+        BigInt('100000000'),
+        expect.objectContaining({
+          gasLimit: expect.any(BigInt)
+        })
+      );
     });
 
-    it('should reject escrow creation with zero address as kernel', async () => {
-      const params = {
-        kernelAddress: '0x0000000000000000000000000000000000000000',
-        txId: TX_ID,
-        token: TOKEN_ADDRESS,
-        amount: BigNumber.from('100000000'),
-        beneficiary: BENEFICIARY_ADDRESS
-      };
-
-      await expect(escrowVault.createEscrow(params)).rejects.toThrow('zero address');
+    it('should reject approval with zero address as token', async () => {
+      await expect(
+        escrowVault.approveToken('0x0000000000000000000000000000000000000000', BigInt('100000000'))
+      ).rejects.toThrow('zero address');
     });
 
-    it('should reject escrow creation with zero address as token', async () => {
-      const params = {
-        kernelAddress: KERNEL_ADDRESS,
-        txId: TX_ID,
-        token: '0x0000000000000000000000000000000000000000',
-        amount: BigNumber.from('100000000'),
-        beneficiary: BENEFICIARY_ADDRESS
-      };
-
-      await expect(escrowVault.createEscrow(params)).rejects.toThrow('zero address');
+    it('should reject approval with invalid token address format', async () => {
+      await expect(
+        escrowVault.approveToken('invalid-address', BigInt('100000000'))
+      ).rejects.toThrow('Invalid Ethereum address');
     });
 
-    it('should reject escrow creation with zero address as beneficiary', async () => {
-      const params = {
-        kernelAddress: KERNEL_ADDRESS,
-        txId: TX_ID,
-        token: TOKEN_ADDRESS,
-        amount: BigNumber.from('100000000'),
-        beneficiary: '0x0000000000000000000000000000000000000000'
-      };
-
-      await expect(escrowVault.createEscrow(params)).rejects.toThrow('zero address');
+    it('should reject approval with zero amount', async () => {
+      await expect(
+        escrowVault.approveToken(TOKEN_ADDRESS, BigInt(0))
+      ).rejects.toThrow('Invalid amount');
     });
 
-    it('should reject escrow creation with invalid kernel address format', async () => {
-      const params = {
-        kernelAddress: 'invalid-address',
-        txId: TX_ID,
-        token: TOKEN_ADDRESS,
-        amount: BigNumber.from('100000000'),
-        beneficiary: BENEFICIARY_ADDRESS
-      };
-
-      await expect(escrowVault.createEscrow(params)).rejects.toThrow('Invalid Ethereum address');
-    });
-
-    it('should reject escrow creation with zero amount', async () => {
-      const params = {
-        kernelAddress: KERNEL_ADDRESS,
-        txId: TX_ID,
-        token: TOKEN_ADDRESS,
-        amount: BigNumber.from(0),
-        beneficiary: BENEFICIARY_ADDRESS
-      };
-
-      await expect(escrowVault.createEscrow(params)).rejects.toThrow('Invalid amount');
-    });
-
-    it('should reject escrow creation with negative amount', async () => {
-      const params = {
-        kernelAddress: KERNEL_ADDRESS,
-        txId: TX_ID,
-        token: TOKEN_ADDRESS,
-        amount: BigNumber.from(-1),
-        beneficiary: BENEFICIARY_ADDRESS
-      };
-
-      await expect(escrowVault.createEscrow(params)).rejects.toThrow('Invalid amount');
+    it('should reject approval with negative amount', async () => {
+      await expect(
+        escrowVault.approveToken(TOKEN_ADDRESS, BigInt(-1))
+      ).rejects.toThrow('Invalid amount');
     });
 
     it('should handle minimum USDC amount (0.05 USDC = 50000 wei)', async () => {
-      const params = {
-        kernelAddress: KERNEL_ADDRESS,
-        txId: TX_ID,
-        token: TOKEN_ADDRESS,
-        amount: BigNumber.from(50000), // 0.05 USDC minimum
-        beneficiary: BENEFICIARY_ADDRESS
-      };
+      await escrowVault.approveToken(TOKEN_ADDRESS, BigInt(50000));
 
-      const escrowId = await escrowVault.createEscrow(params);
-      expect(escrowId).toBeTruthy();
+      expect(mockContract.approve).toHaveBeenCalledWith(
+        ESCROW_ADDRESS,
+        BigInt(50000), // 0.05 USDC minimum
+        expect.objectContaining({
+          gasLimit: expect.any(BigInt)
+        })
+      );
     });
 
     it('should handle large amounts without overflow', async () => {
-      const params = {
-        kernelAddress: KERNEL_ADDRESS,
-        txId: TX_ID,
-        token: TOKEN_ADDRESS,
-        amount: BigNumber.from('1000000000000'), // 1M USDC
-        beneficiary: BENEFICIARY_ADDRESS
-      };
-
       // Should not throw overflow error
-      const escrowId = await escrowVault.createEscrow(params);
-      expect(escrowId).toBeTruthy();
-    });
+      await escrowVault.approveToken(TOKEN_ADDRESS, BigInt('1000000000000'));
 
-    it('should reject invalid transaction ID format', async () => {
-      const params = {
-        kernelAddress: KERNEL_ADDRESS,
-        txId: 'invalid-tx-id',
-        token: TOKEN_ADDRESS,
-        amount: BigNumber.from('100000000'),
-        beneficiary: BENEFICIARY_ADDRESS
-      };
-
-      await expect(escrowVault.createEscrow(params)).rejects.toThrow('Invalid transaction ID format');
-    });
-
-    it('should handle EscrowCreated event extraction failure gracefully', async () => {
-      // Mock contract to return receipt without event
-      mockContract.createEscrow.mockResolvedValueOnce({
-        wait: jest.fn().mockResolvedValue({
-          events: [] // No EscrowCreated event
+      expect(mockContract.approve).toHaveBeenCalledWith(
+        ESCROW_ADDRESS,
+        BigInt('1000000000000'), // 1M USDC
+        expect.objectContaining({
+          gasLimit: expect.any(BigInt)
         })
-      });
+      );
+    });
 
-      const params = {
-        kernelAddress: KERNEL_ADDRESS,
-        txId: TX_ID,
-        token: TOKEN_ADDRESS,
-        amount: BigNumber.from('100000000'),
-        beneficiary: BENEFICIARY_ADDRESS
-      };
+    it('should check current allowance before approving', async () => {
+      await escrowVault.approveToken(TOKEN_ADDRESS, BigInt('100000000'));
 
-      await expect(escrowVault.createEscrow(params)).rejects.toThrow('EscrowCreated event not found');
+      // Should have checked allowance
+      expect(mockContract.allowance).toHaveBeenCalled();
+    });
+
+    it('should skip approval if current allowance is sufficient', async () => {
+      // Mock sufficient allowance
+      mockContract.allowance.mockResolvedValueOnce(BigInt('200000000'));
+
+      await escrowVault.approveToken(TOKEN_ADDRESS, BigInt('100000000'));
+
+      // Should NOT call approve if allowance is sufficient
+      expect(mockContract.approve).not.toHaveBeenCalled();
     });
 
     it('should wrap transaction revert errors with proper context', async () => {
-      mockContract.createEscrow.mockRejectedValueOnce({
+      mockContract.approve.mockRejectedValueOnce({
         transactionHash: '0x' + 'f'.repeat(64),
-        reason: 'Insufficient balance',
-        message: 'execution reverted: Insufficient balance'
+        reason: 'Approval failed',
+        message: 'execution reverted: Approval failed'
       });
 
-      const params = {
-        kernelAddress: KERNEL_ADDRESS,
-        txId: TX_ID,
-        token: TOKEN_ADDRESS,
-        amount: BigNumber.from('100000000'),
-        beneficiary: BENEFICIARY_ADDRESS
-      };
+      await expect(
+        escrowVault.approveToken(TOKEN_ADDRESS, BigInt('100000000'))
+      ).rejects.toThrow('Token approval failed');
+    });
 
-      await expect(escrowVault.createEscrow(params)).rejects.toThrow('Transaction reverted');
+    it('should skip approval if current allowance exceeds required amount', async () => {
+      // Mock allowance greater than required
+      mockContract.allowance.mockResolvedValueOnce(BigInt('200000000')); // 200 USDC
+
+      await escrowVault.approveToken(TOKEN_ADDRESS, BigInt('100000000')); // Need 100 USDC
+
+      // Should skip approval entirely
+      expect(mockContract.approve).not.toHaveBeenCalled();
+    });
+
+    it('should use explicit 20% gas buffer for approveToken operation', async () => {
+      // This test verifies explicit buffer for approveToken (not default)
+      mockContract.allowance.mockResolvedValueOnce(BigInt(0));
+
+      // estimateGas returns 50000
+      mockContract.getFunction('approve').estimateGas.mockResolvedValueOnce(BigInt(50000));
+
+      await escrowVault.approveToken(TOKEN_ADDRESS, BigInt('100000000'));
+
+      const approveCall = mockContract.approve.mock.calls[0];
+      const gasLimit = approveCall[2].gasLimit;
+
+      // 50000 * 1.20 = 60000 (approveToken uses explicit 20% buffer)
+      expect(gasLimit).toBe(BigInt(60000));
+    });
+
+    it('should wrap approval transaction errors with context', async () => {
+      mockContract.allowance.mockResolvedValueOnce(BigInt(0));
+
+      // Mock approve() rejecting with transaction error
+      mockContract.approve.mockRejectedValueOnce({
+        transactionHash: '0x' + 'f'.repeat(64),
+        reason: 'Insufficient funds'
+      });
+
+      await expect(
+        escrowVault.approveToken(TOKEN_ADDRESS, BigInt('100000000'))
+      ).rejects.toThrow('Token approval failed: Insufficient funds');
+    });
+
+    it('should handle USDC approval returning false instead of reverting', async () => {
+      mockContract.allowance.mockResolvedValueOnce(BigInt(0));
+
+      // Mock approve() returning transaction that fails on wait()
+      // This simulates USDC returning false instead of reverting
+      mockContract.approve.mockResolvedValueOnce({
+        wait: jest.fn().mockRejectedValue(new Error('Transaction failed: status 0'))
+      });
+
+      // SDK should detect failed transaction and throw
+      await expect(
+        escrowVault.approveToken(TOKEN_ADDRESS, BigInt('100000000'))
+      ).rejects.toThrow('Token approval failed');
     });
   });
 
@@ -249,7 +250,7 @@ describe('EscrowVault - Fund Flow Integrity', () => {
 
     it('should successfully release escrow to single recipient', async () => {
       const recipients = [BENEFICIARY_ADDRESS];
-      const amounts = [BigNumber.from('100000000')];
+      const amounts = [BigInt('100000000')];
 
       await escrowVault.releaseEscrow(ESCROW_ID, recipients, amounts);
 
@@ -268,9 +269,9 @@ describe('EscrowVault - Fund Flow Integrity', () => {
         '0x' + '6'.repeat(40)
       ];
       const amounts = [
-        BigNumber.from('50000000'), // 50 USDC
-        BigNumber.from('30000000'), // 30 USDC
-        BigNumber.from('20000000')  // 20 USDC
+        BigInt('50000000'), // 50 USDC
+        BigInt('30000000'), // 30 USDC
+        BigInt('20000000')  // 20 USDC
       ];
 
       await escrowVault.releaseEscrow(ESCROW_ID, recipients, amounts);
@@ -280,7 +281,7 @@ describe('EscrowVault - Fund Flow Integrity', () => {
 
     it('should reject release with mismatched recipients/amounts length', async () => {
       const recipients = [BENEFICIARY_ADDRESS, '0x' + '5'.repeat(40)];
-      const amounts = [BigNumber.from('100000000')]; // Only 1 amount for 2 recipients
+      const amounts = [BigInt('100000000')]; // Only 1 amount for 2 recipients
 
       await expect(escrowVault.releaseEscrow(ESCROW_ID, recipients, amounts))
         .rejects.toThrow('length mismatch');
@@ -288,7 +289,7 @@ describe('EscrowVault - Fund Flow Integrity', () => {
 
     it('should reject release with empty recipients array', async () => {
       const recipients: string[] = [];
-      const amounts: BigNumber[] = [];
+      const amounts: bigint[] = [];
 
       await expect(escrowVault.releaseEscrow(ESCROW_ID, recipients, amounts))
         .rejects.toThrow('at least one recipient');
@@ -296,7 +297,7 @@ describe('EscrowVault - Fund Flow Integrity', () => {
 
     it('should reject release with zero address recipient', async () => {
       const recipients = ['0x0000000000000000000000000000000000000000'];
-      const amounts = [BigNumber.from('100000000')];
+      const amounts = [BigInt('100000000')];
 
       await expect(escrowVault.releaseEscrow(ESCROW_ID, recipients, amounts))
         .rejects.toThrow('zero address');
@@ -304,7 +305,7 @@ describe('EscrowVault - Fund Flow Integrity', () => {
 
     it('should reject release with zero amount', async () => {
       const recipients = [BENEFICIARY_ADDRESS];
-      const amounts = [BigNumber.from(0)];
+      const amounts = [BigInt(0)];
 
       await expect(escrowVault.releaseEscrow(ESCROW_ID, recipients, amounts))
         .rejects.toThrow('Invalid amount');
@@ -312,7 +313,7 @@ describe('EscrowVault - Fund Flow Integrity', () => {
 
     it('should reject release with negative amount', async () => {
       const recipients = [BENEFICIARY_ADDRESS];
-      const amounts = [BigNumber.from(-1)];
+      const amounts = [BigInt(-1)];
 
       await expect(escrowVault.releaseEscrow(ESCROW_ID, recipients, amounts))
         .rejects.toThrow('Invalid amount');
@@ -320,7 +321,7 @@ describe('EscrowVault - Fund Flow Integrity', () => {
 
     it('should reject release with invalid escrow ID format', async () => {
       const recipients = [BENEFICIARY_ADDRESS];
-      const amounts = [BigNumber.from('100000000')];
+      const amounts = [BigInt('100000000')];
 
       await expect(escrowVault.releaseEscrow('invalid-id', recipients, amounts))
         .rejects.toThrow('Invalid transaction ID format');
@@ -334,7 +335,7 @@ describe('EscrowVault - Fund Flow Integrity', () => {
       });
 
       const recipients = [BENEFICIARY_ADDRESS];
-      const amounts = [BigNumber.from('100000000')];
+      const amounts = [BigInt('100000000')];
 
       await expect(escrowVault.releaseEscrow(ESCROW_ID, recipients, amounts))
         .rejects.toThrow('Transaction reverted');
@@ -347,9 +348,9 @@ describe('EscrowVault - Fund Flow Integrity', () => {
         '0x' + '6'.repeat(40)
       ];
       const amounts = [
-        BigNumber.from('50000000'),
-        BigNumber.from('30000000'),
-        BigNumber.from('20000000')
+        BigInt('50000000'),
+        BigInt('30000000'),
+        BigInt('20000000')
       ];
 
       await expect(escrowVault.releaseEscrow(ESCROW_ID, recipients, amounts))
@@ -357,126 +358,43 @@ describe('EscrowVault - Fund Flow Integrity', () => {
     });
   });
 
-  describe('approveToken - Race Condition Mitigation', () => {
-    it('should check current allowance before approving', async () => {
-      const params = {
-        kernelAddress: KERNEL_ADDRESS,
-        txId: TX_ID,
-        token: TOKEN_ADDRESS,
-        amount: BigNumber.from('100000000'),
-        beneficiary: BENEFICIARY_ADDRESS
-      };
-
-      await escrowVault.createEscrow(params);
-
-      // Should have checked allowance
-      expect(mockContract.allowance).toHaveBeenCalled();
-    });
-
+  describe('approveToken - USDC Race Condition Mitigation', () => {
     it('should reset approval to zero before setting new value (USDC pattern)', async () => {
       // Mock existing allowance
-      mockContract.allowance.mockResolvedValueOnce(BigNumber.from('50000000'));
+      mockContract.allowance.mockResolvedValueOnce(BigInt('50000000'));
 
-      const params = {
-        kernelAddress: KERNEL_ADDRESS,
-        txId: TX_ID,
-        token: TOKEN_ADDRESS,
-        amount: BigNumber.from('100000000'),
-        beneficiary: BENEFICIARY_ADDRESS
-      };
-
-      await escrowVault.createEscrow(params);
+      await escrowVault.approveToken(TOKEN_ADDRESS, BigInt('100000000'));
 
       // Should approve twice (reset to 0, then set amount)
       expect(mockContract.approve).toHaveBeenCalledTimes(2);
     });
 
-    it('should skip approval if current allowance is sufficient', async () => {
-      // Mock sufficient allowance
-      mockContract.allowance.mockResolvedValueOnce(BigNumber.from('200000000'));
-
-      const params = {
-        kernelAddress: KERNEL_ADDRESS,
-        txId: TX_ID,
-        token: TOKEN_ADDRESS,
-        amount: BigNumber.from('100000000'),
-        beneficiary: BENEFICIARY_ADDRESS
-      };
-
-      await escrowVault.createEscrow(params);
-
-      // Should NOT call approve if allowance is sufficient
-      expect(mockContract.approve).not.toHaveBeenCalled();
-    });
-
-    it('should handle approval failure gracefully', async () => {
-      mockContract.approve.mockRejectedValueOnce({
-        transactionHash: '0x' + 'f'.repeat(64),
-        reason: 'Approval failed',
-        message: 'execution reverted: Approval failed'
-      });
-
-      const params = {
-        kernelAddress: KERNEL_ADDRESS,
-        txId: TX_ID,
-        token: TOKEN_ADDRESS,
-        amount: BigNumber.from('100000000'),
-        beneficiary: BENEFICIARY_ADDRESS
-      };
-
-      await expect(escrowVault.createEscrow(params)).rejects.toThrow('Token approval failed');
-    });
-
     it('should only approve if current allowance is less than required amount', async () => {
       // Mock allowance exactly equal to amount
-      mockContract.allowance.mockResolvedValueOnce(BigNumber.from('100000000'));
+      mockContract.allowance.mockResolvedValueOnce(BigInt('100000000'));
 
-      const params = {
-        kernelAddress: KERNEL_ADDRESS,
-        txId: TX_ID,
-        token: TOKEN_ADDRESS,
-        amount: BigNumber.from('100000000'),
-        beneficiary: BENEFICIARY_ADDRESS
-      };
-
-      await escrowVault.createEscrow(params);
+      await escrowVault.approveToken(TOKEN_ADDRESS, BigInt('100000000'));
 
       // Should NOT approve if allowance equals amount
       expect(mockContract.approve).not.toHaveBeenCalled();
     });
 
     it('should estimate gas for both reset and set approval', async () => {
-      mockContract.allowance.mockResolvedValueOnce(BigNumber.from('50000000'));
+      mockContract.allowance.mockResolvedValueOnce(BigInt('50000000'));
 
-      const params = {
-        kernelAddress: KERNEL_ADDRESS,
-        txId: TX_ID,
-        token: TOKEN_ADDRESS,
-        amount: BigNumber.from('100000000'),
-        beneficiary: BENEFICIARY_ADDRESS
-      };
-
-      await escrowVault.createEscrow(params);
+      await escrowVault.approveToken(TOKEN_ADDRESS, BigInt('100000000'));
 
       // Should estimate gas twice (reset + set)
       expect(mockContract.estimateGas.approve).toHaveBeenCalledTimes(2);
     });
 
     it('should wait for reset approval before setting new approval', async () => {
-      mockContract.allowance.mockResolvedValueOnce(BigNumber.from('50000000'));
+      mockContract.allowance.mockResolvedValueOnce(BigInt('50000000'));
 
       const waitMock = jest.fn().mockResolvedValue({});
       mockContract.approve.mockResolvedValue({ wait: waitMock });
 
-      const params = {
-        kernelAddress: KERNEL_ADDRESS,
-        txId: TX_ID,
-        token: TOKEN_ADDRESS,
-        amount: BigNumber.from('100000000'),
-        beneficiary: BENEFICIARY_ADDRESS
-      };
-
-      await escrowVault.createEscrow(params);
+      await escrowVault.approveToken(TOKEN_ADDRESS, BigInt('100000000'));
 
       // Should wait twice (reset + set)
       expect(waitMock).toHaveBeenCalledTimes(2);
@@ -484,31 +402,20 @@ describe('EscrowVault - Fund Flow Integrity', () => {
 
     it('should include gas settings in approval transactions', async () => {
       const gasSettings = {
-        maxFeePerGas: BigNumber.from('2000000000'), // 2 gwei
-        maxPriorityFeePerGas: BigNumber.from('1000000000') // 1 gwei
+        maxFeePerGas: BigInt('2000000000'), // 2 gwei
+        maxPriorityFeePerGas: BigInt('1000000000') // 1 gwei
       };
 
       const vaultWithGas = new EscrowVault(ESCROW_ADDRESS, mockSigner as any, gasSettings);
 
-      const params = {
-        kernelAddress: KERNEL_ADDRESS,
-        txId: TX_ID,
-        token: TOKEN_ADDRESS,
-        amount: BigNumber.from('100000000'),
-        beneficiary: BENEFICIARY_ADDRESS
-      };
+      await vaultWithGas.approveToken(TOKEN_ADDRESS, BigInt('100000000'));
 
-      await vaultWithGas.createEscrow(params);
-
-      // Should pass gas settings to transactions
-      expect(mockContract.createEscrow).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.any(String),
-        expect.any(String),
-        expect.any(Object),
-        expect.any(String),
+      // Should pass gas settings to approval transactions
+      expect(mockContract.approve).toHaveBeenCalledWith(
+        ESCROW_ADDRESS,
+        BigInt('100000000'),
         expect.objectContaining({
-          gasLimit: expect.any(Object),
+          gasLimit: expect.any(BigInt),
           maxFeePerGas: gasSettings.maxFeePerGas,
           maxPriorityFeePerGas: gasSettings.maxPriorityFeePerGas
         })
@@ -526,7 +433,7 @@ describe('EscrowVault - Fund Flow Integrity', () => {
       expect(escrow.kernel).toBe('0x' + '1'.repeat(40));
       expect(escrow.txId).toBe('0x' + '2'.repeat(64));
       expect(escrow.token).toBe('0x' + '3'.repeat(40));
-      expect(escrow.amount).toEqual(BigNumber.from('100000000'));
+      expect(escrow.amount).toEqual(BigInt('100000000'));
       expect(escrow.beneficiary).toBe('0x' + '4'.repeat(40));
       expect(escrow.released).toBe(false);
     });
@@ -536,7 +443,7 @@ describe('EscrowVault - Fund Flow Integrity', () => {
 
       const balance = await escrowVault.getEscrowBalance(ESCROW_ID);
 
-      expect(balance).toEqual(BigNumber.from('100000000'));
+      expect(balance).toEqual(BigInt('100000000'));
     });
   });
 
@@ -545,7 +452,7 @@ describe('EscrowVault - Fund Flow Integrity', () => {
       const USER_ADDRESS = '0x' + 'e'.repeat(40);
       const balance = await escrowVault.getTokenBalance(TOKEN_ADDRESS, USER_ADDRESS);
 
-      expect(balance).toEqual(BigNumber.from('1000000000'));
+      expect(balance).toEqual(BigInt('1000000000'));
       expect(mockContract.balanceOf).toHaveBeenCalledWith(USER_ADDRESS);
     });
 
@@ -562,38 +469,27 @@ describe('EscrowVault - Fund Flow Integrity', () => {
   });
 
   describe('Gas Estimation - V6 Dynamic Buffers', () => {
-    it('should apply 30% gas buffer to createEscrow', async () => {
-      mockContract.estimateGas.createEscrow.mockResolvedValueOnce(BigNumber.from(100000));
+    it('should apply 20% gas buffer to approveToken', async () => {
+      mockContract.estimateGas.approve.mockResolvedValueOnce(BigInt(50000));
 
-      const params = {
-        kernelAddress: KERNEL_ADDRESS,
-        txId: TX_ID,
-        token: TOKEN_ADDRESS,
-        amount: BigNumber.from('100000000'),
-        beneficiary: BENEFICIARY_ADDRESS
-      };
+      await escrowVault.approveToken(TOKEN_ADDRESS, BigInt('100000000'));
 
-      await escrowVault.createEscrow(params);
-
-      // Should call with gasLimit = estimatedGas * 1.3 (30% buffer for external token transfer)
-      expect(mockContract.createEscrow).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.any(String),
-        expect.any(String),
-        expect.any(Object),
-        expect.any(String),
+      // Should call with gasLimit = estimatedGas * 1.2 (20% buffer for ERC20 approval)
+      expect(mockContract.approve).toHaveBeenCalledWith(
+        ESCROW_ADDRESS,
+        BigInt('100000000'),
         expect.objectContaining({
-          gasLimit: BigNumber.from(130000) // 100000 * 1.30
+          gasLimit: BigInt(60000) // 50000 * 1.20
         })
       );
     });
 
     it('should apply 30% gas buffer to releaseEscrow', async () => {
-      mockContract.estimateGas.disburse.mockResolvedValueOnce(BigNumber.from(80000));
+      mockContract.estimateGas.disburse.mockResolvedValueOnce(BigInt(80000));
 
       const ESCROW_ID = '0x' + '1'.repeat(64);
       const recipients = [BENEFICIARY_ADDRESS];
-      const amounts = [BigNumber.from('100000000')];
+      const amounts = [BigInt('100000000')];
 
       await escrowVault.releaseEscrow(ESCROW_ID, recipients, amounts);
 
@@ -602,7 +498,65 @@ describe('EscrowVault - Fund Flow Integrity', () => {
         recipients,
         amounts,
         expect.objectContaining({
-          gasLimit: BigNumber.from(104000) // 80000 * 1.30 (30% buffer for multi-recipient disbursement)
+          gasLimit: BigInt(104000) // 80000 * 1.30 (30% buffer for multi-recipient disbursement)
+        })
+      );
+    });
+
+    it('should build transaction options without gas settings', async () => {
+      // Create vault without gas settings
+      const vaultNoGas = new EscrowVault(ESCROW_ADDRESS, mockSigner as any);
+
+      mockContract.estimateGas.approve.mockResolvedValueOnce(BigInt(50000));
+
+      await vaultNoGas.approveToken(TOKEN_ADDRESS, BigInt('100000000'));
+
+      // Should only include gasLimit, no maxFeePerGas or maxPriorityFeePerGas
+      expect(mockContract.approve).toHaveBeenCalledWith(
+        ESCROW_ADDRESS,
+        BigInt('100000000'),
+        expect.objectContaining({
+          gasLimit: BigInt(60000) // 50000 * 1.20
+        })
+      );
+
+      // Verify gas settings are NOT included
+      const approveCall = mockContract.approve.mock.calls[0];
+      expect(approveCall[2]).not.toHaveProperty('maxFeePerGas');
+      expect(approveCall[2]).not.toHaveProperty('maxPriorityFeePerGas');
+    });
+
+    it('should handle releaseEscrow error without reason field', async () => {
+      mockContract.disburse.mockRejectedValueOnce({
+        transactionHash: '0x' + 'f'.repeat(64),
+        message: 'Transaction failed'
+        // No 'reason' field
+      });
+
+      const ESCROW_ID = '0x' + '1'.repeat(64);
+      const recipients = [BENEFICIARY_ADDRESS];
+      const amounts = [BigInt('100000000')];
+
+      await expect(escrowVault.releaseEscrow(ESCROW_ID, recipients, amounts))
+        .rejects.toThrow('Transaction failed');
+    });
+
+    it('should use correct buffer for releaseEscrow operation (30%)', async () => {
+      const ESCROW_ID = '0x' + '1'.repeat(64);
+      const recipients = [BENEFICIARY_ADDRESS, '0x' + '5'.repeat(40)];
+      const amounts = [BigInt('60000000'), BigInt('40000000')];
+
+      mockContract.estimateGas.disburse.mockResolvedValueOnce(BigInt(100000));
+
+      await escrowVault.releaseEscrow(ESCROW_ID, recipients, amounts);
+
+      // Should use 30% buffer for releaseEscrow (multi-recipient complexity)
+      expect(mockContract.disburse).toHaveBeenCalledWith(
+        ESCROW_ID,
+        recipients,
+        amounts,
+        expect.objectContaining({
+          gasLimit: BigInt(130000) // 100000 * 1.30
         })
       );
     });
