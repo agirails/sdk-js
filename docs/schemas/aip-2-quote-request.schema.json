@@ -1,0 +1,95 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://agirails.io/schemas/aip-2-quote-request.schema.json",
+  "title": "AIP-2 Quote Request",
+  "description": "Quote request message from consumer to provider (AIP-2 §2.1)",
+  "type": "object",
+  "required": [
+    "type",
+    "version",
+    "txId",
+    "requester",
+    "provider",
+    "amount",
+    "maxPrice",
+    "currency",
+    "decimals",
+    "deadline",
+    "chainId",
+    "nonce",
+    "signature"
+  ],
+  "properties": {
+    "type": {
+      "type": "string",
+      "const": "agirails.quote-request.v1",
+      "description": "Message type identifier"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "description": "AIP-2 version (semver format)"
+    },
+    "txId": {
+      "type": "string",
+      "pattern": "^0x[a-fA-F0-9]{64}$",
+      "description": "ACTP transaction ID (bytes32)"
+    },
+    "requester": {
+      "type": "string",
+      "pattern": "^did:ethr:(\\d+:)?0x[a-fA-F0-9]{40}$",
+      "description": "Consumer DID (did:ethr format)"
+    },
+    "provider": {
+      "type": "string",
+      "pattern": "^did:ethr:(\\d+:)?0x[a-fA-F0-9]{40}$",
+      "description": "Provider DID (did:ethr format)"
+    },
+    "amount": {
+      "type": "string",
+      "pattern": "^\\d+$",
+      "description": "Offered amount in token base units (uint256 as string)"
+    },
+    "maxPrice": {
+      "type": "string",
+      "pattern": "^\\d+$",
+      "description": "Maximum acceptable price in token base units (uint256 as string)"
+    },
+    "currency": {
+      "type": "string",
+      "enum": ["USDC"],
+      "description": "Payment token symbol (currently USDC only)"
+    },
+    "decimals": {
+      "type": "integer",
+      "const": 6,
+      "description": "Token decimal places (USDC uses 6 decimals)"
+    },
+    "deadline": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Transaction deadline timestamp (Unix seconds)"
+    },
+    "serviceHash": {
+      "type": "string",
+      "pattern": "^0x[a-fA-F0-9]{64}$",
+      "description": "Service agreement hash (optional, bytes32)"
+    },
+    "chainId": {
+      "type": "integer",
+      "enum": [84532, 8453],
+      "description": "Blockchain network ID (84532=Base Sepolia, 8453=Base Mainnet)"
+    },
+    "nonce": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Monotonically increasing nonce per requester + message type"
+    },
+    "signature": {
+      "type": "string",
+      "pattern": "^0x[a-fA-F0-9]{130}$",
+      "description": "EIP-712 signature by requester (65 bytes hex)"
+    }
+  },
+  "additionalProperties": false
+}

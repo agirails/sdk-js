@@ -23,7 +23,6 @@ export {
   CreateTransactionParams,
   DisputeResolution,
   EconomicParams,
-  CreateEscrowParams,
   Escrow,
   ACTPMessage,
   QuoteRequest,
@@ -39,7 +38,8 @@ export {
   AIP4DeliveryProofTypes,
   AIP4DeliveryProofData,
   DeliveryProofTypes,
-  DeliveryProofData
+  DeliveryProofData,
+  deliveryProofDataFromProof
 } from './types/eip712';
 
 // Builders

@@ -1,4 +1,4 @@
-import { Signer, utils } from 'ethers';
+import { Signer, ethers, AbiCoder } from 'ethers';
 import { ACTPMessage, DeliveryProof } from '../types';
 import { SignatureVerificationError } from '../errors';
 import {
@@ -14,13 +14,13 @@ import { IReceivedNonceTracker } from '../utils/ReceivedNonceTracker';
 // Legacy generic ACTP message types moved to types/eip712.ts
 
 /**
- * TypeScript interface for ethers v5 Signer with _signTypedData method
+ * TypeScript interface for ethers v6 Signer with signTypedData method
  *
- * Note: _signTypedData exists in ethers v5 runtime but is not in official type definitions.
- * This interface properly types the method to avoid @ts-ignore comments.
+ * Note: ethers v6 uses signTypedData() (without underscore), not _signTypedData().
+ * This interface properly types the method for v6 compatibility.
  */
 interface SignerWithTypedData extends Signer {
-  _signTypedData(
+  signTypedData(
     domain: EIP712Domain,
     types: Record<string, any>,
     value: Record<string, any>
@@ -53,7 +53,14 @@ export class MessageSigner {
       resolvedChainId = chainId;
     } else {
       try {
-        resolvedChainId = await this.signer.getChainId();
+        // ethers v6: signer.provider might be null, check first
+        if (this.signer.provider) {
+          const network = await this.signer.provider.getNetwork();
+          resolvedChainId = Number(network.chainId);
+        } else {
+          // Fallback to Base Sepolia for testing without provider
+          resolvedChainId = 84532;
+        }
       } catch (error) {
         // Fallback to Base Sepolia for testing without provider
         resolvedChainId = 84532;
@@ -83,7 +90,8 @@ export class MessageSigner {
     const { type, version, from, to, timestamp, nonce, signature, ...payload } = message;
 
     // Generic ACTPMessage with payload encoding (backward compatible)
-    const payloadBytes = utils.defaultAbiCoder.encode(
+    const abiCoder = AbiCoder.defaultAbiCoder();
+    const payloadBytes = abiCoder.encode(
       ['string'],
       [this.canonicalizePayload(payload)]
     );
@@ -101,9 +109,9 @@ export class MessageSigner {
     // Use generic ACTPMessage types
     const messageTypes = getMessageTypes('default');
 
-    // Sign using EIP-712
+    // Sign using EIP-712 (ethers v6 API)
     const signer = this.signer as SignerWithTypedData;
-    const sig = await signer._signTypedData(this.domain, messageTypes, typedMessage);
+    const sig = await signer.signTypedData(this.domain, messageTypes, typedMessage);
 
     return sig;
   }
@@ -118,7 +126,7 @@ export class MessageSigner {
 
     const messageTypes = getMessageTypes('quote.request');
     const signer = this.signer as SignerWithTypedData;
-    return await signer._signTypedData(this.domain, messageTypes, data);
+    return await signer.signTypedData(this.domain, messageTypes, data);
   }
 
   /**
@@ -131,7 +139,7 @@ export class MessageSigner {
 
     const messageTypes = getMessageTypes('quote.response');
     const signer = this.signer as SignerWithTypedData;
-    return await signer._signTypedData(this.domain, messageTypes, data);
+    return await signer.signTypedData(this.domain, messageTypes, data);
   }
 
   /**
@@ -144,7 +152,7 @@ export class MessageSigner {
 
     const messageTypes = getMessageTypes('delivery.proof');
     const signer = this.signer as SignerWithTypedData;
-    return await signer._signTypedData(this.domain, messageTypes, data);
+    return await signer.signTypedData(this.domain, messageTypes, data);
   }
 
   /**
@@ -168,7 +176,8 @@ export class MessageSigner {
 
     const { type, version, from, to, timestamp, nonce, signature: _, ...payload } = message;
 
-    const payloadBytes = utils.defaultAbiCoder.encode(
+    const abiCoder = AbiCoder.defaultAbiCoder();
+    const payloadBytes = abiCoder.encode(
       ['string'],
       [this.canonicalizePayload(payload)]
     );
@@ -185,7 +194,7 @@ export class MessageSigner {
 
     // Use generic ACTPMessage types (backward compatible)
     const messageTypes = getMessageTypes('default');
-    const recoveredAddress = utils.verifyTypedData(
+    const recoveredAddress = ethers.verifyTypedData(
       this.domain,
       messageTypes,
       typedMessage,
@@ -222,7 +231,8 @@ export class MessageSigner {
 
     const { type, version, from, to, timestamp, nonce, signature: _, ...payload } = message;
 
-    const payloadBytes = utils.defaultAbiCoder.encode(
+    const abiCoder = AbiCoder.defaultAbiCoder();
+    const payloadBytes = abiCoder.encode(
       ['string'],
       [this.canonicalizePayload(payload)]
     );
@@ -230,7 +240,7 @@ export class MessageSigner {
     const typedMessage = { type, version, from, to, timestamp, nonce, payload: payloadBytes };
 
     const messageTypes = getMessageTypes('default');
-    const recoveredAddress = utils.verifyTypedData(
+    const recoveredAddress = ethers.verifyTypedData(
       this.domain,
       messageTypes,
       typedMessage,
@@ -306,7 +316,7 @@ export class MessageSigner {
     }
 
     // If already an address, return as-is
-    if (utils.isAddress(did)) {
+    if (ethers.isAddress(did)) {
       return did;
     }
 
@@ -317,7 +327,7 @@ export class MessageSigner {
    * Convert Ethereum address to DID
    */
   addressToDID(address: string): string {
-    if (!utils.isAddress(address)) {
+    if (!ethers.isAddress(address)) {
       throw new Error(`Invalid Ethereum address: ${address}`);
     }
 

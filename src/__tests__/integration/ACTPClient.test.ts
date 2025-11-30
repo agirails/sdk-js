@@ -14,7 +14,7 @@
  * - Factory pattern with async initialization
  */
 
-import { Wallet, BigNumber } from 'ethers';
+import { Wallet } from 'ethers';
 import { ACTPClient } from '../../ACTPClient';
 
 // Test private key and addresses
@@ -91,8 +91,8 @@ describe('ACTPClient - Client Initialization', () => {
   });
 
   it('should initialize client with gas settings overrides', async () => {
-    const maxFeePerGas = BigNumber.from('2000000000'); // 2 gwei
-    const maxPriorityFeePerGas = BigNumber.from('1000000000'); // 1 gwei
+    const maxFeePerGas = BigInt('2000000000'); // 2 gwei
+    const maxPriorityFeePerGas = BigInt('1000000000'); // 1 gwei
 
     const client = await ACTPClient.create({
       network: 'base-sepolia',
@@ -109,16 +109,14 @@ describe('ACTPClient - Client Initialization', () => {
     expect(networkConfig.gasSettings?.maxPriorityFeePerGas).toEqual(maxPriorityFeePerGas);
   });
 
-  it('should initialize client for Base Mainnet', async () => {
-    const client = await ACTPClient.create({
-      network: 'base-mainnet',
-      privateKey: testPrivateKey
-    });
-
-    expect(client).toBeDefined();
-    const networkConfig = client.getNetworkConfig();
-    expect(networkConfig.chainId).toBe(8453);
-    expect(networkConfig.name).toBe('Base Mainnet');
+  it('should reject initialization for Base Mainnet (contracts not deployed)', async () => {
+    // Base Mainnet has zero addresses - contracts not deployed yet
+    await expect(
+      ACTPClient.create({
+        network: 'base-mainnet',
+        privateKey: testPrivateKey
+      })
+    ).rejects.toThrow('Network configuration error for Base Mainnet');
   });
 });
 
@@ -140,7 +138,7 @@ describe('ACTPClient - Module Access', () => {
 
   it('should access escrow module', () => {
     expect(client.escrow).toBeDefined();
-    expect(typeof client.escrow.createEscrow).toBe('function');
+    expect(typeof client.escrow.approveToken).toBe('function');
     expect(typeof client.escrow.releaseEscrow).toBe('function');
   });
 
@@ -228,8 +226,8 @@ describe('ACTPClient - Configuration Validation', () => {
         usdc: '0xcccccccccccccccccccccccccccccccccccccccc'
       },
       gasSettings: {
-        maxFeePerGas: BigNumber.from('2000000000'),
-        maxPriorityFeePerGas: BigNumber.from('1000000000')
+        maxFeePerGas: BigInt('2000000000'),
+        maxPriorityFeePerGas: BigInt('1000000000')
       }
     });
 

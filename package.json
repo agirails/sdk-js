@@ -1,6 +1,6 @@
 {
   "name": "@agirails/sdk",
-  "version": "0.1.0-beta.1",
+  "version": "2.0.1-beta",
   "description": "Protocol SDK for ACTP (Agent Commerce Transaction Protocol)",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -17,7 +17,14 @@
     "test:coverage": "jest --coverage",
     "lint": "eslint src/**/*.ts",
     "format": "prettier --write \"src/**/*.ts\"",
-    "prepublishOnly": "npm run build && npm test && npm run test:onchain"
+    "prepublishOnly": "npm run build && npm test && npm run test:onchain",
+    "test:setup": "ts-node test-scripts/00-setup.ts",
+    "test:happy-path": "ts-node test-scripts/01-happy-path.ts",
+    "test:dispute": "ts-node test-scripts/02-dispute.ts",
+    "test:cancel": "ts-node test-scripts/03-cancel.ts",
+    "test:happy-path-eas": "ts-node test-scripts/04-happy-path-eas.ts",
+    "test:status": "ts-node test-scripts/status.ts",
+    "test:all": "npm run test:setup && npm run test:happy-path && npm run test:dispute && npm run test:cancel"
   },
   "keywords": [
     "actp",
@@ -33,16 +40,21 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/agirails/actp-sdk-typescript"
+    "url": "https://github.com/agirails/sdk-js"
   },
+  "bugs": {
+    "url": "https://github.com/agirails/sdk-js/issues"
+  },
+  "homepage": "https://github.com/agirails/sdk-js#readme",
   "dependencies": {
-    "@ethereum-attestation-service/eas-sdk": "^1.0.0",
-    "ethers": "^5.7.2",
+    "@ethereum-attestation-service/eas-sdk": "^1.6.1",
+    "dotenv": "^17.2.3",
+    "ethers": "^6.15.0",
     "fast-json-stable-stringify": "^2.1.0",
-    "ipfs-http-client": "^60.0.1"
+    "kubo-rpc-client": "^3.0.1"
   },
   "devDependencies": {
-    "@nomiclabs/hardhat-ethers": "^2.2.3",
+    "@nomicfoundation/hardhat-ethers": "^3.0.0",
     "@types/chai": "^4.3.11",
     "@types/fast-json-stable-stringify": "^2.1.0",
     "@types/jest": "^29.5.0",
@@ -63,4 +75,3 @@
     "node": ">=16.0.0"
   }
 }
-

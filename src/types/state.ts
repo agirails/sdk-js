@@ -19,7 +19,7 @@ export class StateMachine {
    * Valid state transitions per Yellow Paper §3.2.2
    */
   private static readonly TRANSITIONS: Record<State, State[]> = {
-    [State.INITIATED]: [State.QUOTED, State.CANCELLED],
+    [State.INITIATED]: [State.QUOTED, State.COMMITTED, State.CANCELLED], // Allow direct INITIATED → COMMITTED (AIP-3)
     [State.QUOTED]: [State.COMMITTED, State.CANCELLED],
     [State.COMMITTED]: [State.IN_PROGRESS, State.CANCELLED],
     [State.IN_PROGRESS]: [State.DELIVERED, State.DISPUTED],

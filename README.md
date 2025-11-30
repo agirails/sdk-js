@@ -53,6 +53,46 @@ console.log('Transaction:', tx);
 - ✅ **TypeScript** - Full type safety
 - ✅ **Base L2** - Optimized for Base Sepolia & Mainnet
 
+## V1 Limitations
+
+⚠️ **Important**: ACTP SDK v2.0.0-beta is designed for **Base Sepolia testnet** and controlled partner usage. The following limitations apply:
+
+### 1. Attestation Validation is SDK-Enforced, Not Protocol-Enforced
+
+The V1 ACTPKernel accepts attestation UIDs without on-chain validation. All verification (existence, schema, txId, revocation, expiry) is performed by SDK helpers like `releaseEscrowWithVerification()`.
+
+**Security checks performed by SDK:**
+- Attestation exists and UID matches
+- Schema UID matches canonical delivery schema (`0x1b0e...ffce`)
+- txId in attestation matches expected transaction
+- Attestation is not revoked (`revocationTime === 0`)
+- Attestation has not expired
+
+**Integrators who bypass the SDK must implement equivalent verification logic.**
+
+### 2. Multiple Attestations Per Transaction Are Possible
+
+EAS does not enforce uniqueness - multiple attestations can exist for the same `txId`. The SDK uses the **first valid (non-revoked) attestation** provided. This policy is testnet-appropriate; V2 will enforce uniqueness at the protocol level.
+
+### 3. This SDK is Not For Unrestricted Mainnet Usage
+
+V2 will move critical verification on-chain. Until then, use only on Base Sepolia testnet with testnet USDC.
+
+### Additional Limitations
+
+| Area | Limitation | Workaround |
+|------|------------|------------|
+| Network Resilience | No automatic retry | Manual retry required |
+| Timeout Handling | `tx.wait()` may hang | Set custom timeout |
+| State Transitions | TOCTOU race condition | Contract provides final validation |
+| Revocation Window | Attestation can be revoked between verify and settle | Use `releaseEscrowWithVerification()` |
+
+For detailed documentation, visit the [GitHub repository](https://github.com/agirails/sdk-js).
+
+**V2.0 Planned**: On-chain attestation validation, uniqueness enforcement, multi-provider fallback
+
+---
+
 ## Network Support
 
 - **Base Sepolia** (testnet) - `chainId: 84532`
@@ -60,9 +100,7 @@ console.log('Transaction:', tx);
 
 ## Documentation
 
-- [SDK Specification](./sdk-specification.md)
-- [Yellow Paper](../../Docs/99. Final Public Papers/Core/AGIRAILS_Yellow_Paper.md)
-- [Examples](./examples/) *(coming soon)*
+For full documentation, examples, and specifications, visit the [GitHub repository](https://github.com/agirails/sdk-js).
 
 ## Development
 
@@ -111,11 +149,14 @@ Tests will:
 ## Contract Addresses
 
 ### Base Sepolia (Testnet) ✅ Deployed & Verified
-- **ACTPKernel:** `0xb5B002A73743765450d427e2F8a472C24FDABF9b` ([view](https://sepolia.basescan.org/address/0xb5B002A73743765450d427e2F8a472C24FDABF9b#code))
-- **EscrowVault:** `0x67770791c83eA8e46D8a08E09682488ba584744f` ([view](https://sepolia.basescan.org/address/0x67770791c83eA8e46D8a08E09682488ba584744f#code))
+- **ACTPKernel:** `0x6aDB650e185b0ee77981AC5279271f0Fa6CFe7ba` ([view](https://sepolia.basescan.org/address/0x6aDB650e185b0ee77981AC5279271f0Fa6CFe7ba#code))
+- **EscrowVault:** `0x921edE340770db5DB6059B5B866be987d1b7311F` ([view](https://sepolia.basescan.org/address/0x921edE340770db5DB6059B5B866be987d1b7311F#code))
 - **MockUSDC:** `0x444b4e1A65949AB2ac75979D5d0166Eb7A248Ccb` ([view](https://sepolia.basescan.org/address/0x444b4e1A65949AB2ac75979D5d0166Eb7A248Ccb#code))
+- **EAS Contract:** `0x4200000000000000000000000000000000000021` (Base native)
+- **EAS Schema Registry:** `0x4200000000000000000000000000000000000020` (Base native)
+- **Delivery Schema UID:** `0x1b0ebdf0bd20c28ec9d5362571ce8715a55f46e81c3de2f9b0d8e1b95fb5ffce`
 
-*Deployed: 2025-01-22 | Verified on Basescan | All smoke tests passed (5/5)*
+*Redeployed: 2025-11-25 | Fixed auto-transition in linkEscrow, optimizer-runs 200 | Matches src/config/networks.ts*
 
 ### Base Mainnet (Production)
 - **ACTPKernel:** TBD *(pending mainnet deployment)*
@@ -126,13 +167,8 @@ Tests will:
 
 Apache-2.0
 
-## Contributing
-
-See [CONTRIBUTING.md](./CONTRIBUTING.md) *(coming soon)*
-
 ## Support
 
 - **Email:** developers@agirails.io
-- **GitHub:** [github.com/agirails/actp-sdk-typescript](https://github.com/agirails/actp-sdk-typescript)
-- **Discord:** [discord.gg/agirails](https://discord.gg/agirails)
+- **GitHub:** [github.com/agirails/sdk-js](https://github.com/agirails/sdk-js)
 

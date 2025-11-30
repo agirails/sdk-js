@@ -31,7 +31,7 @@ This document specifies the **ACTP SDK** — a developer toolkit for building ap
 
 | Component | Repo | License | Status |
 |-----------|------|---------|--------|
-| **TypeScript SDK** | `github.com/agirails/actp-sdk-typescript` | Apache 2.0 | 🚧 In Development |
+| **TypeScript SDK** | `github.com/agirails/sdk-js` | Apache 2.0 | ✅ Published (npm @agirails/sdk) |
 | **Python SDK** | `github.com/agirails/actp-sdk-python` | Apache 2.0 | 📋 Planned (Q2 2026) |
 | **n8n Node** | `github.com/agirails/n8n-nodes-actp` | MIT | 📋 Planned (Q1 2026) |
 

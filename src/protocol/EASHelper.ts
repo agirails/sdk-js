@@ -1,4 +1,4 @@
-import { Contract, Signer, utils } from 'ethers';
+import { Contract, Signer, AbiCoder, zeroPadValue } from 'ethers';
 import { DeliveryProof } from '../types';
 import { deliveryProofDataFromProof } from '../types/eip712';
 
@@ -40,7 +40,8 @@ export class EASHelper {
     const { expirationTime = 0, revocable = true } = options || {};
     const proofData = deliveryProofDataFromProof(proof);
 
-    const encodedData = utils.defaultAbiCoder.encode(
+    const abiCoder = AbiCoder.defaultAbiCoder();
+    const encodedData = abiCoder.encode(
       ['bytes32', 'bytes32', 'uint256', 'string', 'uint256', 'string'],
       [
         proofData.txId,
@@ -64,8 +65,19 @@ export class EASHelper {
     });
 
     const receipt = await tx.wait();
-    const attestedEvent = receipt.events?.find((event: any) => event.event === 'Attested');
-    const uid = attestedEvent?.args?.uid ?? receipt.events?.[0]?.args?.uid ?? utils.hexZeroPad('0x0', 32);
+    // ethers v6: events → logs, and logs are parsed differently
+    const attestedLog = receipt?.logs?.find((log: any) => {
+      try {
+        const parsed = this.eas.interface.parseLog(log);
+        return parsed?.name === 'Attested';
+      } catch {
+        return false;
+      }
+    });
+
+    const uid = attestedLog
+      ? this.eas.interface.parseLog(attestedLog)?.args?.uid
+      : zeroPadValue('0x00', 32);
 
     return {
       uid,
@@ -90,5 +102,96 @@ export class EASHelper {
    */
   async getAttestation(uid: string) {
     return await this.eas.getAttestation(uid);
+  }
+
+  /**
+   * Verify that a delivery attestation belongs to the specified transaction.
+   *
+   * SECURITY: ACTPKernel V1 accepts any bytes32 as attestationUID without validation.
+   * This means a malicious provider could submit attestation from Transaction A
+   * for Transaction B. This method provides SDK-side protection by verifying:
+   *
+   * 1. Attestation exists and is not revoked
+   * 2. Attestation uses the canonical delivery schema UID
+   * 3. Attestation's txId matches the expected transaction ID
+   * 4. Attestation has not expired
+   *
+   * @param txId - Expected transaction ID (bytes32)
+   * @param attestationUID - Attestation UID to verify (bytes32)
+   * @returns true if attestation is valid for this transaction, false otherwise
+   * @throws Error if attestation is revoked, expired, schema mismatch, or txId mismatch
+   */
+  async verifyDeliveryAttestation(
+    txId: string,
+    attestationUID: string
+  ): Promise<boolean> {
+    // 1. Fetch attestation from EAS contract
+    const attestation = await this.eas.getAttestation(attestationUID);
+
+    // 2. Check if attestation exists (uid should match)
+    if (attestation.uid !== attestationUID) {
+      throw new Error(`Attestation not found: ${attestationUID}`);
+    }
+
+    // 3. Check schema UID matches canonical delivery schema (B2 blocker fix)
+    // This prevents accepting attestations from unrelated EAS schemas
+    if (attestation.schema !== this.config.deliveryProofSchemaId) {
+      throw new Error(
+        `Schema UID mismatch: expected canonical delivery schema ${this.config.deliveryProofSchemaId}, ` +
+        `got ${attestation.schema}. Attestation may be from a different schema!`
+      );
+    }
+
+    // 4. Check revocation - EAS uses revocationTime field (not revoked boolean)
+    // revocationTime = 0 means not revoked
+    // revocationTime > 0 means revoked at that timestamp
+    // NOTE: attestation.revoked field does NOT exist! (see genetic-memory.md)
+    const isRevoked = attestation.revocationTime > 0n;
+    if (isRevoked) {
+      throw new Error(
+        `Attestation has been revoked: ${attestationUID} (revoked at timestamp ${attestation.revocationTime})`
+      );
+    }
+
+    // 5. Check expiration
+    // expirationTime = 0 means no expiration
+    // expirationTime > 0 means expires at that timestamp
+    if (attestation.expirationTime > 0n) {
+      const now = Math.floor(Date.now() / 1000);
+      if (Number(attestation.expirationTime) < now) {
+        throw new Error(
+          `Attestation has expired: ${attestationUID} (expired at ${attestation.expirationTime})`
+        );
+      }
+    }
+
+    // 6. Decode attestation data to extract txId
+    // Schema: bytes32 txId, bytes32 contentHash, uint256 timestamp, string deliveryUrl, uint256 size, string mimeType
+    let attestedTxId: string;
+    try {
+      const abiCoder = AbiCoder.defaultAbiCoder();
+      const decoded = abiCoder.decode(
+        ['bytes32', 'bytes32', 'uint256', 'string', 'uint256', 'string'],
+        attestation.data
+      );
+      attestedTxId = decoded[0]; // First field is txId
+    } catch (error: any) {
+      throw new Error(
+        `Attestation data format mismatch: cannot decode attestation ${attestationUID}. ` +
+        `Expected AIP-4 delivery proof schema format. ` +
+        `Original error: ${error.message}`
+      );
+    }
+
+    // 7. Verify attestation txId matches expected transaction ID
+    if (attestedTxId !== txId) {
+      throw new Error(
+        `Attestation txId mismatch: expected ${txId}, got ${attestedTxId}. ` +
+        `Provider may be attempting to use attestation from different transaction!`
+      );
+    }
+
+    // All checks passed
+    return true;
   }
 }

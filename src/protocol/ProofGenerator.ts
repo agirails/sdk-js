@@ -1,4 +1,4 @@
-import { utils, BytesLike } from 'ethers';
+import { keccak256, toUtf8Bytes, AbiCoder, BytesLike } from 'ethers';
 import { DeliveryProof } from '../types';
 import { DeliveryProofData, deliveryProofDataFromProof } from '../types/eip712';
 
@@ -12,9 +12,9 @@ export class ProofGenerator {
    * Uses Keccak256 per Yellow Paper §11.4.1
    */
   hashContent(content: string | Buffer): string {
-    const buffer = typeof content === 'string' ? utils.toUtf8Bytes(content) : content;
+    const buffer = typeof content === 'string' ? toUtf8Bytes(content) : content;
 
-    return utils.keccak256(buffer);
+    return keccak256(buffer);
   }
 
   /**
@@ -66,7 +66,8 @@ export class ProofGenerator {
    * Encode proof for on-chain submission
    */
   encodeProof(proof: DeliveryProof): BytesLike {
-    return utils.defaultAbiCoder.encode(
+    const abiCoder = AbiCoder.defaultAbiCoder();
+    return abiCoder.encode(
       ['bytes32', 'bytes32', 'uint256'],
       [proof.txId, proof.contentHash, proof.timestamp]
     );
@@ -80,7 +81,8 @@ export class ProofGenerator {
     contentHash: string;
     timestamp: number;
   } {
-    const [txId, contentHash, timestamp] = utils.defaultAbiCoder.decode(
+    const abiCoder = AbiCoder.defaultAbiCoder();
+    const [txId, contentHash, timestamp] = abiCoder.decode(
       ['bytes32', 'bytes32', 'uint256'],
       proofData
     );
@@ -88,7 +90,7 @@ export class ProofGenerator {
     return {
       txId,
       contentHash,
-      timestamp: timestamp.toNumber()
+      timestamp: Number(timestamp)
     };
   }
 
