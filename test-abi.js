@@ -26,7 +26,13 @@ async function testABI() {
   }
 
   console.log('\nTesting createTransaction gas estimation...');
-  const signer = new ethers.Wallet('0x2664871d90b7d60db03363ba670f7add5d22040c1da6617ccfba7e85a1ef96c3', provider);
+  // SECURITY: Never hardcode private keys! Use environment variables.
+  const privateKey = process.env.PRIVATE_KEY;
+  if (!privateKey) {
+    console.log('⚠️  Skipping signer test - set PRIVATE_KEY env var');
+    return;
+  }
+  const signer = new ethers.Wallet(privateKey, provider);
   const contractWithSigner = contract.connect(signer);
 
   try {
