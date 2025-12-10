@@ -14,6 +14,9 @@ export { ProofGenerator } from './protocol/ProofGenerator';
 export { MessageSigner } from './protocol/MessageSigner';
 export { EASHelper, EASConfig } from './protocol/EASHelper';
 export { QuoteBuilder, QuoteParams, QuoteMessage } from './protocol/QuoteBuilder';
+export { AgentRegistry } from './protocol/AgentRegistry';
+export { DIDResolver } from './protocol/DIDResolver';
+export { DIDManager } from './protocol/DIDManager';
 
 // Types
 export {
@@ -29,7 +32,27 @@ export {
   QuoteResponse,
   DeliveryProof,
   DeliveryProofMessage,
-  EASAttestationData
+  EASAttestationData,
+  // Agent Registry types (AIP-7)
+  AgentProfile,
+  ServiceDescriptor,
+  RegisterAgentParams,
+  QueryAgentsParams,
+  // DID types (AIP-7)
+  DID,
+  DIDDocument,
+  DIDResolutionResult,
+  DIDResolverConfig,
+  ParsedDID,
+  VerificationMethod,
+  ServiceEndpoint,
+  DelegateType,
+  AttributeName,
+  VerifySignatureOptions,
+  SignatureVerificationResult,
+  DIDOwnerChangedEvent,
+  DIDDelegateChangedEvent,
+  DIDAttributeChangedEvent
 } from './types';
 
 // EIP-712 types
@@ -89,6 +112,14 @@ export {
   validateTxId
 } from './utils/validation';
 
+// Storage (AIP-7)
+export { FilebaseClient } from './storage/FilebaseClient';
+export {
+  FilebaseConfig,
+  UploadResult,
+  CIDValidationResult
+} from './types/storage';
+
 // Errors
 export {
   ACTPError,
@@ -101,7 +132,16 @@ export {
   NetworkError,
   ValidationError,
   InvalidAddressError,
-  InvalidAmountError
+  InvalidAmountError,
+  // Storage errors (AIP-7)
+  StorageError,
+  InvalidCIDError,
+  UploadTimeoutError,
+  DownloadTimeoutError,
+  FileSizeLimitExceededError,
+  StorageAuthenticationError,
+  StorageRateLimitError,
+  ContentNotFoundError
 } from './errors';
 
 // Configuration

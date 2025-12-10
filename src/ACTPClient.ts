@@ -6,6 +6,7 @@ import { EventMonitor } from './protocol/EventMonitor';
 import { ProofGenerator } from './protocol/ProofGenerator';
 import { MessageSigner } from './protocol/MessageSigner';
 import { QuoteBuilder } from './builders/QuoteBuilder';
+import { AgentRegistry } from './protocol/AgentRegistry';
 import { NetworkConfig, getNetwork } from './config/networks';
 import { NetworkError, ValidationError } from './errors';
 import { EASHelper, EASConfig } from './protocol/EASHelper';
@@ -26,6 +27,7 @@ export interface ACTPClientConfig {
     actpKernel?: string;
     escrowVault?: string;
     usdc?: string;
+    agentRegistry?: string;
   };
   gasSettings?: {
     maxFeePerGas?: bigint;
@@ -55,6 +57,7 @@ export class ACTPClient {
   public readonly messageSigner: MessageSigner;
   public readonly quote: QuoteBuilder;
   public readonly eas?: EASHelper;
+  public readonly registry?: AgentRegistry;
 
   private readonly provider: JsonRpcProvider;
   private readonly signer: Signer;
@@ -154,6 +157,22 @@ export class ACTPClient {
 
     if (config.eas) {
       this.eas = new EASHelper(this.signer, config.eas);
+    }
+
+    // Initialize AgentRegistry (AIP-7) if configured
+    if (this.networkConfig.contracts.agentRegistry) {
+      const registryAddr = this.networkConfig.contracts.agentRegistry;
+
+      // M-3: Validate not zero address
+      if (registryAddr === ethers.ZeroAddress) {
+        throw new ValidationError('agentRegistry', 'AgentRegistry address cannot be zero address');
+      }
+
+      this.registry = new AgentRegistry(
+        registryAddr,
+        this.signer,
+        this.networkConfig.gasSettings
+      );
     }
   }
 

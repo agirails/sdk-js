@@ -80,3 +80,67 @@ export function validateTxId(txId: string, fieldName: string = 'txId'): void {
   }
 }
 
+/**
+ * Validate endpoint URL (for AgentRegistry)
+ *
+ * Security checks:
+ * - Valid URL format
+ * - HTTPS or IPFS protocols only
+ * - No private/local IP addresses (SSRF protection)
+ * - Maximum length 256 characters
+ */
+export function validateEndpointURL(endpoint: string, fieldName: string = 'endpoint'): void {
+  if (!endpoint || endpoint.length === 0) {
+    throw new ValidationError(fieldName, 'Endpoint is required');
+  }
+
+  const MAX_LENGTH = 256;
+  if (endpoint.length > MAX_LENGTH) {
+    throw new ValidationError(fieldName, `Endpoint exceeds maximum length (${MAX_LENGTH})`);
+  }
+
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(endpoint);
+  } catch (e) {
+    throw new ValidationError(fieldName, 'Endpoint must be a valid URL');
+  }
+
+  const allowedProtocols = ['https:', 'ipfs:'];
+  if (!allowedProtocols.includes(parsedUrl.protocol)) {
+    throw new ValidationError(
+      fieldName,
+      `Endpoint protocol must be one of: ${allowedProtocols.join(', ')}`
+    );
+  }
+
+  // Block private IPs (SSRF protection)
+  // Note: For IPv6, URL().hostname includes brackets e.g., "[::1]"
+  const hostname = parsedUrl.hostname;
+  const privateIPPatterns = [
+    // IPv4 private ranges
+    /^127\./,
+    /^10\./,
+    /^172\.(1[6-9]|2\d|3[01])\./,
+    /^192\.168\./,
+    /^169\.254\./,
+    /^0\./,
+    /^localhost$/i,
+    // IPv6 localhost and private ranges (with brackets as returned by URL parser)
+    /^\[::1\]$/,                    // IPv6 localhost
+    /^\[::ffff:7f/,                 // IPv4-mapped IPv6 localhost (127.x.x.x -> 7f in hex)
+    /^\[::ffff:a/,                  // IPv4-mapped IPv6 private (10.x.x.x -> a in hex)
+    /^\[::ffff:c0a8:/,              // IPv4-mapped IPv6 private (192.168.x.x -> c0a8 in hex)
+    /^\[::ffff:ac1[0-9a-f]:/,       // IPv4-mapped IPv6 private (172.16-31.x.x -> ac1x in hex)
+    /^\[fc00:/,                     // IPv6 unique local (private) fc00::/7
+    /^\[fd/,                        // IPv6 unique local (private) fd00::/8
+    /^\[fe80:/,                     // IPv6 link-local fe80::/10
+  ];
+
+  for (const pattern of privateIPPatterns) {
+    if (pattern.test(hostname)) {
+      throw new ValidationError(fieldName, 'Endpoint cannot point to private/local addresses');
+    }
+  }
+}
+
