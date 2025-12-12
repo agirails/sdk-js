@@ -40,7 +40,9 @@ export const BASE_SEPOLIA: NetworkConfig = {
     usdc: '0x444b4e1A65949AB2ac75979D5d0166Eb7A248Ccb', // MockUSDC
     // EAS contracts (Base native deployment)
     eas: '0x4200000000000000000000000000000000000021',
-    easSchemaRegistry: '0x4200000000000000000000000000000000000020'
+    easSchemaRegistry: '0x4200000000000000000000000000000000000020',
+    // AIP-7 Agent Registry (deployed 2025-12-11)
+    agentRegistry: '0xFed6914Aa70c0a53E9c7Cc4d2Ae159e4748fb09D'
   },
   eas: {
     // Deployed 2025-11-23 - AIP-4 delivery proof schema
