@@ -1,0 +1,10 @@
+#!/usr/bin/env node
+
+/**
+ * ACTP CLI Binary Entry Point
+ *
+ * This file is the executable entry point for the `actp` command.
+ * It loads the compiled TypeScript from dist/cli/index.js
+ */
+
+require('../dist/cli/index.js');

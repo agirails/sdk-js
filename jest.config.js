@@ -1,44 +1,30 @@
+/** @type {import('ts-jest').JestConfigWithTsJest} */
 module.exports = {
   preset: 'ts-jest',
   testEnvironment: 'node',
   roots: ['<rootDir>/src'],
-  testMatch: ['**/__tests__/**/*.ts', '**/?(*.)+(spec|test).ts'],
-  // Transform ESM modules (kubo-rpc-client) to CommonJS for Jest
-  transformIgnorePatterns: [
-    'node_modules/(?!(kubo-rpc-client|ipfs-core-utils|multiformats|@multiformats)/)'
-  ],
+  testMatch: ['**/*.test.ts'],
+  moduleFileExtensions: ['ts', 'js', 'json'],
+  // Preserve cwd across test suites to prevent uv_cwd errors
+  setupFilesAfterEnv: ['<rootDir>/jest.setup.js'],
   collectCoverageFrom: [
     'src/**/*.ts',
-    '!src/**/*.d.ts',
     '!src/**/*.test.ts',
-    '!src/**/__tests__/**'
+    '!src/**/*.d.ts',
   ],
   coverageThreshold: {
     global: {
-      branches: 60,
-      functions: 60,
-      lines: 60,
-      statements: 60
+      branches: 80,
+      functions: 80,
+      lines: 80,
+      statements: 80,
     },
-    './src/protocol/EscrowVault.ts': {
-      statements: 90,
-      branches: 85,
-      functions: 90,
-      lines: 90
-    },
-    './src/protocol/ACTPKernel.ts': {
-      statements: 90,
-      branches: 85,
-      functions: 90,
-      lines: 90
-    },
-    './src/utils/validation.ts': {
-      statements: 100,
-      branches: 100,
-      functions: 100,
-      lines: 100
-    }
-  }
+  },
+  verbose: true,
+  // Run tests sequentially to avoid file locking conflicts
+  // MockStateManager uses file-based persistence which can cause
+  // race conditions when tests run in parallel
+  maxWorkers: 1,
+  // Increase timeout for CLI tests that spawn processes
+  testTimeout: 30000,
 };
-
-

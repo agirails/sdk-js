@@ -55,6 +55,18 @@ export class ACTPKernel {
   }
 
   /**
+   * Get the underlying ethers Contract instance.
+   *
+   * SECURITY FIX (C-3): Provides public access to contract for EventMonitor
+   * instead of accessing private field via bracket notation.
+   *
+   * @returns ethers Contract instance
+   */
+  getContract(): Contract {
+    return this.contract;
+  }
+
+  /**
    * Get gas buffer multiplier based on operation complexity
    * V6 Security Enhancement: Operation-specific gas buffers
    * Reference: SDK_SECURITY_ANALYSIS-Ultra-Think.md Lines 326-337
@@ -76,12 +88,63 @@ export class ACTPKernel {
   /**
    * Build transaction options with gas settings and estimated gas
    * V6 Enhancement: Dynamic buffer based on operation type
+   *
+   * SECURITY FIX (C-3): Gas estimation manipulation attack protection
+   * - Enforces operation-specific minimum gas floors (not global 100k)
+   * - Validates gas limit doesn't exceed block gas limit (DoS prevention)
+   * - Uses safe BigInt arithmetic with overflow detection
+   * - Prevents floating-point arithmetic (uses BPS - basis points)
    */
   private buildTxOptions(estimatedGas: bigint, operation: string = 'default'): any {
+    // SECURITY FIX (C-3): Operation-specific minimum gas floors
+    // Malicious contracts could return artificially low gas estimates to cause txs to fail
+    const MIN_GAS_FLOORS: Record<string, bigint> = {
+      'createTransaction': 120000n,   // Create + event emission
+      'transitionState': 80000n,      // State update + event
+      'releaseEscrow': 220000n,       // Multi-recipient disbursement + events
+      'raiseDispute': 100000n,        // Large proof data encoding
+      'resolveDispute': 250000n,      // Complex multi-party settlement
+      'cancelTransaction': 60000n,    // Simple state change
+      'anchorAttestation': 80000n,    // Attestation storage
+      'default': 100000n              // Conservative fallback
+    };
+
+    const minFloor = MIN_GAS_FLOORS[operation] || MIN_GAS_FLOORS['default'];
+    const safeEstimate = estimatedGas > minFloor ? estimatedGas : minFloor;
+
     const bufferMultiplier = this.getGasBufferMultiplier(operation);
 
+    // SECURITY FIX (C-3): Safe BigInt arithmetic using BPS (basis points)
+    // Multiply by (bufferMultiplier * 10000) and divide by 10000
+    // Example: 1.15x = (115 * 10000) / 10000 = 11500 / 10000
+    // This avoids floating-point precision issues entirely
+    const bufferNumerator = BigInt(Math.floor(bufferMultiplier * 10000));
+    const bufferDenominator = 10000n;
+    const gasLimit = (safeEstimate * bufferNumerator) / bufferDenominator;
+
+    // SECURITY FIX (C-3): Overflow detection
+    // After multiplication and division, result MUST be >= original estimate
+    if (gasLimit < safeEstimate) {
+      throw new Error(
+        `Gas calculation overflow detected for operation "${operation}". ` +
+        `Estimate: ${safeEstimate}, Buffer: ${bufferMultiplier}x, Result: ${gasLimit}. ` +
+        `This indicates an arithmetic overflow - please report this bug.`
+      );
+    }
+
+    // SECURITY FIX (C-3): Block gas limit check (Base L2 = 30M gas)
+    // Prevents DoS by requesting excessive gas that can never be included
+    const MAX_BLOCK_GAS_LIMIT = 30_000_000n;
+    if (gasLimit > MAX_BLOCK_GAS_LIMIT) {
+      throw new Error(
+        `Gas limit ${gasLimit} exceeds maximum block gas limit ${MAX_BLOCK_GAS_LIMIT} for operation "${operation}". ` +
+        `This transaction cannot be executed on-chain. ` +
+        `Estimated gas: ${estimatedGas}, Min floor: ${minFloor}, Buffer: ${bufferMultiplier}x.`
+      );
+    }
+
     const options: any = {
-      gasLimit: (estimatedGas * BigInt(Math.round(bufferMultiplier * 100))) / 100n
+      gasLimit
     };
 
     if (this.gasSettings?.maxFeePerGas) {
@@ -153,7 +216,13 @@ export class ACTPKernel {
       }
 
       // Extract transactionId from TransactionCreated event
-      // Event signature: TransactionCreated(bytes32 indexed transactionId, ...)
+      // Event signature: TransactionCreated(bytes32 indexed transactionId, address indexed requester, address indexed provider, ...)
+      //
+      // DOCUMENTATION (CRITICAL-3): Note parameter order difference:
+      // - Function: createTransaction(provider, requester, ...) - provider is first
+      // - Event: TransactionCreated(txId, requester, provider, ...) - requester is first after txId
+      // This is INTENTIONAL - function names main actor (provider), event logs initiator first (requester)
+      // SDK correctly uses named args (parsedLog.args.transactionId) to avoid confusion
       for (const log of receipt.logs) {
         try {
           const parsedLog = this.contract.interface.parseLog({
@@ -162,6 +231,7 @@ export class ACTPKernel {
           });
 
           if (parsedLog && parsedLog.name === 'TransactionCreated') {
+            // Use named arg for clarity (avoids index confusion with swapped provider/requester)
             return parsedLog.args.transactionId || parsedLog.args[0];
           }
         } catch (e) {
@@ -336,28 +406,33 @@ export class ACTPKernel {
 
   /**
    * Release milestone payment
+   *
+   * SECURITY FIX (CRITICAL-2): Contract ABI has only 2 params (txId, amount), not 3.
+   * The milestoneId is NOT part of the current ACTPKernel V1 contract.
+   * Per ABI: releaseMilestone(bytes32 transactionId, uint256 amount)
+   *
+   * @param txId - Transaction ID (bytes32)
+   * @param amount - Amount to release (uint256)
+   * @deprecated milestoneId parameter - removed as contract doesn't support it
    */
   async releaseMilestone(
     txId: string,
-    milestoneId: number,
     amount: bigint
   ): Promise<void> {
     // Input validation
     validateTxId(txId, 'txId');
     validateAmount(amount, 'amount');
-    if (milestoneId < 0) {
-      throw new ValidationError('milestoneId', 'Milestone ID cannot be negative');
-    }
 
     try {
       // ethers v6: use getFunction()
       const releaseMilestoneFunc = this.contract.getFunction('releaseMilestone');
 
+      // SECURITY FIX (CRITICAL-2): Contract only takes 2 params (txId, amount)
       // Estimate gas with safety buffer (30% for escrow release operations)
-      const estimatedGas = await releaseMilestoneFunc.estimateGas(txId, milestoneId, amount);
+      const estimatedGas = await releaseMilestoneFunc.estimateGas(txId, amount);
       const txOptions = this.buildTxOptions(estimatedGas, 'releaseEscrow');
 
-      const tx = await releaseMilestoneFunc(txId, milestoneId, amount, txOptions);
+      const tx = await releaseMilestoneFunc(txId, amount, txOptions);
 
       await tx.wait(2); // Wait for 2 confirmations (Base L2 reorg safety)
     } catch (error: any) {
@@ -368,19 +443,66 @@ export class ACTPKernel {
   /**
    * Release full escrow (settle transaction)
    *
-   * SECURITY WARNING (V1): ACTPKernel V1 contract accepts any attestationUID without validation.
-   * This means a malicious provider could submit attestation from different transaction.
+   * ⚠️ CRITICAL SECURITY WARNING (C-2): Attestation UID Validation Bypass
    *
-   * To protect against this, you can either:
-   * 1. Use ACTPClient's wrapper method that automatically verifies
-   * 2. Manually verify attestation before calling this method (see EASHelper.verifyDeliveryAttestation)
+   * **DO NOT call this method directly from your application code!**
    *
-   * Note: Attestation verification is OPTIONAL here because some transactions may not use EAS.
-   * However, for transactions with delivery proofs, consumers SHOULD verify before settling.
+   * ACTPKernel V1 contract accepts any attestationUID without validation.
+   * A malicious provider can:
+   * - Submit an attestation from a different transaction
+   * - Re-use an old attestation (replay attack)
+   * - Submit a forged attestation with fake delivery proof
+   *
+   * **REQUIRED: Use secure wrapper methods instead:**
+   *
+   * 1. **BeginnerAdapter.completePayment()** (recommended for most users)
+   *    - Automatically verifies attestation before release
+   *    - Validates attestation belongs to this transaction
+   *    - Checks attestation hasn't been used before
+   *    - Handles all state transitions
+   *
+   * 2. **IntermediateAdapter.releaseEscrow()** (for more control)
+   *    - Explicitly requires attestation verification
+   *    - Throws error if attestation invalid or missing
+   *    - Allows custom verification logic
+   *
+   * 3. **Manual verification** (advanced users only):
+   *    ```typescript
+   *    // Step 1: Get transaction details
+   *    const tx = await kernel.getTransaction(txId);
+   *
+   *    // Step 2: Verify attestation if EAS is configured
+   *    if (easHelper && tx.attestationUID && tx.attestationUID !== '0x0...0') {
+   *      const isValid = await easHelper.verifyDeliveryAttestation(
+   *        tx.attestationUID,
+   *        tx.requester
+   *      );
+   *      if (!isValid) {
+   *        throw new Error('Invalid or fraudulent delivery attestation');
+   *      }
+   *    }
+   *
+   *    // Step 3: Only now is it safe to release
+   *    await kernel.releaseEscrow(txId);
+   *    ```
+   *
+   * **Why this matters:**
+   * - Without verification, you risk paying for work never delivered
+   * - Provider can steal funds by re-using attestations from other transactions
+   * - No on-chain enforcement (contract V1 limitation, fixed in V2)
+   *
+   * **For testnet/mainnet deployments:**
+   * - MUST configure easConfig in ACTPClient
+   * - MUST use wrapper methods (Beginner/Intermediate adapters)
+   * - NEVER call this method directly unless attestation verified
    *
    * @param txId - Transaction ID to settle
    * @throws {ValidationError} If txId is invalid
    * @throws {TransactionRevertedError} If contract reverts
+   *
+   * @see {@link BeginnerAdapter.completePayment} Recommended method with built-in verification
+   * @see {@link IntermediateAdapter.releaseEscrow} Explicit verification method
+   * @see {@link EASHelper.verifyDeliveryAttestation} Manual verification helper
    */
   async releaseEscrow(txId: string): Promise<void> {
     // Input validation
@@ -420,28 +542,44 @@ export class ACTPKernel {
       amount: txData.amount,
       state: (typeof txData.state === 'bigint' ? Number(txData.state) : txData.state) as State,
       createdAt: typeof txData.createdAt === 'bigint' ? Number(txData.createdAt) : txData.createdAt,
+      updatedAt: typeof txData.updatedAt === 'bigint' ? Number(txData.updatedAt) : txData.updatedAt,
       deadline: typeof txData.deadline === 'bigint' ? Number(txData.deadline) : txData.deadline,
       disputeWindow: typeof txData.disputeWindow === 'bigint' ? Number(txData.disputeWindow) : txData.disputeWindow,
       escrowContract: txData.escrowContract,
       escrowId: txData.escrowId,
+      serviceHash: txData.serviceHash,
+      attestationUID: txData.attestationUID,
       // Use metadata field (quote hash for QUOTED state) if available, fallback to serviceHash
-      metadata: txData.metadata || txData.serviceHash
+      metadata: txData.metadata || txData.serviceHash,
+      platformFeeBpsLocked:
+        typeof txData.platformFeeBpsLocked === 'bigint'
+          ? Number(txData.platformFeeBpsLocked)
+          : txData.platformFeeBpsLocked
     };
   }
 
   /**
    * Get economic parameters (fee structure)
-   * Fixed: Don't hardcode values, read from contract
+   *
+   * SECURITY FIX (CRITICAL-4): Contract doesn't have getEconomicParams() function.
+   * Must call individual getters: platformFeeBps(), requesterPenaltyBps(), feeRecipient()
+   * Per ACTPKernel.json ABI lines 576-586, 619-630, 351-361
    */
   async getEconomicParams(): Promise<EconomicParams> {
-    const params = await this.contract.getEconomicParams();
+    // SECURITY FIX (CRITICAL-4): Call individual view functions in parallel
+    // Contract ABI has: platformFeeBps(), requesterPenaltyBps(), feeRecipient()
+    // NOT a combined getEconomicParams() function
+    const [platformFeeBps, requesterPenaltyBps, feeRecipient] = await Promise.all([
+      this.contract.platformFeeBps(),
+      this.contract.requesterPenaltyBps(),
+      this.contract.feeRecipient()
+    ]);
 
-    // Contract returns: (platformFeeBps, requesterPenaltyBps, feeRecipient)
     return {
-      baseFeeNumerator: Number(params.platformFeeBps || params[0]),
+      baseFeeNumerator: Number(platformFeeBps),
       baseFeeDenominator: 10000, // BPS is always out of 10000
-      feeRecipient: params.feeRecipient || params[2],
-      requesterPenaltyBps: Number(params.requesterPenaltyBps || params[1]),
+      feeRecipient: feeRecipient,
+      requesterPenaltyBps: Number(requesterPenaltyBps),
       providerPenaltyBps: 0 // Not in current contract ABI, will be added in future version
     };
   }

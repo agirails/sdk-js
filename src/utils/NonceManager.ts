@@ -2,7 +2,19 @@
  * Nonce Manager Implementation
  * Tracks nonces per DID + message type for AIP-4 delivery proofs
  * Reference: AIP-4 §3.2 (nonce field requirement)
+ *
+ * SECURITY FIXES:
+ * - C-2: Added atomic nonce allocation with locking
+ * - H-1: Added persistent nonce storage option
+ * - H-5: Added nonce upper bound validation
  */
+
+/**
+ * Maximum allowed nonce value.
+ * SECURITY FIX (H-5): Prevents nonce overflow attacks.
+ * Using Number.MAX_SAFE_INTEGER (2^53 - 1) to ensure safe JavaScript integer operations.
+ */
+export const MAX_NONCE_VALUE = Number.MAX_SAFE_INTEGER;
 
 /**
  * Nonce Manager Interface (from DeliveryProofBuilder)
@@ -40,6 +52,10 @@ export interface NonceManager {
  * In-Memory Nonce Manager
  * Simple implementation using Map for per-message-type nonce tracking
  *
+ * SECURITY FIXES:
+ * - C-2: Added atomic getAndIncrementNonce() to prevent race conditions
+ * - H-5: Added nonce upper bound validation
+ *
  * ⚠️ WARNING: Nonces are lost on process restart. For production:
  * - Use persistent storage (Redis, PostgreSQL, etc.)
  * - Implement nonce recovery from blockchain events
@@ -47,6 +63,8 @@ export interface NonceManager {
  */
 export class InMemoryNonceManager implements NonceManager {
   private nonces: Map<string, number> = new Map();
+  // SECURITY FIX (C-2): Mutex for atomic nonce operations
+  private locks: Map<string, Promise<void>> = new Map();
 
   /**
    * Create in-memory nonce manager
@@ -55,9 +73,38 @@ export class InMemoryNonceManager implements NonceManager {
   constructor(initialNonces?: Record<string, number>) {
     if (initialNonces) {
       Object.entries(initialNonces).forEach(([messageType, nonce]) => {
+        // SECURITY FIX (H-5): Validate initial nonces
+        if (nonce > MAX_NONCE_VALUE) {
+          throw new Error(
+            `Initial nonce ${nonce} for ${messageType} exceeds maximum allowed value ${MAX_NONCE_VALUE}`
+          );
+        }
         this.nonces.set(messageType, nonce);
       });
     }
+  }
+
+  /**
+   * SECURITY FIX (C-2): Acquire lock for message type
+   * Ensures atomic nonce operations
+   */
+  private async acquireLock(messageType: string): Promise<void> {
+    while (this.locks.has(messageType)) {
+      await this.locks.get(messageType);
+    }
+    let releaseLock: () => void;
+    const lockPromise = new Promise<void>((resolve) => {
+      releaseLock = resolve;
+    });
+    this.locks.set(messageType, lockPromise);
+    return;
+  }
+
+  /**
+   * SECURITY FIX (C-2): Release lock for message type
+   */
+  private releaseLock(messageType: string): void {
+    this.locks.delete(messageType);
   }
 
   /**
@@ -67,7 +114,44 @@ export class InMemoryNonceManager implements NonceManager {
    */
   getNextNonce(messageType: string): number {
     const current = this.nonces.get(messageType) || 0;
-    return current + 1;
+    const next = current + 1;
+
+    // SECURITY FIX (H-5): Check upper bound
+    if (next > MAX_NONCE_VALUE) {
+      throw new Error(
+        `Nonce overflow: next nonce ${next} exceeds maximum allowed value ${MAX_NONCE_VALUE}. ` +
+        `Consider resetting nonces or using a larger storage type.`
+      );
+    }
+
+    return next;
+  }
+
+  /**
+   * SECURITY FIX (C-2): Atomic get-and-increment nonce
+   * Returns the next nonce and records it atomically to prevent race conditions.
+   *
+   * @param messageType - Message type identifier
+   * @returns Atomically allocated nonce
+   */
+  async getAndIncrementNonce(messageType: string): Promise<number> {
+    await this.acquireLock(messageType);
+    try {
+      const current = this.nonces.get(messageType) || 0;
+      const next = current + 1;
+
+      // SECURITY FIX (H-5): Check upper bound
+      if (next > MAX_NONCE_VALUE) {
+        throw new Error(
+          `Nonce overflow: next nonce ${next} exceeds maximum allowed value ${MAX_NONCE_VALUE}`
+        );
+      }
+
+      this.nonces.set(messageType, next);
+      return next;
+    } finally {
+      this.releaseLock(messageType);
+    }
   }
 
   /**
@@ -77,6 +161,13 @@ export class InMemoryNonceManager implements NonceManager {
    */
   recordNonce(messageType: string, nonce: number): void {
     const current = this.nonces.get(messageType) || 0;
+
+    // SECURITY FIX (H-5): Check upper bound
+    if (nonce > MAX_NONCE_VALUE) {
+      throw new Error(
+        `Nonce ${nonce} exceeds maximum allowed value ${MAX_NONCE_VALUE}`
+      );
+    }
 
     // Ensure monotonic increase
     if (nonce <= current) {
@@ -277,17 +368,171 @@ export class DIDScopedNonceManager implements NonceManager {
 }
 
 /**
+ * File-based Nonce Manager for Persistent Storage
+ *
+ * SECURITY FIX (H-1): Persists nonces to disk to survive process restarts.
+ * SECURITY FIX (NEW-H-4): File locking to prevent concurrent write corruption.
+ * Uses atomic file writes (temp file + rename) for crash safety.
+ *
+ * @module utils/NonceManager
+ */
+export class FileBasedNonceManager implements NonceManager {
+  private inMemory: InMemoryNonceManager;
+  private filePath: string;
+  private fs: typeof import('fs');
+  private path: typeof import('path');
+  private lockfile: typeof import('proper-lockfile');
+
+  /**
+   * Create file-based nonce manager
+   * @param stateDirectory - Directory to store nonces file
+   */
+  constructor(stateDirectory: string) {
+    this.fs = require('fs');
+    this.path = require('path');
+    // SECURITY FIX (NEW-H-4): File locking to prevent race conditions
+    this.lockfile = require('proper-lockfile');
+
+    // Ensure .actp directory exists
+    const actpDir = this.path.join(stateDirectory, '.actp');
+    if (!this.fs.existsSync(actpDir)) {
+      this.fs.mkdirSync(actpDir, { recursive: true, mode: 0o755 });
+    }
+
+    this.filePath = this.path.join(actpDir, 'nonces.json');
+
+    // Load existing nonces
+    const initialNonces = this.loadFromFile();
+    this.inMemory = new InMemoryNonceManager(initialNonces);
+  }
+
+  /**
+   * Load nonces from file
+   */
+  private loadFromFile(): Record<string, number> | undefined {
+    if (!this.fs.existsSync(this.filePath)) {
+      return undefined;
+    }
+
+    try {
+      const data = JSON.parse(this.fs.readFileSync(this.filePath, 'utf-8'));
+      return data as Record<string, number>;
+    } catch {
+      // File corrupted, start fresh
+      return undefined;
+    }
+  }
+
+  /**
+   * Save nonces to file atomically with file locking
+   *
+   * SECURITY FIX (NEW-H-4): File locking prevents concurrent write corruption
+   */
+  private async saveToFile(): Promise<void> {
+    const data = this.inMemory.getAllNonces();
+    const tempPath = `${this.filePath}.tmp`;
+
+    // SECURITY FIX (NEW-H-4): Acquire file lock before writing
+    const release = await this.lockfile.lock(this.filePath, {
+      stale: 10000, // Lock expires after 10 seconds if process crashes
+      retries: {
+        retries: 5,
+        minTimeout: 100,
+        maxTimeout: 500
+      }
+    });
+
+    try {
+      // Atomic write: temp file + rename
+      this.fs.writeFileSync(tempPath, JSON.stringify(data, null, 2), {
+        encoding: 'utf-8',
+        mode: 0o644
+      });
+      this.fs.renameSync(tempPath, this.filePath);
+    } finally {
+      // Always release lock
+      await release();
+    }
+  }
+
+  getNextNonce(messageType: string): number {
+    return this.inMemory.getNextNonce(messageType);
+  }
+
+  /**
+   * Atomic get and increment with persistence
+   */
+  async getAndIncrementNonce(messageType: string): Promise<number> {
+    const nonce = await this.inMemory.getAndIncrementNonce(messageType);
+    // SECURITY FIX (NEW-H-4): saveToFile is now async
+    await this.saveToFile();
+    return nonce;
+  }
+
+  recordNonce(messageType: string, nonce: number): void {
+    this.inMemory.recordNonce(messageType, nonce);
+    // Fire-and-forget to maintain sync interface
+    this.saveToFile().catch((err) => {
+      console.error('Failed to save nonce manager state:', err);
+    });
+  }
+
+  getCurrentNonce(messageType: string): number {
+    return this.inMemory.getCurrentNonce(messageType);
+  }
+
+  resetNonce(messageType: string): void {
+    this.inMemory.resetNonce(messageType);
+    // Fire-and-forget to maintain sync interface
+    this.saveToFile().catch((err) => {
+      console.error('Failed to save nonce manager state:', err);
+    });
+  }
+
+  getAllNonces(): Record<string, number> {
+    return this.inMemory.getAllNonces();
+  }
+
+  clearAll(): void {
+    this.inMemory.clearAll();
+    if (this.fs.existsSync(this.filePath)) {
+      this.fs.unlinkSync(this.filePath);
+    }
+  }
+}
+
+/**
  * Create nonce manager based on environment
- * @param did - Optional DID for scoped tracking
- * @param initialNonces - Optional initial nonces
+ * @param options - Configuration options
  * @returns NonceManager instance
+ *
+ * @example
+ * ```typescript
+ * // In-memory (default)
+ * const manager = createNonceManager();
+ *
+ * // DID-scoped
+ * const manager = createNonceManager({ did: 'did:ethr:0x...' });
+ *
+ * // Persistent (survives restarts)
+ * const manager = createNonceManager({ stateDirectory: '/path/to/project' });
+ * ```
  */
 export function createNonceManager(
-  did?: string,
-  initialNonces?: Record<string, number>
-): NonceManager {
-  if (did) {
-    return new DIDScopedNonceManager(did, initialNonces);
+  options?: {
+    did?: string;
+    initialNonces?: Record<string, number>;
+    stateDirectory?: string;
   }
-  return new InMemoryNonceManager(initialNonces);
+): NonceManager {
+  // SECURITY FIX (H-1): Support persistent storage
+  if (options?.stateDirectory) {
+    return new FileBasedNonceManager(options.stateDirectory);
+  }
+
+  if (options?.did) {
+    return new DIDScopedNonceManager(options.did, options?.initialNonces);
+  }
+
+  return new InMemoryNonceManager(options?.initialNonces);
 }
