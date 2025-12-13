@@ -49,7 +49,7 @@
   "dependencies": {
     "@aws-sdk/client-s3": "^3.943.0",
     "@ethereum-attestation-service/eas-sdk": "^1.6.1",
-    "@irys/sdk": "^0.3.0",
+    "@irys/sdk": "^0.2.11",
     "did-resolver": "^4.1.0",
     "dotenv": "^17.2.3",
     "ethers": "^6.15.0",
