@@ -86,11 +86,15 @@ export class EventMonitor {
           amount: txData.amount,
           state: txData.state as State,
           createdAt: Number(txData.createdAt),
+          updatedAt: Number(txData.updatedAt),
           deadline: Number(txData.deadline),
           disputeWindow: Number(txData.disputeWindow),
           escrowContract: txData.escrowContract,
           escrowId: txData.escrowId,
-          metadata: txData.serviceHash
+          serviceHash: txData.serviceHash,
+          attestationUID: txData.attestationUID,
+          metadata: txData.serviceHash,
+          platformFeeBpsLocked: Number(txData.platformFeeBpsLocked)
         };
       })
     );

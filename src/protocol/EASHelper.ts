@@ -1,6 +1,10 @@
 import { Contract, Signer, AbiCoder, zeroPadValue } from 'ethers';
 import { DeliveryProof } from '../types';
 import { deliveryProofDataFromProof } from '../types/eip712';
+import {
+  IUsedAttestationTracker,
+  InMemoryUsedAttestationTracker
+} from '../utils/UsedAttestationTracker';
 
 export interface EASConfig {
   contractAddress: string;
@@ -24,9 +28,44 @@ const EAS_ABI = [
 
 export class EASHelper {
   private readonly eas: Contract;
+  private readonly attestationTracker: IUsedAttestationTracker;
 
-  constructor(signer: Signer, private readonly config: EASConfig) {
+  /**
+   * Create EASHelper instance
+   *
+   * @param signer - Ethers signer for signing attestations
+   * @param config - EAS configuration
+   * @param attestationTracker - Optional tracker for replay attack prevention (C-1 fix)
+   *
+   * SECURITY FIX (NEW-M-2): Validates schema UID format in constructor
+   */
+  constructor(
+    signer: Signer,
+    private readonly config: EASConfig,
+    attestationTracker?: IUsedAttestationTracker
+  ) {
+    // SECURITY FIX (NEW-M-2): Validate schema UID format
+    if (!config.deliveryProofSchemaId || !/^0x[a-fA-F0-9]{64}$/.test(config.deliveryProofSchemaId)) {
+      throw new Error(
+        `Invalid deliveryProofSchemaId: must be bytes32 hex string (0x...). ` +
+        `Got: ${config.deliveryProofSchemaId}`
+      );
+    }
+
+    if (config.deliveryProofSchemaId === '0x0000000000000000000000000000000000000000000000000000000000000000') {
+      throw new Error('deliveryProofSchemaId cannot be zero bytes32');
+    }
+
     this.eas = new Contract(config.contractAddress, EAS_ABI, signer);
+    // SECURITY FIX (C-1): Use provided tracker or create new in-memory one
+    this.attestationTracker = attestationTracker || new InMemoryUsedAttestationTracker();
+  }
+
+  /**
+   * Get the attestation tracker for external use
+   */
+  getAttestationTracker(): IUsedAttestationTracker {
+    return this.attestationTracker;
   }
 
   /**
@@ -146,10 +185,16 @@ export class EASHelper {
     // revocationTime = 0 means not revoked
     // revocationTime > 0 means revoked at that timestamp
     // NOTE: attestation.revoked field does NOT exist! (see genetic-memory.md)
-    const isRevoked = attestation.revocationTime > 0n;
+    //
+    // SECURITY FIX (NEW-M-1): Fallback check for both revocationTime and revoked field
+    // Some EAS contract versions may use different field names
+    const isRevoked = (attestation.revocationTime && attestation.revocationTime > 0n) ||
+                      (attestation.revoked === true);
+
     if (isRevoked) {
+      const revokedAt = attestation.revocationTime || 'unknown';
       throw new Error(
-        `Attestation has been revoked: ${attestationUID} (revoked at timestamp ${attestation.revocationTime})`
+        `Attestation has been revoked: ${attestationUID} (revoked at timestamp ${revokedAt})`
       );
     }
 
@@ -168,13 +213,51 @@ export class EASHelper {
     // 6. Decode attestation data to extract txId
     // Schema: bytes32 txId, bytes32 contentHash, uint256 timestamp, string deliveryUrl, uint256 size, string mimeType
     let attestedTxId: string;
+    let contentHash: string;
+    let timestamp: bigint;
+    let deliveryUrl: string;
+    let size: bigint;
+    let mimeType: string;
+
     try {
       const abiCoder = AbiCoder.defaultAbiCoder();
       const decoded = abiCoder.decode(
         ['bytes32', 'bytes32', 'uint256', 'string', 'uint256', 'string'],
         attestation.data
       );
-      attestedTxId = decoded[0]; // First field is txId
+
+      // SECURITY FIX (NEW-M-3): Validate decoded values explicitly
+      attestedTxId = decoded[0];
+      contentHash = decoded[1];
+      timestamp = decoded[2];
+      deliveryUrl = decoded[3];
+      size = decoded[4];
+      mimeType = decoded[5];
+
+      // Validate txId is bytes32 format
+      if (!attestedTxId || !/^0x[a-fA-F0-9]{64}$/.test(attestedTxId)) {
+        throw new Error(`Decoded txId is not valid bytes32: ${attestedTxId}`);
+      }
+
+      // Validate contentHash is bytes32 format
+      if (!contentHash || !/^0x[a-fA-F0-9]{64}$/.test(contentHash)) {
+        throw new Error(`Decoded contentHash is not valid bytes32: ${contentHash}`);
+      }
+
+      // Validate timestamp is reasonable (not in far future)
+      const now = Math.floor(Date.now() / 1000);
+      const maxFutureTime = now + 86400; // Allow 1 day clock skew
+      if (Number(timestamp) > maxFutureTime) {
+        throw new Error(
+          `Decoded timestamp is in far future: ${timestamp} (current time: ${now})`
+        );
+      }
+
+      // Validate size is non-negative
+      if (size < 0n) {
+        throw new Error(`Decoded size is negative: ${size}`);
+      }
+
     } catch (error: any) {
       throw new Error(
         `Attestation data format mismatch: cannot decode attestation ${attestationUID}. ` +
@@ -184,14 +267,54 @@ export class EASHelper {
     }
 
     // 7. Verify attestation txId matches expected transaction ID
-    if (attestedTxId !== txId) {
+    if (attestedTxId.toLowerCase() !== txId.toLowerCase()) {
       throw new Error(
         `Attestation txId mismatch: expected ${txId}, got ${attestedTxId}. ` +
         `Provider may be attempting to use attestation from different transaction!`
       );
     }
 
+    // SECURITY FIX (C-1): Check if attestation has been used for a different transaction
+    if (!this.attestationTracker.isValidForTransaction(attestationUID, txId)) {
+      const usedFor = this.attestationTracker.getUsageForAttestation(attestationUID);
+      throw new Error(
+        `Attestation replay attack detected: attestation ${attestationUID} ` +
+        `was already used for transaction ${usedFor}. ` +
+        `Cannot reuse for transaction ${txId}.`
+      );
+    }
+
+    // Record this attestation as used for this transaction
+    this.attestationTracker.recordUsage(attestationUID, txId);
+
     // All checks passed
     return true;
+  }
+
+  /**
+   * Verify attestation for escrow release with mandatory replay protection
+   *
+   * SECURITY FIX (C-4): This method MUST be called before releaseEscrow()
+   * to prevent attestation replay attacks.
+   *
+   * @param txId - Expected transaction ID (bytes32)
+   * @param attestationUID - Attestation UID to verify (bytes32)
+   * @throws Error if verification fails or replay attack detected
+   */
+  async verifyAndRecordForRelease(
+    txId: string,
+    attestationUID: string
+  ): Promise<void> {
+    // Verify the attestation
+    await this.verifyDeliveryAttestation(txId, attestationUID);
+
+    // Additional check: Ensure it's recorded (verifyDeliveryAttestation already does this,
+    // but we explicitly verify here for safety)
+    if (!this.attestationTracker.isValidForTransaction(attestationUID, txId)) {
+      throw new Error(
+        `Attestation ${attestationUID} cannot be used for transaction ${txId}. ` +
+        `It may have been used for another transaction.`
+      );
+    }
   }
 }

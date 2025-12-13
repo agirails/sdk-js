@@ -228,6 +228,10 @@ export class InMemoryReceivedNonceTracker implements IReceivedNonceTracker {
  * - Reject duplicate nonces (replay attack)
  * - Allows non-sequential nonces (nonce gaps are OK)
  *
+ * SECURITY FIX (NEW-H-2): Max size enforcement to prevent memory exhaustion
+ * SECURITY FIX (HIGH-2): Global total entries limit to prevent DoS via many sender combinations
+ * SECURITY FIX (H-2): Rate limiting per sender to prevent flood attacks
+ *
  * Trade-off:
  * - Higher memory usage (stores every nonce)
  * - More flexible (allows out-of-order delivery)
@@ -237,8 +241,94 @@ export class SetBasedReceivedNonceTracker implements IReceivedNonceTracker {
   // Map: sender -> messageType -> Set of used nonces
   private usedNonces: Map<string, Map<string, Set<string>>> = new Map();
 
+  // SECURITY FIX (NEW-H-2): Maximum entries per sender+messageType
+  private readonly maxSizePerType: number;
+
+  // SECURITY FIX (HIGH-2): Global limit across ALL sender+messageType combinations
+  private readonly maxTotalEntries: number;
+  private totalEntries: number = 0;
+
+  // SECURITY FIX (H-2): Rate limiting per sender
+  // Map: sender -> { count: number, windowStart: number }
+  private rateLimitState: Map<string, { count: number; windowStart: number }> = new Map();
+  private readonly maxNoncesPerMinute: number;
+  private readonly rateLimitWindowMs: number = 60000; // 1 minute window
+
+  /**
+   * Create set-based tracker with optional max size
+   * @param maxSizePerType - Maximum nonces per sender+messageType (default: 10,000)
+   * @param maxTotalEntries - Maximum total nonces across all combinations (default: 100,000)
+   * @param maxNoncesPerMinute - Maximum nonces per sender per minute (default: 100)
+   */
+  constructor(
+    maxSizePerType: number = 10000,
+    maxTotalEntries: number = 100000,
+    maxNoncesPerMinute: number = 100
+  ) {
+    if (maxSizePerType <= 0) {
+      throw new Error('maxSizePerType must be positive');
+    }
+    if (maxTotalEntries <= 0) {
+      throw new Error('maxTotalEntries must be positive');
+    }
+    if (maxNoncesPerMinute <= 0) {
+      throw new Error('maxNoncesPerMinute must be positive');
+    }
+    this.maxSizePerType = maxSizePerType;
+    this.maxTotalEntries = maxTotalEntries;
+    this.maxNoncesPerMinute = maxNoncesPerMinute;
+  }
+
+  /**
+   * SECURITY FIX (H-2): Check rate limit for sender
+   * @param sender - Sender DID
+   * @returns true if rate limit exceeded
+   */
+  private checkRateLimit(sender: string): boolean {
+    const now = Date.now();
+    const state = this.rateLimitState.get(sender);
+
+    if (!state) {
+      // First nonce from this sender
+      this.rateLimitState.set(sender, { count: 1, windowStart: now });
+      return false; // Not rate limited
+    }
+
+    // Check if window expired (reset counter)
+    if (now - state.windowStart >= this.rateLimitWindowMs) {
+      state.count = 1;
+      state.windowStart = now;
+      return false; // Not rate limited
+    }
+
+    // Increment counter
+    state.count++;
+
+    // Check if rate limit exceeded
+    return state.count > this.maxNoncesPerMinute;
+  }
+
+  /**
+   * SECURITY FIX (H-2): Periodic cleanup of rate limit state
+   * Removes expired rate limit entries (older than 5 minutes)
+   */
+  private cleanupRateLimitState(): void {
+    const now = Date.now();
+    const expiryThreshold = 5 * 60 * 1000; // 5 minutes
+
+    for (const [sender, state] of this.rateLimitState.entries()) {
+      if (now - state.windowStart > expiryThreshold) {
+        this.rateLimitState.delete(sender);
+      }
+    }
+  }
+
   /**
    * Validate and record a received nonce
+   *
+   * SECURITY FIX (NEW-H-2): Automatic cleanup when max size reached
+   * SECURITY FIX (HIGH-2): Global limit check to prevent DoS
+   * SECURITY FIX (H-2): Rate limiting per sender (max 100 nonces/minute)
    */
   validateAndRecord(sender: string, messageType: string, nonce: string): NonceValidationResult {
     // Validate nonce format
@@ -246,6 +336,34 @@ export class SetBasedReceivedNonceTracker implements IReceivedNonceTracker {
       return {
         valid: false,
         reason: 'Invalid nonce format (must be bytes32)',
+        receivedNonce: nonce
+      };
+    }
+
+    // SECURITY FIX (H-2): Rate limit check (BEFORE global limit to avoid unnecessary work)
+    if (this.checkRateLimit(sender)) {
+      return {
+        valid: false,
+        reason: `Rate limit exceeded for sender ${sender}: ` +
+                `Maximum ${this.maxNoncesPerMinute} nonces per minute allowed. ` +
+                `This may indicate a flood attack or misconfigured client. ` +
+                `Wait 1 minute before retrying.`,
+        receivedNonce: nonce
+      };
+    }
+
+    // SECURITY FIX (H-2): Periodic cleanup every 100 validations (amortized cost)
+    if (this.totalEntries % 100 === 0) {
+      this.cleanupRateLimitState();
+    }
+
+    // SECURITY FIX (HIGH-2): Check global limit BEFORE adding
+    if (this.totalEntries >= this.maxTotalEntries) {
+      return {
+        valid: false,
+        reason: `Global nonce tracker limit reached (${this.maxTotalEntries} entries). ` +
+                `This may indicate a DoS attack or need for cleanup. ` +
+                `Current usage: ${this.totalEntries} entries across ${this.getCombinationCount()} sender+type combinations.`,
         receivedNonce: nonce
       };
     }
@@ -273,9 +391,51 @@ export class SetBasedReceivedNonceTracker implements IReceivedNonceTracker {
       };
     }
 
+    // SECURITY FIX (NEW-H-2): Auto-cleanup if max size per type reached
+    if (usedSet.size >= this.maxSizePerType) {
+      // Keep only last 80% of entries (sorted by nonce value)
+      const keepCount = Math.floor(this.maxSizePerType * 0.8);
+      const sortedNonces = Array.from(usedSet).sort((a, b) => {
+        const aVal = BigInt(a);
+        const bVal = BigInt(b);
+        return aVal < bVal ? -1 : aVal > bVal ? 1 : 0;
+      });
+      const removedCount = usedSet.size - keepCount;
+      usedSet = new Set(sortedNonces.slice(-keepCount));
+      senderNonces.set(messageType, usedSet);
+      // SECURITY FIX (HIGH-2): Update global counter
+      this.totalEntries -= removedCount;
+    }
+
     // Valid nonce - record it
     usedSet.add(nonce);
+    // SECURITY FIX (HIGH-2): Update global counter
+    this.totalEntries++;
     return { valid: true };
+  }
+
+  /**
+   * Get number of sender+messageType combinations (for monitoring)
+   * SECURITY FIX (HIGH-2): Monitoring method
+   */
+  private getCombinationCount(): number {
+    let count = 0;
+    this.usedNonces.forEach(senderMap => {
+      count += senderMap.size;
+    });
+    return count;
+  }
+
+  /**
+   * Get memory usage statistics
+   * SECURITY FIX (HIGH-2): Monitoring method for DoS detection
+   */
+  getMemoryUsage(): { totalEntries: number; combinations: number; maxTotalEntries: number } {
+    return {
+      totalEntries: this.totalEntries,
+      combinations: this.getCombinationCount(),
+      maxTotalEntries: this.maxTotalEntries
+    };
   }
 
   /**
@@ -327,6 +487,11 @@ export class SetBasedReceivedNonceTracker implements IReceivedNonceTracker {
   reset(sender: string, messageType: string): void {
     const senderNonces = this.usedNonces.get(sender);
     if (senderNonces) {
+      const usedSet = senderNonces.get(messageType);
+      if (usedSet) {
+        // SECURITY FIX (HIGH-2): Update global counter
+        this.totalEntries -= usedSet.size;
+      }
       senderNonces.delete(messageType);
       if (senderNonces.size === 0) {
         this.usedNonces.delete(sender);
@@ -339,6 +504,8 @@ export class SetBasedReceivedNonceTracker implements IReceivedNonceTracker {
    */
   clearAll(): void {
     this.usedNonces.clear();
+    // SECURITY FIX (HIGH-2): Reset global counter
+    this.totalEntries = 0;
   }
 
   /**
@@ -377,8 +544,11 @@ export class SetBasedReceivedNonceTracker implements IReceivedNonceTracker {
     });
 
     // Keep only the last N nonces
+    const removedCount = usedSet.size - keepLast;
     const toKeep = new Set(sortedNonces.slice(-keepLast));
     senderNonces.set(messageType, toKeep);
+    // SECURITY FIX (HIGH-2): Update global counter
+    this.totalEntries -= removedCount;
   }
 }
 

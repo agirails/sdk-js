@@ -14,6 +14,7 @@ export interface NetworkConfig {
     usdc: string;
     eas: string; // EAS contract address
     easSchemaRegistry: string; // EAS SchemaRegistry contract
+    agentRegistry?: string; // AIP-7 Agent Registry (optional until deployed)
   };
   eas: {
     deliverySchemaUID: string; // AIP-4 delivery proof schema
@@ -33,13 +34,15 @@ export const BASE_SEPOLIA: NetworkConfig = {
   rpcUrl: 'https://sepolia.base.org',
   blockExplorer: 'https://sepolia.basescan.org',
   contracts: {
-    // Redeployed 2025-11-25 by Arha (fixed auto-transition in linkEscrow, optimizer-runs 200)
-    actpKernel: '0x6aDB650e185b0ee77981AC5279271f0Fa6CFe7ba',
-    escrowVault: '0x921edE340770db5DB6059B5B866be987d1b7311F',
+    // Redeployed 2025-12-10 by Arha (new deployer wallet 0x42a2f11555b9363fb7ebdcdc76d7cb26e01dcb00)
+    actpKernel: '0xD199070F8e9FB9a127F6Fe730Bc13300B4b3d962',
+    escrowVault: '0x948b9Ea081C4Cec1E112Af2e539224c531d4d585',
     usdc: '0x444b4e1A65949AB2ac75979D5d0166Eb7A248Ccb', // MockUSDC
     // EAS contracts (Base native deployment)
     eas: '0x4200000000000000000000000000000000000021',
-    easSchemaRegistry: '0x4200000000000000000000000000000000000020'
+    easSchemaRegistry: '0x4200000000000000000000000000000000000020',
+    // AIP-7 Agent Registry (deployed 2025-12-11)
+    agentRegistry: '0xFed6914Aa70c0a53E9c7Cc4d2Ae159e4748fb09D'
   },
   eas: {
     // Deployed 2025-11-23 - AIP-4 delivery proof schema
@@ -111,7 +114,8 @@ export function getNetwork(network: string): NetworkConfig {
       escrowVault: config.contracts.escrowVault,
       usdc: config.contracts.usdc,
       eas: config.contracts.eas,
-      easSchemaRegistry: config.contracts.easSchemaRegistry
+      easSchemaRegistry: config.contracts.easSchemaRegistry,
+      agentRegistry: config.contracts.agentRegistry
     },
     eas: {
       deliverySchemaUID: config.eas.deliverySchemaUID

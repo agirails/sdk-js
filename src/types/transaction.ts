@@ -11,11 +11,15 @@ export interface Transaction {
   amount: bigint;
   state: State;
   createdAt: number;
+  updatedAt: number;
   deadline: number;
   disputeWindow: number;
   escrowContract: string;
   escrowId: string;
+  serviceHash: string;
+  attestationUID: string;
   metadata: string;
+  platformFeeBpsLocked: number;
 }
 
 /**
@@ -50,5 +54,4 @@ export interface EconomicParams {
   requesterPenaltyBps: number;
   providerPenaltyBps: number;
 }
-
 

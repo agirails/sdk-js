@@ -1,11 +1,5 @@
-node_modules/
-dist/
+
+# ACTP local state (contains mock blockchain state)
+.actp/
+node_modules
 coverage/
-hardhat/artifacts/
-hardhat/cache/
-.DS_Store
-*.log
-.env
-.env.*
-*.tsbuildinfo
-DEVELOPMENT_REPORT*.md

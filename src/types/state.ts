@@ -17,14 +17,23 @@ export enum State {
 export class StateMachine {
   /**
    * Valid state transitions per Yellow Paper §3.2.2
+   *
+   * SECURITY FIX (CRITICAL-1): State machine must match ACTPKernel contract exactly
+   * Per CLAUDE.md §Architecture Overview - ACTP Protocol State Machine:
+   * - COMMITTED can transition to IN_PROGRESS, DELIVERED, or CANCELLED
+   * - IN_PROGRESS can transition to DELIVERED or CANCELLED (not DISPUTED)
+   * - DISPUTED can only transition to SETTLED (not CANCELLED)
    */
   private static readonly TRANSITIONS: Record<State, State[]> = {
     [State.INITIATED]: [State.QUOTED, State.COMMITTED, State.CANCELLED], // Allow direct INITIATED → COMMITTED (AIP-3)
     [State.QUOTED]: [State.COMMITTED, State.CANCELLED],
-    [State.COMMITTED]: [State.IN_PROGRESS, State.CANCELLED],
-    [State.IN_PROGRESS]: [State.DELIVERED, State.DISPUTED],
+    // SECURITY FIX (CRITICAL-1): Add DELIVERED (can skip IN_PROGRESS)
+    [State.COMMITTED]: [State.IN_PROGRESS, State.DELIVERED, State.CANCELLED],
+    // SECURITY FIX (CRITICAL-1): Remove DISPUTED, add CANCELLED
+    [State.IN_PROGRESS]: [State.DELIVERED, State.CANCELLED],
     [State.DELIVERED]: [State.SETTLED, State.DISPUTED],
-    [State.DISPUTED]: [State.SETTLED, State.CANCELLED],
+    // SECURITY FIX (CRITICAL-1): Remove CANCELLED (disputes resolve to SETTLED only)
+    [State.DISPUTED]: [State.SETTLED],
     [State.SETTLED]: [], // Terminal state
     [State.CANCELLED]: [] // Terminal state
   };

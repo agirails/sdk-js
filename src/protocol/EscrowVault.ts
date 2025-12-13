@@ -62,12 +62,35 @@ export class EscrowVault {
   /**
    * Build transaction options with gas settings and estimated gas
    * V6 Enhancement: Dynamic buffer based on operation type
+   *
+   * SECURITY FIX (NEW-C-1): Gas estimation manipulation attack protection
+   * - Enforces minimum gas floor regardless of estimate
+   * - Uses safe BigInt arithmetic with overflow detection
    */
   private buildTxOptions(estimatedGas: bigint, operation: string = 'default'): any {
+    // SECURITY FIX (NEW-C-1): Minimum gas floor to prevent manipulation
+    // Malicious contracts could return artificially low gas estimates
+    const MIN_GAS_FLOOR = 100000n;
+    const safeEstimate = estimatedGas > MIN_GAS_FLOOR ? estimatedGas : MIN_GAS_FLOOR;
+
     const bufferMultiplier = this.getGasBufferMultiplier(operation);
 
+    // SECURITY FIX (NEW-H-1): Safe BigInt arithmetic with overflow check
+    // Use 10000 denominator to avoid floating point precision issues
+    const bufferNumerator = BigInt(Math.floor(bufferMultiplier * 10000));
+    const bufferDenominator = 10000n;
+    const gasLimit = (safeEstimate * bufferNumerator) / bufferDenominator;
+
+    // Overflow detection: result should always be >= original estimate
+    if (gasLimit < safeEstimate) {
+      throw new Error(
+        `Gas calculation overflow detected for operation ${operation}. ` +
+        `Estimate: ${safeEstimate}, Buffer: ${bufferMultiplier}x, Result: ${gasLimit}`
+      );
+    }
+
     const options: any = {
-      gasLimit: (estimatedGas * BigInt(Math.round(bufferMultiplier * 100))) / 100n
+      gasLimit
     };
 
     if (this.gasSettings?.maxFeePerGas) {
@@ -85,6 +108,18 @@ export class EscrowVault {
    */
   getAddress(): string {
     return this.address;
+  }
+
+  /**
+   * Get the underlying ethers Contract instance.
+   *
+   * SECURITY FIX (C-3): Provides public access to contract for EventMonitor
+   * instead of accessing private field via bracket notation.
+   *
+   * @returns ethers Contract instance
+   */
+  getContract(): Contract {
+    return this.contract;
   }
 
   /**

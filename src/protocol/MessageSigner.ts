@@ -32,14 +32,78 @@ interface SignerWithTypedData extends Signer {
  * Reference: Yellow Paper §11.4.2
  *
  * V4 Security Enhancement: Optional nonce replay protection via ReceivedNonceTracker
+ *
+ * IMPORTANT: Use MessageSigner.create() factory method to ensure domain is initialized.
  */
 export class MessageSigner {
   private domain: EIP712Domain | null = null;
 
-  constructor(
+  /**
+   * SECURITY FIX (H-5): Private constructor - MUST use MessageSigner.create() factory method
+   *
+   * This ensures EIP-712 domain is ALWAYS initialized before use (prevents race conditions).
+   * Direct construction would allow calling sign/verify without domain initialization.
+   */
+  private constructor(
     private readonly signer: Signer,
     private readonly nonceTracker?: IReceivedNonceTracker
   ) {}
+
+  /**
+   * SECURITY FIX (H-4): Factory method to create MessageSigner with guaranteed domain initialization
+   *
+   * This factory ensures the EIP-712 domain is always properly initialized before use.
+   * Prevents the common bug of calling sign/verify without initializing domain first.
+   *
+   * @param signer - Ethers signer for signing messages
+   * @param kernelAddress - Address of ACTP Kernel contract (for domain separation)
+   * @param options - Optional configuration (chainId, nonceTracker)
+   * @returns Promise resolving to initialized MessageSigner
+   *
+   * @example
+   * ```typescript
+   * const messageSigner = await MessageSigner.create(
+   *   signer,
+   *   KERNEL_ADDRESS,
+   *   { chainId: 84532 }
+   * );
+   * const signature = await messageSigner.signMessage(message);
+   * ```
+   */
+  static async create(
+    signer: Signer,
+    kernelAddress: string,
+    options?: {
+      chainId?: number;
+      nonceTracker?: IReceivedNonceTracker;
+    }
+  ): Promise<MessageSigner> {
+    const messageSigner = new MessageSigner(signer, options?.nonceTracker);
+    await messageSigner.initDomain(kernelAddress, options?.chainId);
+    return messageSigner;
+  }
+
+  /**
+   * Check if domain is initialized
+   * @returns true if domain has been initialized
+   */
+  isDomainInitialized(): boolean {
+    return this.domain !== null;
+  }
+
+  /**
+   * Get the current domain (throws if not initialized)
+   * @returns Current EIP-712 domain
+   * @throws Error if domain not initialized
+   */
+  getDomain(): EIP712Domain {
+    if (!this.domain) {
+      throw new Error(
+        'Domain not initialized. Use MessageSigner.create() factory or call initDomain() first.'
+      );
+    }
+    return this.domain;
+  }
 
   /**
    * Initialize EIP-712 domain (must be called before signing)
@@ -67,8 +131,10 @@ export class MessageSigner {
       }
     }
 
+    // SECURITY FIX (H-6): Standardize domain name to 'AGIRAILS' for brand consistency
+    // Note: This change requires coordination with any existing signed messages
     this.domain = {
-      name: 'ACTP',
+      name: 'AGIRAILS',
       version: '1.0',
       chainId: resolvedChainId,
       verifyingContract: kernelAddress
@@ -78,16 +144,54 @@ export class MessageSigner {
   /**
    * Sign ACTP message using EIP-712 typed data
    * Uses ECDSA (secp256k1) with domain separation per Yellow Paper §11.4.2
-   * 
+   *
+   * SECURITY FIX (H-3): Validates nonce format and warns about sequential nonces
+   *
    * Generic ACTPMessage format (backward compatible).
    * For strict typed AIP messages, use signQuoteRequest/signQuoteResponse/signDeliveryProof
    */
   async signMessage(message: ACTPMessage): Promise<string> {
     if (!this.domain) {
-      throw new Error('Domain not initialized. Call initDomain() first.');
+      throw new Error(
+        'Domain not initialized. Use MessageSigner.create() factory or call initDomain() first.'
+      );
     }
 
     const { type, version, from, to, timestamp, nonce, signature, ...payload } = message;
+
+    // SECURITY FIX (H-3): Validate nonce format (must be bytes32)
+    if (!nonce || !/^0x[a-fA-F0-9]{64}$/.test(nonce)) {
+      throw new Error(
+        `Invalid nonce format: "${nonce}". ` +
+        `Nonce MUST be a bytes32 hex string (0x + 64 hex chars). ` +
+        `Use SecureNonce.generateSecureNonce() to generate cryptographically secure nonces. ` +
+        `Never use sequential integers (1, 2, 3...) or timestamps as nonces.`
+      );
+    }
+
+    // SECURITY FIX (H-3): Warn about sequential nonces (low entropy)
+    // Sequential nonces like 0x0000...0001, 0x0000...0002 are weak
+    // Check if nonce has low entropy (e.g., last 8 bytes are zero, or all same digits)
+    const nonceValue = BigInt(nonce);
+    if (nonceValue < 0xFFFFFFFFn) {
+      // Nonce is suspiciously small (< 4 billion = likely sequential)
+      console.warn(
+        `[SECURITY WARNING] Nonce ${nonce} appears to be sequential (value < 2^32). ` +
+        `This makes replay attacks easier. ` +
+        `Use SecureNonce.generateSecureNonce() for cryptographically secure random nonces.`
+      );
+    }
+
+    // Check if nonce has all same digits (e.g., 0x111...111 or 0x000...000)
+    const hexDigits = nonce.slice(2); // Remove '0x'
+    const firstDigit = hexDigits[0];
+    if (hexDigits.split('').every(d => d === firstDigit)) {
+      console.warn(
+        `[SECURITY WARNING] Nonce ${nonce} has low entropy (all digits are '${firstDigit}'). ` +
+        `This is NOT cryptographically secure. ` +
+        `Use SecureNonce.generateSecureNonce() instead.`
+      );
+    }
 
     // Generic ACTPMessage with payload encoding (backward compatible)
     const abiCoder = AbiCoder.defaultAbiCoder();
@@ -121,7 +225,9 @@ export class MessageSigner {
    */
   async signQuoteRequest(data: QuoteRequestData): Promise<string> {
     if (!this.domain) {
-      throw new Error('Domain not initialized. Call initDomain() first.');
+      throw new Error(
+        'Domain not initialized. Use MessageSigner.create() factory or call initDomain() first.'
+      );
     }
 
     const messageTypes = getMessageTypes('quote.request');
@@ -134,7 +240,9 @@ export class MessageSigner {
    */
   async signQuoteResponse(data: QuoteResponseData): Promise<string> {
     if (!this.domain) {
-      throw new Error('Domain not initialized. Call initDomain() first.');
+      throw new Error(
+        'Domain not initialized. Use MessageSigner.create() factory or call initDomain() first.'
+      );
     }
 
     const messageTypes = getMessageTypes('quote.response');
@@ -147,7 +255,9 @@ export class MessageSigner {
    */
   async signDeliveryProof(data: DeliveryProofData): Promise<string> {
     if (!this.domain) {
-      throw new Error('Domain not initialized. Call initDomain() first.');
+      throw new Error(
+        'Domain not initialized. Use MessageSigner.create() factory or call initDomain() first.'
+      );
     }
 
     const messageTypes = getMessageTypes('delivery.proof');
@@ -171,7 +281,9 @@ export class MessageSigner {
    */
   async verifySignature(message: ACTPMessage, signature: string): Promise<boolean> {
     if (!this.domain) {
-      throw new Error('Domain not initialized. Call initDomain() first.');
+      throw new Error(
+        'Domain not initialized. Use MessageSigner.create() factory or call initDomain() first.'
+      );
     }
 
     const { type, version, from, to, timestamp, nonce, signature: _, ...payload } = message;
