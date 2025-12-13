@@ -42,11 +42,12 @@ describe('AIP-7 Agent Registry Happy Path', () => {
 
   beforeAll(async () => {
     // Check for test private key (never log the value)
-    const testPrivateKey = process.env.TEST_PRIVATE_KEY;
+    // Accepts TEST_PRIVATE_KEY or AGIRAILS_PRIVATE_KEY as fallback
+    const testPrivateKey = process.env.TEST_PRIVATE_KEY ?? process.env.AGIRAILS_PRIVATE_KEY;
 
     if (!testPrivateKey) {
       skipWriteTests = true;
-      skipReason = 'TEST_PRIVATE_KEY not set - skipping write tests';
+      skipReason = 'TEST_PRIVATE_KEY or AGIRAILS_PRIVATE_KEY not set - skipping write tests';
       console.warn(`[AIP-7 Tests] ${skipReason}`);
 
       // Use dummy key for read-only tests
