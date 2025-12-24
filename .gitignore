@@ -13,11 +13,12 @@ coverage/
 # Test temp directories
 .tmp-*/
 
-# Environment files
+# Environment files (contain secrets)
 .env
 .env.*
 .env.local
 .env.*.local
+!.env.example
 
 # Logs
 *.log
