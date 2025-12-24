@@ -9,6 +9,8 @@
  * - H-5: Added nonce upper bound validation
  */
 
+import { assertSafeFileForRead, ensureSafeDir, ensureSafeFile } from './fsSafe';
+
 /**
  * Maximum allowed nonce value.
  * SECURITY FIX (H-5): Prevents nonce overflow attacks.
@@ -64,7 +66,8 @@ export interface NonceManager {
 export class InMemoryNonceManager implements NonceManager {
   private nonces: Map<string, number> = new Map();
   // SECURITY FIX (C-2): Mutex for atomic nonce operations
-  private locks: Map<string, Promise<void>> = new Map();
+  // Store both the promise and its resolver for proper lock release
+  private locks: Map<string, { promise: Promise<void>; resolve: () => void }> = new Map();
 
   /**
    * Create in-memory nonce manager
@@ -85,26 +88,44 @@ export class InMemoryNonceManager implements NonceManager {
   }
 
   /**
-   * SECURITY FIX (C-2): Acquire lock for message type
-   * Ensures atomic nonce operations
+   * SECURITY FIX (C-2 + DEADLOCK-FIX): Acquire lock for message type
+   * Ensures atomic nonce operations.
+   *
+   * FIXED: Previous implementation had a deadlock bug where:
+   * - The resolver was stored in a closure but never accessible to releaseLock()
+   * - releaseLock() just deleted the entry without resolving waiting Promises
+   *
+   * New implementation stores both promise AND resolver together.
    */
   private async acquireLock(messageType: string): Promise<void> {
+    // Wait for any existing lock to be released
     while (this.locks.has(messageType)) {
-      await this.locks.get(messageType);
+      const existingLock = this.locks.get(messageType);
+      if (existingLock) {
+        await existingLock.promise;
+      }
     }
-    let releaseLock: () => void;
+
+    // Create new lock with stored resolver
+    let resolver: () => void = () => {};
     const lockPromise = new Promise<void>((resolve) => {
-      releaseLock = resolve;
+      resolver = resolve;
     });
-    this.locks.set(messageType, lockPromise);
-    return;
+    this.locks.set(messageType, { promise: lockPromise, resolve: resolver });
   }
 
   /**
-   * SECURITY FIX (C-2): Release lock for message type
+   * SECURITY FIX (C-2 + DEADLOCK-FIX): Release lock for message type
+   *
+   * FIXED: Now properly resolves the Promise before deleting,
+   * so any waiting acquireLock() calls can proceed.
    */
   private releaseLock(messageType: string): void {
-    this.locks.delete(messageType);
+    const lock = this.locks.get(messageType);
+    if (lock) {
+      lock.resolve(); // Resolve the promise first
+      this.locks.delete(messageType); // Then delete the entry
+    }
   }
 
   /**
@@ -395,9 +416,7 @@ export class FileBasedNonceManager implements NonceManager {
 
     // Ensure .actp directory exists
     const actpDir = this.path.join(stateDirectory, '.actp');
-    if (!this.fs.existsSync(actpDir)) {
-      this.fs.mkdirSync(actpDir, { recursive: true, mode: 0o755 });
-    }
+    ensureSafeDir(actpDir, 0o755);
 
     this.filePath = this.path.join(actpDir, 'nonces.json');
 
@@ -415,11 +434,25 @@ export class FileBasedNonceManager implements NonceManager {
     }
 
     try {
+      // SECURITY: Refuse to read from symlinked nonce files
+      assertSafeFileForRead(this.filePath);
+
+      const MAX_NONCE_FILE_SIZE = 5 * 1024 * 1024; // 5MB
+      const st = this.fs.statSync(this.filePath);
+      if (st.size > MAX_NONCE_FILE_SIZE) {
+        throw new Error(
+          `nonces.json exceeds ${MAX_NONCE_FILE_SIZE / 1024 / 1024}MB limit: ${this.filePath}`
+        );
+      }
+
       const data = JSON.parse(this.fs.readFileSync(this.filePath, 'utf-8'));
       return data as Record<string, number>;
-    } catch {
-      // File corrupted, start fresh
-      return undefined;
+    } catch (e: any) {
+      // Fail closed: nonce resets can enable replay.
+      throw new Error(
+        `Failed to parse nonces.json (replay protection would be weakened). ` +
+          `Fix/delete the file: ${this.filePath}. Error: ${e?.message || String(e)}`
+      );
     }
   }
 
@@ -432,26 +465,45 @@ export class FileBasedNonceManager implements NonceManager {
     const data = this.inMemory.getAllNonces();
     const tempPath = `${this.filePath}.tmp`;
 
-    // SECURITY FIX (NEW-H-4): Acquire file lock before writing
-    const release = await this.lockfile.lock(this.filePath, {
-      stale: 10000, // Lock expires after 10 seconds if process crashes
-      retries: {
-        retries: 5,
-        minTimeout: 100,
-        maxTimeout: 500
-      }
-    });
+    // SECURITY FIX: Ensure file exists before locking (proper-lockfile requirement)
+    ensureSafeFile(this.filePath, '{}', 0o644);
 
+    // SECURITY FIX (NEW-H-4): Acquire file lock before writing
+    let release: (() => Promise<void>) | null = null;
     try {
+      release = await this.lockfile.lock(this.filePath, {
+        stale: 10000, // Lock expires after 10 seconds if process crashes
+        retries: {
+          retries: 5,
+          minTimeout: 100,
+          maxTimeout: 500
+        }
+      });
+
       // Atomic write: temp file + rename
+      if (this.fs.existsSync(tempPath)) {
+        this.fs.unlinkSync(tempPath);
+      }
       this.fs.writeFileSync(tempPath, JSON.stringify(data, null, 2), {
         encoding: 'utf-8',
-        mode: 0o644
+        mode: 0o644,
+        flag: 'wx'
       });
       this.fs.renameSync(tempPath, this.filePath);
+    } catch (error) {
+      // Clean up temp file on error
+      if (this.fs.existsSync(tempPath)) {
+        try {
+          this.fs.unlinkSync(tempPath);
+        } catch {
+          // Ignore cleanup errors
+        }
+      }
+      throw error;
     } finally {
-      // Always release lock
-      await release();
+      if (release) {
+        await release();
+      }
     }
   }
 

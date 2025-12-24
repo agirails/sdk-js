@@ -528,7 +528,21 @@ export class ACTPKernel {
    * Get transaction by ID
    */
   async getTransaction(txId: string): Promise<Transaction> {
-    const txData = await this.contract.getTransaction(txId);
+    let txData: any;
+    try {
+      txData = await this.contract.getTransaction(txId);
+    } catch (error: any) {
+      const reason = error?.reason || error?.shortMessage || error?.message || '';
+
+      // Deployed kernel reverts on missing transactions (e.g., "Tx missing")
+      if (typeof reason === 'string' && reason.toLowerCase().includes('tx missing')) {
+        throw new TransactionNotFoundError(txId);
+      }
+
+      throw new Error(
+        `Failed to fetch transaction ${txId}: ${typeof reason === 'string' ? reason : String(reason)}`
+      );
+    }
 
     // Check if transaction exists (createdAt !== 0)
     if (txData.createdAt === 0 || txData.createdAt === 0n) {

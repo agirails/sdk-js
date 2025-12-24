@@ -20,15 +20,19 @@ interface GasOptions {
 /**
  * EscrowVault - Escrow contract wrapper
  *
- * IMPORTANT: Per AIP-3 specification, escrow creation happens atomically
- * inside ACTPKernel.linkEscrow(). This module provides read-only access
- * to escrow state and helper methods for USDC approvals.
+ * IMPORTANT:
+ * - Escrow creation happens atomically inside `ACTPKernel.linkEscrow()`.
+ * - Payout/refund functions are `onlyKernel` on-chain and MUST NOT be called by users.
+ *
+ * This module provides:
+ * - Helper methods for USDC approvals (requester → EscrowVault allowance)
+ * - Read-only access to escrow state (`escrows()` / `remaining()`)
  *
  * Workflow (per AIP-3):
  * 1. Consumer approves USDC to EscrowVault address (use approveToken)
  * 2. Consumer calls ACTPKernel.linkEscrow(txId, escrowVault, escrowId)
- * 3. Kernel internally calls EscrowVault.createEscrow() (onlyKernel modifier)
- * 4. Escrow pulls USDC from consumer and auto-transitions to COMMITTED
+ * 3. Kernel internally calls IEscrowValidator.createEscrow(escrowId, requester, provider, amount)
+ * 4. Escrow pulls USDC from requester
  *
  * Reference: AIP-3 §3.2 (Escrow Linking Workflow), lines 258-336
  */
@@ -52,7 +56,6 @@ export class EscrowVault {
    */
   private getGasBufferMultiplier(operation: string): number {
     const buffers: Record<string, number> = {
-      'releaseEscrow': 1.30,     // 30% - Multi-recipient disbursement
       'approveToken': 1.20       // 20% - Standard ERC20 approval
     };
 
@@ -186,68 +189,48 @@ export class EscrowVault {
    * Get escrow details
    */
   async getEscrow(escrowId: string): Promise<Escrow> {
+    validateTxId(escrowId, 'escrowId');
     const escrowData = await this.contract.escrows(escrowId);
 
     return {
       escrowId,
-      kernel: escrowData.kernel,
-      txId: escrowData.txId,
-      token: escrowData.token,
+      requester: escrowData.requester,
+      provider: escrowData.provider,
       amount: escrowData.amount,
-      beneficiary: escrowData.beneficiary,
-      createdAt: 0, // Not exposed in minimal ABI
-      released: escrowData.released
+      releasedAmount: escrowData.releasedAmount,
+      active: escrowData.active
     };
   }
 
   /**
-   * Get escrow balance
+   * Get escrow remaining balance (amount - releasedAmount)
    */
   async getEscrowBalance(escrowId: string): Promise<bigint> {
-    const escrow = await this.getEscrow(escrowId);
-    return escrow.amount;
+    validateTxId(escrowId, 'escrowId');
+    return await this.contract.remaining(escrowId);
   }
 
   /**
-   * Release escrow to recipients
-   * Note: Only callable by authorized kernel
+   * @deprecated
+   *
+   * Payouts/refunds are executed by ACTPKernel (on-chain) as part of state transitions.
+   * EscrowVault disbursement methods are `onlyKernel` and cannot be called by EOAs.
+   *
+   * Use:
+   * - `BlockchainRuntime.releaseEscrow(txId, attestationUID?)` (recommended)
+   * - or `ACTPKernel.transitionState(txId, State.SETTLED, proof)` (advanced)
    */
   async releaseEscrow(
     escrowId: string,
-    recipients: string[],
-    amounts: bigint[]
+    _recipients: string[],
+    _amounts: bigint[]
   ): Promise<void> {
-    // Input validation
     validateTxId(escrowId, 'escrowId');
-
-    if (recipients.length !== amounts.length) {
-      throw new ValidationError('recipients/amounts', 'Recipients and amounts length mismatch');
-    }
-
-    if (recipients.length === 0) {
-      throw new ValidationError('recipients', 'Must provide at least one recipient');
-    }
-
-    // Validate each recipient and amount
-    recipients.forEach((recipient, i) => {
-      validateAddress(recipient, `recipients[${i}]`);
-      validateAmount(amounts[i], `amounts[${i}]`);
-    });
-
-    try {
-      // ethers v6: use getFunction()
-      const disburseFunc = this.contract.getFunction('disburse');
-
-      // Estimate gas with safety buffer (30% for multi-recipient disbursement)
-      const estimatedGas = await disburseFunc.estimateGas(escrowId, recipients, amounts);
-      const txOptions = this.buildTxOptions(estimatedGas, 'releaseEscrow');
-
-      const tx = await disburseFunc(escrowId, recipients, amounts, txOptions);
-
-      await tx.wait();
-    } catch (error: any) {
-      throw new TransactionRevertedError(error.transactionHash, error.reason || error.message);
-    }
+    throw new ValidationError(
+      'EscrowVault.releaseEscrow',
+      'Escrow payouts are performed by ACTPKernel (onlyKernel). ' +
+        'Use BlockchainRuntime.releaseEscrow(txId, attestationUID?) or ACTPKernel.transitionState(txId, SETTLED).'
+    );
   }
 
   /**

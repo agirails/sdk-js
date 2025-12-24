@@ -420,29 +420,97 @@ export class MessageSigner {
 
   /**
    * Convert DID to Ethereum address
-   * MVP: Simple did:ethr → address conversion
+   *
+   * SECURITY FIX (DID-FORMAT): Handles both DID formats:
+   * - Legacy: did:ethr:<address>
+   * - Canonical (EIP-3770): did:ethr:<chainId>:<address>
+   *
+   * Examples:
+   * - "did:ethr:0x1234...abcd" → "0x1234...abcd"
+   * - "did:ethr:84532:0x1234...abcd" → "0x1234...abcd"
+   * - "0x1234...abcd" → "0x1234...abcd" (raw address passthrough)
    */
   private didToAddress(did: string): string {
-    if (did.startsWith('did:ethr:')) {
-      return did.replace('did:ethr:', '');
+    // Check for DID format first
+    const DID_PREFIX = 'did:ethr:';
+    if (did.startsWith(DID_PREFIX)) {
+      const remainder = did.slice(DID_PREFIX.length);
+
+      // Check if it's canonical format: did:ethr:<chainId>:<address>
+      // chainId is numeric, address starts with 0x
+      const parts = remainder.split(':');
+
+      if (parts.length === 2) {
+        // Canonical format: did:ethr:<chainId>:<address>
+        const [chainIdStr, address] = parts;
+        const chainId = parseInt(chainIdStr, 10);
+
+        if (isNaN(chainId)) {
+          throw new Error(
+            `Invalid DID format: ${did}. ` +
+            `Expected did:ethr:<chainId>:<address> but chainId "${chainIdStr}" is not a number.`
+          );
+        }
+
+        if (!ethers.isAddress(address)) {
+          throw new Error(
+            `Invalid DID format: ${did}. ` +
+            `Expected did:ethr:<chainId>:<address> but "${address}" is not a valid Ethereum address.`
+          );
+        }
+
+        // SECURITY: Optionally validate chainId matches domain chainId
+        // This prevents cross-chain replay attacks where a message signed for one chain
+        // is replayed on another. For now, we just extract the address but log a warning.
+        if (this.domain && this.domain.chainId !== chainId) {
+          console.warn(
+            `[SECURITY WARNING] DID chainId (${chainId}) does not match domain chainId (${this.domain.chainId}). ` +
+            `This could indicate a cross-chain replay attempt. DID: ${did}`
+          );
+        }
+
+        return address;
+      } else if (parts.length === 1 && ethers.isAddress(parts[0])) {
+        // Legacy format: did:ethr:<address>
+        return parts[0];
+      } else {
+        throw new Error(
+          `Invalid DID format: ${did}. ` +
+          `Expected did:ethr:<address> or did:ethr:<chainId>:<address>.`
+        );
+      }
     }
 
-    // If already an address, return as-is
+    // If already an address (raw 0x format), return as-is
     if (ethers.isAddress(did)) {
       return did;
     }
 
-    throw new Error(`Invalid DID format: ${did}`);
+    throw new Error(
+      `Invalid DID format: ${did}. ` +
+      `Expected Ethereum address (0x...) or DID (did:ethr:...).`
+    );
   }
 
   /**
    * Convert Ethereum address to DID
+   *
+   * SECURITY FIX (DID-FORMAT): Now generates canonical DID format
+   * with chainId when domain is initialized: did:ethr:<chainId>:<address>
+   *
+   * Falls back to legacy format if domain not initialized.
    */
   addressToDID(address: string): string {
     if (!ethers.isAddress(address)) {
       throw new Error(`Invalid Ethereum address: ${address}`);
     }
 
+    // Use canonical format with chainId if domain is initialized
+    if (this.domain && this.domain.chainId) {
+      return `did:ethr:${this.domain.chainId}:${address}`;
+    }
+
+    // Fallback to legacy format (backward compatible)
     return `did:ethr:${address}`;
   }
 }

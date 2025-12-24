@@ -3,6 +3,12 @@ import { State, Transaction } from '../types';
 
 /**
  * EventMonitor - Listen to blockchain events
+ *
+ * SECURITY FIX (EVENT-MONITOR): Corrected event parameter order to match ABI.
+ * Per ACTPKernel.json, TransactionCreated signature is:
+ *   (bytes32 indexed transactionId, address indexed requester, address indexed provider, uint256 amount, bytes32 serviceHash)
+ *
+ * Previous code had requester/provider swapped which caused wrong filter results.
  */
 export class EventMonitor {
   constructor(
@@ -55,18 +61,29 @@ export class EventMonitor {
 
   /**
    * Get all transactions for an address
-   * Fixed: Correct filter parameters (txId, provider, requester, amount)
+   *
+   * SECURITY FIX (EVENT-MONITOR): Corrected filter parameter order.
+   * Per ACTPKernel.json ABI, TransactionCreated event signature is:
+   *   (bytes32 indexed transactionId, address indexed requester, address indexed provider, uint256 amount, bytes32 serviceHash)
+   *
+   * Filter order: TransactionCreated(txId, requester, provider)
+   * - To filter by requester: (null, address, null)
+   * - To filter by provider: (null, null, address)
+   *
+   * SECURITY FIX (EVENT-MONITOR): Use getTransaction() instead of transactions()
+   * The kernel contract exposes getTransaction(bytes32) not transactions(bytes32).
    */
   async getTransactionHistory(
     address: string,
     role: 'requester' | 'provider' = 'requester'
   ): Promise<Transaction[]> {
-    // TransactionCreated event signature: (bytes32 indexed txId, address indexed provider, address indexed requester, uint256 amount)
-    // Filter format: TransactionCreated(txId, provider, requester)
+    // TransactionCreated event signature per ABI:
+    // (bytes32 indexed transactionId, address indexed requester, address indexed provider, uint256 amount, bytes32 serviceHash)
+    // Filter format: TransactionCreated(txId, requester, provider)
     const filter =
       role === 'requester'
-        ? this.kernelContract.filters.TransactionCreated(null, null, address) // Match requester
-        : this.kernelContract.filters.TransactionCreated(null, address, null); // Match provider
+        ? this.kernelContract.filters.TransactionCreated(null, address, null) // Match requester (2nd indexed param)
+        : this.kernelContract.filters.TransactionCreated(null, null, address); // Match provider (3rd indexed param)
 
     const events = await this.kernelContract.queryFilter(filter);
 
@@ -77,14 +94,17 @@ export class EventMonitor {
           throw new Error('Event does not contain args (not an EventLog)');
         }
         const txId = (event as EventLog).args?.transactionId;
-        const txData = await this.kernelContract.transactions(txId);
+
+        // SECURITY FIX: Use getTransaction() - the actual ABI function
+        // Previous code called transactions(txId) which doesn't exist in ABI
+        const txData = await this.kernelContract.getTransaction(txId);
 
         return {
-          txId: txData.transactionId,
+          txId: txData.transactionId || txId,
           requester: txData.requester,
           provider: txData.provider,
           amount: txData.amount,
-          state: txData.state as State,
+          state: (typeof txData.state === 'bigint' ? Number(txData.state) : txData.state) as State,
           createdAt: Number(txData.createdAt),
           updatedAt: Number(txData.updatedAt),
           deadline: Number(txData.deadline),
@@ -93,7 +113,8 @@ export class EventMonitor {
           escrowId: txData.escrowId,
           serviceHash: txData.serviceHash,
           attestationUID: txData.attestationUID,
-          metadata: txData.serviceHash,
+          // Use metadata field (quote hash for QUOTED state) if available, fallback to serviceHash
+          metadata: txData.metadata || txData.serviceHash,
           platformFeeBpsLocked: Number(txData.platformFeeBpsLocked)
         };
       })
@@ -102,21 +123,25 @@ export class EventMonitor {
 
   /**
    * Subscribe to transaction creation events
-   * Fixed: Correct event parameter order (txId, provider, requester, amount)
+   *
+   * SECURITY FIX (EVENT-MONITOR): Corrected event parameter order.
+   * Per ACTPKernel.json ABI:
+   *   TransactionCreated(bytes32 indexed transactionId, address indexed requester, address indexed provider, uint256 amount, bytes32 serviceHash)
    */
   onTransactionCreated(
-    callback: (tx: { txId: string; provider: string; requester: string; amount: bigint }) => void
+    callback: (tx: { txId: string; requester: string; provider: string; amount: bigint; serviceHash?: string }) => void
   ): () => void {
     const filter = this.kernelContract.filters.TransactionCreated();
 
-    // Event signature: TransactionCreated(bytes32 indexed txId, address indexed provider, address indexed requester, uint256 amount)
+    // Event signature per ABI: (txId, requester, provider, amount, serviceHash)
     const listener = async (
       txId: string,
-      provider: string,
       requester: string,
-      amount: bigint
+      provider: string,
+      amount: bigint,
+      serviceHash?: string
     ) => {
-      callback({ txId, provider, requester, amount });
+      callback({ txId, requester, provider, amount, serviceHash });
     };
 
     this.kernelContract.on(filter, listener);

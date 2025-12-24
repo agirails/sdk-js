@@ -472,3 +472,217 @@ export const DisputeWindow = {
     return Math.max(0, expiresAt - now);
   },
 };
+
+/**
+ * ============================================================================
+ * Convenience Wrappers for Common Operations
+ * ============================================================================
+ */
+
+/**
+ * Parse USDC amount string to wei (6 decimals)
+ *
+ * Convenience wrapper for USDC.toWei()
+ *
+ * @param amount - Amount in USDC (e.g., "100" or "0.50")
+ * @returns BigInt in wei (e.g., 100000000n for $100)
+ *
+ * @example
+ * ```typescript
+ * parseUSDC("100") // 100_000_000n
+ * parseUSDC("0.50") // 500_000n
+ * parseUSDC(100) // 100_000_000n
+ * ```
+ */
+export function parseUSDC(amount: string | number): bigint {
+  return USDC.toWei(amount);
+}
+
+/**
+ * Format USDC wei to human-readable string
+ *
+ * Convenience wrapper for USDC.fromWei()
+ *
+ * @param wei - Amount in wei (BigInt or string)
+ * @returns Formatted string (e.g., "100.00")
+ *
+ * @example
+ * ```typescript
+ * formatUSDC(100_000_000n) // "100.00"
+ * formatUSDC("100000000") // "100.00"
+ * formatUSDC(500_000n) // "0.50"
+ * ```
+ */
+export function formatUSDC(wei: bigint | string): string {
+  return USDC.fromWei(wei);
+}
+
+/**
+ * Shorten Ethereum address for display
+ *
+ * Convenience wrapper for Address.truncate()
+ *
+ * @param address - Full Ethereum address
+ * @param chars - Characters to show on each side (default: 4)
+ * @returns Shortened address (e.g., "0x1234...abcd")
+ *
+ * @example
+ * ```typescript
+ * shortenAddress("0x1234567890123456789012345678901234567890") // "0x1234...7890"
+ * shortenAddress("0x1234567890123456789012345678901234567890", 6) // "0x123456...567890"
+ * ```
+ */
+export function shortenAddress(address: string, chars: number = 4): string {
+  return Address.truncate(address, chars);
+}
+
+/**
+ * ============================================================================
+ * Service Metadata Utilities
+ *
+ * SECURITY FIX (CRITICAL): ACTPKernel expects bytes32 serviceHash, not raw strings.
+ * These utilities handle proper hashing and encoding of service metadata.
+ * ============================================================================
+ */
+
+/**
+ * Service metadata structure
+ */
+export interface ServiceMetadata {
+  service: string;
+  input?: unknown;
+  version?: string;
+  timestamp?: number;
+}
+
+/**
+ * Service metadata utilities for ACTP transactions
+ *
+ * SECURITY FIX (CRITICAL): The ACTPKernel contract expects a bytes32 serviceHash,
+ * not a raw JSON string. This utility properly hashes metadata before on-chain calls.
+ */
+export const ServiceHash = {
+  /**
+   * Create canonical JSON from service metadata
+   *
+   * SECURITY: Uses deterministic key ordering to ensure consistent hashes
+   *
+   * @param metadata - Service metadata object
+   * @returns Canonical JSON string
+   */
+  toCanonical(metadata: ServiceMetadata): string {
+    // Sort keys for deterministic output
+    const canonical = {
+      service: metadata.service,
+      ...(metadata.input !== undefined && { input: metadata.input }),
+      ...(metadata.version !== undefined && { version: metadata.version }),
+      ...(metadata.timestamp !== undefined && { timestamp: metadata.timestamp }),
+    };
+    return JSON.stringify(canonical);
+  },
+
+  /**
+   * Hash service metadata to bytes32 using keccak256
+   *
+   * SECURITY FIX (CRITICAL): This is what should be passed to ACTPKernel.createTransaction()
+   *
+   * @param metadata - Service metadata (string or object)
+   * @returns bytes32 hash string (0x-prefixed, 64 hex chars)
+   *
+   * @example
+   * ```typescript
+   * const hash = ServiceHash.hash({ service: 'echo', input: 'hello' });
+   * // Returns: 0x1234...abcd (bytes32)
+   * ```
+   */
+  hash(metadata: ServiceMetadata | string): string {
+    // Dynamic import to avoid circular dependencies
+    const { keccak256, toUtf8Bytes } = require('ethers');
+
+    const canonical = typeof metadata === 'string'
+      ? metadata
+      : ServiceHash.toCanonical(metadata);
+
+    return keccak256(toUtf8Bytes(canonical));
+  },
+
+  /**
+   * Create service metadata from legacy format
+   *
+   * Parses the old "service:X;input:Y" format into structured metadata
+   *
+   * @param legacyFormat - Legacy service description string
+   * @returns Parsed ServiceMetadata or null if invalid
+   */
+  fromLegacy(legacyFormat: string): ServiceMetadata | null {
+    // Parse "service:NAME;input:JSON" format
+    const serviceMatch = legacyFormat.match(/^service:([^;]+)/);
+    if (!serviceMatch) return null;
+
+    const service = serviceMatch[1];
+
+    const inputMatch = legacyFormat.match(/;input:(.+)$/);
+    let input: unknown = undefined;
+
+    if (inputMatch) {
+      try {
+        input = JSON.parse(inputMatch[1]);
+      } catch {
+        // If not valid JSON, use as string
+        input = inputMatch[1];
+      }
+    }
+
+    return { service, input };
+  },
+
+  /**
+   * Extract service name from metadata hash (requires off-chain lookup)
+   *
+   * NOTE: The hash cannot be reversed. This is a helper for when you have
+   * both the hash and the original metadata stored off-chain.
+   *
+   * @param metadata - Original metadata
+   * @returns Service name
+   */
+  getServiceName(metadata: ServiceMetadata | string): string {
+    if (typeof metadata === 'string') {
+      const parsed = ServiceHash.fromLegacy(metadata);
+      return parsed?.service || 'unknown';
+    }
+    return metadata.service;
+  },
+
+  /**
+   * Validate bytes32 format
+   *
+   * @param value - Value to check
+   * @returns true if valid bytes32 format
+   */
+  isValidHash(value: string): boolean {
+    return /^0x[0-9a-fA-F]{64}$/.test(value);
+  },
+
+  /**
+   * Zero hash (empty service metadata)
+   */
+  ZERO: '0x0000000000000000000000000000000000000000000000000000000000000000',
+};
+
+/**
+ * Hash service description for on-chain storage
+ *
+ * Convenience function for ServiceHash.hash()
+ *
+ * @param service - Service name
+ * @param input - Input data (optional)
+ * @returns bytes32 hash
+ *
+ * @example
+ * ```typescript
+ * const hash = hashServiceMetadata('echo', { text: 'hello' });
+ * ```
+ */
+export function hashServiceMetadata(service: string, input?: unknown): string {
+  return ServiceHash.hash({ service, input });
+}

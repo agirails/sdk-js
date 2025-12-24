@@ -2,25 +2,26 @@
  * Escrow creation parameters
  */
 export interface CreateEscrowParams {
-  kernelAddress: string;
-  txId: string;
-  token: string;
+  /** Escrow identifier (bytes32). In ACTP standard this is typically the txId. */
+  escrowId: string;
+  /** Consumer/requester who funds the escrow */
+  requester: string;
+  /** Provider who receives payout on settlement */
+  provider: string;
+  /** Amount locked in escrow (USDC wei, 6 decimals) */
   amount: bigint;
-  beneficiary: string;
 }
 
 /**
- * Escrow state
+ * Escrow state (matches on-chain EscrowVault.EscrowData struct)
  */
 export interface Escrow {
   escrowId: string;
-  kernel: string;
-  txId: string;
-  token: string;
+  requester: string;
+  provider: string;
   amount: bigint;
-  beneficiary: string;
-  createdAt: number;
-  released: boolean;
+  releasedAmount: bigint;
+  active: boolean;
 }
 
 

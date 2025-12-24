@@ -59,6 +59,24 @@ export interface IPFSClientConfig {
    * Default: 60000 (60 seconds)
    */
   timeout?: number;
+
+  /**
+   * SECURITY FIX (MEDIUM-3): Maximum content size in bytes
+   * Default: 50MB (50 * 1024 * 1024)
+   */
+  maxSize?: number;
+
+  /**
+   * SECURITY FIX (MEDIUM-3): Allowed URL protocols
+   * Default: ['http:', 'https:'] (http for localhost, https for remote)
+   */
+  allowedProtocols?: string[];
+
+  /**
+   * SECURITY FIX (MEDIUM-3): Allow localhost URLs
+   * Default: true (required for local IPFS daemon)
+   */
+  allowLocalhost?: boolean;
 }
 
 /**
@@ -81,21 +99,45 @@ export const IPFS_CONFIGS = {
 /**
  * IPFS HTTP Client Implementation
  * Uses ipfs-http-client library
+ *
+ * SECURITY FIX (MEDIUM-3): Now includes URL and size validation
  */
 export class IPFSHTTPClientImpl implements IPFSClient {
   private client: IPFSHTTPClient;
-  private config: IPFSClientConfig;
+  private config: Required<IPFSClientConfig>;
+
+  // SECURITY FIX (MEDIUM-3): Default security settings
+  private static readonly DEFAULT_MAX_SIZE = 50 * 1024 * 1024; // 50MB
+  private static readonly DEFAULT_ALLOWED_PROTOCOLS = ['http:', 'https:'];
+  private static readonly BLOCKED_HOSTS = [
+    'metadata.google.internal',
+    '169.254.169.254',
+    'metadata.aws.internal',
+  ];
 
   /**
    * Create IPFS client
+   *
+   * SECURITY FIX (MEDIUM-3): Validates URL and adds size limits
+   *
    * @param config - IPFS client configuration
+   * @throws Error if URL is invalid or blocked
    */
   constructor(config: IPFSClientConfig = {}) {
+    const url = config.url || 'http://localhost:5001';
+
+    // SECURITY FIX (MEDIUM-3): Validate URL
+    this.validateUrl(url, config.allowLocalhost ?? true, config.allowedProtocols);
+
     this.config = {
-      url: config.url || 'http://localhost:5001',
+      url,
       timeout: config.timeout || 60000,
-      ...config
-    };
+      maxSize: config.maxSize || IPFSHTTPClientImpl.DEFAULT_MAX_SIZE,
+      allowedProtocols: config.allowedProtocols || IPFSHTTPClientImpl.DEFAULT_ALLOWED_PROTOCOLS,
+      allowLocalhost: config.allowLocalhost ?? true,
+      auth: config.auth,
+      headers: config.headers,
+    } as Required<IPFSClientConfig>;
 
     const options: Options = {
       url: this.config.url,
@@ -118,13 +160,74 @@ export class IPFSHTTPClientImpl implements IPFSClient {
   }
 
   /**
+   * SECURITY FIX (MEDIUM-3): Validate IPFS endpoint URL
+   */
+  private validateUrl(
+    url: string,
+    allowLocalhost: boolean,
+    allowedProtocols?: string[]
+  ): void {
+    let parsed: URL;
+
+    try {
+      parsed = new URL(url);
+    } catch {
+      throw new Error(`Invalid IPFS endpoint URL: ${url}`);
+    }
+
+    const protocols = allowedProtocols || IPFSHTTPClientImpl.DEFAULT_ALLOWED_PROTOCOLS;
+    if (!protocols.includes(parsed.protocol)) {
+      throw new Error(
+        `IPFS endpoint protocol "${parsed.protocol}" not allowed. ` +
+        `Allowed protocols: ${protocols.join(', ')}`
+      );
+    }
+
+    const hostname = parsed.hostname.toLowerCase();
+
+    // Check blocked hosts (cloud metadata endpoints)
+    if (IPFSHTTPClientImpl.BLOCKED_HOSTS.includes(hostname)) {
+      throw new Error(
+        `IPFS endpoint hostname "${hostname}" is blocked for security reasons.`
+      );
+    }
+
+    // Check localhost
+    const isLocalhost = ['localhost', '127.0.0.1', '0.0.0.0', '[::1]'].includes(hostname);
+    if (isLocalhost && !allowLocalhost) {
+      throw new Error(
+        `Localhost IPFS endpoints are disabled. Set allowLocalhost: true to enable.`
+      );
+    }
+
+    // For remote hosts, require HTTPS
+    if (!isLocalhost && parsed.protocol !== 'https:') {
+      console.warn(
+        `[SECURITY WARNING] Using non-HTTPS protocol "${parsed.protocol}" for remote IPFS endpoint "${hostname}". ` +
+        `This may expose data in transit. Consider using HTTPS.`
+      );
+    }
+  }
+
+  /**
    * Upload data to IPFS
+   *
+   * SECURITY FIX (MEDIUM-3): Validates size before upload
+   *
    * @param data - JSON string or buffer
    * @returns CIDv1 string (base32)
+   * @throws Error if data exceeds maxSize
    */
   async add(data: string | Buffer): Promise<string> {
     try {
       const content = typeof data === 'string' ? Buffer.from(data, 'utf-8') : data;
+
+      // SECURITY FIX (MEDIUM-3): Check size before upload
+      if (content.length > this.config.maxSize) {
+        throw new Error(
+          `Content too large: ${content.length} bytes exceeds maximum of ${this.config.maxSize} bytes`
+        );
+      }
 
       const result = await this.client.add(content, {
         cidVersion: 1, // Use CIDv1 (base32)
@@ -153,19 +256,33 @@ export class IPFSHTTPClientImpl implements IPFSClient {
 
   /**
    * Retrieve content from IPFS
+   *
+   * SECURITY FIX (MEDIUM-3): Validates size during retrieval
+   *
    * @param cid - IPFS CID
    * @returns Content as string
+   * @throws Error if content exceeds maxSize
    */
   async get(cid: string): Promise<string> {
     try {
       const chunks: Uint8Array[] = [];
+      let totalLength = 0;
 
       for await (const chunk of this.client.cat(cid)) {
+        totalLength += chunk.length;
+
+        // SECURITY FIX (MEDIUM-3): Check size during streaming to prevent DoS
+        if (totalLength > this.config.maxSize) {
+          throw new Error(
+            `Content too large: ${totalLength}+ bytes exceeds maximum of ${this.config.maxSize} bytes. ` +
+            `Consider increasing maxSize in IPFSClientConfig if this is expected.`
+          );
+        }
+
         chunks.push(chunk);
       }
 
       // Concatenate all chunks
-      const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
       const result = new Uint8Array(totalLength);
       let offset = 0;
 

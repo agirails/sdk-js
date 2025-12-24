@@ -12,7 +12,8 @@ export class ACTPError extends Error {
   ) {
     super(message);
     this.name = 'ACTPError';
-    Object.setPrototypeOf(this, ACTPError.prototype);
+    // Ensure `instanceof` works for subclasses (TS + Error inheritance quirk)
+    Object.setPrototypeOf(this, new.target.prototype);
   }
 }
 
@@ -296,6 +297,131 @@ export class QueryCapExceededError extends ACTPError {
       }
     );
     this.name = 'QueryCapExceededError';
+  }
+}
+
+/**
+ * Agent/Job Errors (Basic & Standard API)
+ */
+
+/**
+ * No provider found for the requested service
+ *
+ * Thrown when request() cannot find any provider offering the service.
+ */
+export class NoProviderFoundError extends ACTPError {
+  constructor(service: string, details?: any) {
+    super(
+      `No provider found for service "${service}". ` +
+        `Ensure at least one agent is providing this service.`,
+      'NO_PROVIDER_FOUND',
+      undefined,
+      { service, ...details }
+    );
+    this.name = 'NoProviderFoundError';
+  }
+}
+
+/**
+ * Request timeout error
+ *
+ * Thrown when provider doesn't respond within the timeout period.
+ */
+export class TimeoutError extends ACTPError {
+  constructor(timeoutMs: number, operation?: string) {
+    super(
+      `Operation timed out after ${timeoutMs}ms${operation ? ` (${operation})` : ''}`,
+      'TIMEOUT',
+      undefined,
+      { timeoutMs, operation }
+    );
+    this.name = 'TimeoutError';
+  }
+}
+
+/**
+ * Provider rejected the job
+ *
+ * Thrown when provider explicitly rejects a job (e.g., budget too low).
+ */
+export class ProviderRejectedError extends ACTPError {
+  constructor(provider: string, reason?: string, details?: any) {
+    super(
+      `Provider ${provider} rejected the job${reason ? `: ${reason}` : ''}`,
+      'PROVIDER_REJECTED',
+      undefined,
+      { provider, reason, ...details }
+    );
+    this.name = 'ProviderRejectedError';
+  }
+}
+
+/**
+ * Provider failed to deliver result
+ *
+ * Thrown when provider transitions to DELIVERED but doesn't provide valid result.
+ */
+export class DeliveryFailedError extends ACTPError {
+  constructor(txId: string, reason?: string) {
+    super(
+      `Delivery failed for transaction ${txId}${reason ? `: ${reason}` : ''}`,
+      'DELIVERY_FAILED',
+      undefined,
+      { txId, reason }
+    );
+    this.name = 'DeliveryFailedError';
+  }
+}
+
+/**
+ * Dispute raised on transaction
+ *
+ * Thrown when requester raises a dispute on a delivered result.
+ */
+export class DisputeRaisedError extends ACTPError {
+  constructor(txId: string, reason?: string) {
+    super(
+      `Dispute raised for transaction ${txId}${reason ? `: ${reason}` : ''}`,
+      'DISPUTE_RAISED',
+      undefined,
+      { txId, reason }
+    );
+    this.name = 'DisputeRaisedError';
+  }
+}
+
+/**
+ * Service configuration error
+ *
+ * Thrown when Agent.provide() is called with invalid service configuration.
+ */
+export class ServiceConfigError extends ACTPError {
+  constructor(field: string, message: string, details?: any) {
+    super(
+      `Service configuration error (${field}): ${message}`,
+      'SERVICE_CONFIG_ERROR',
+      undefined,
+      { field, ...details }
+    );
+    this.name = 'ServiceConfigError';
+  }
+}
+
+/**
+ * Agent lifecycle error
+ *
+ * Thrown when invalid agent lifecycle operations are attempted
+ * (e.g., calling start() on already running agent).
+ */
+export class AgentLifecycleError extends ACTPError {
+  constructor(currentState: string, attemptedAction: string) {
+    super(
+      `Cannot ${attemptedAction} agent in ${currentState} state`,
+      'AGENT_LIFECYCLE_ERROR',
+      undefined,
+      { currentState, attemptedAction }
+    );
+    this.name = 'AgentLifecycleError';
   }
 }
 

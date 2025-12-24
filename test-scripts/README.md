@@ -151,6 +151,6 @@ Valid transitions:
 - 4→5, 4→6
 - 6→5
 
-## Support
+## Contact
 
-For issues, contact `damir@agirails.io` or `justin@agirails.io`.
+For all inquiries please visit our [Contact page](https://www.agirails.io/contact)

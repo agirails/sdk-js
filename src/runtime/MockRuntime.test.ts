@@ -703,7 +703,7 @@ describe('MockRuntime', () => {
         const txId = await runtime.createTransaction(createTxParams());
 
         // Advance time past deadline
-        runtime.time.advanceTime(100000); // Way past 24 hours
+        await runtime.time.advanceTime(100000); // Way past 24 hours
 
         await expect(runtime.linkEscrow(txId, '1000000')).rejects.toThrow(
           DeadlinePassedError
@@ -1564,7 +1564,7 @@ describe('MockRuntime', () => {
       await runtime.transitionState(txId, 'DELIVERED');
 
       // Advance time past dispute window
-      runtime.time.advanceTime(3601); // 1 hour + 1 second
+      await runtime.time.advanceTime(3601); // 1 hour + 1 second
 
       // Now release should succeed
       await runtime.releaseEscrow(escrowId);
