@@ -98,16 +98,15 @@ function validateStateDirectory(stateDirectory: string): void {
   const homeDir = os.homedir();
   const cwd = process.cwd();
 
-  // Normalize paths for comparison (handle trailing slashes)
-  const normalizedResolved = effectivePath.replace(/\/$/, '');
-  const normalizedHome = homeDir.replace(/\/$/, '');
-  const normalizedCwd = cwd.replace(/\/$/, '');
+  // SECURITY FIX (C-5): Use path.relative() instead of startsWith()
+  // to handle case-insensitive filesystems (macOS, Windows) correctly.
+  // path.relative() returns a path starting with '..' if target is outside base.
+  const relativeToHome = path.relative(homeDir, effectivePath);
+  const relativeToCwd = path.relative(cwd, effectivePath);
 
-  // Check if resolved path is within safe boundaries
-  const isUnderHome = normalizedResolved === normalizedHome ||
-                      normalizedResolved.startsWith(normalizedHome + path.sep);
-  const isUnderCwd = normalizedResolved === normalizedCwd ||
-                     normalizedResolved.startsWith(normalizedCwd + path.sep);
+  // Check if path escapes the boundary (starts with '..' or is absolute)
+  const isUnderHome = !relativeToHome.startsWith('..') && !path.isAbsolute(relativeToHome);
+  const isUnderCwd = !relativeToCwd.startsWith('..') && !path.isAbsolute(relativeToCwd);
 
   if (!isUnderHome && !isUnderCwd) {
     throw new Error(
