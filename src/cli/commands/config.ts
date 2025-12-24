@@ -50,11 +50,12 @@ function createConfigShowCommand(): Command {
       try {
         const config = loadConfig();
 
-        // Mask private key if present
+        // SECURITY FIX (C-1): Mask private key - show only last 4 chars
+        // Previous code showed 14 chars which reduces keyspace significantly
         const displayConfig = {
           ...config,
           privateKey: config.privateKey
-            ? config.privateKey.slice(0, 10) + '...' + config.privateKey.slice(-4)
+            ? '****' + config.privateKey.slice(-4)
             : undefined,
         };
 
