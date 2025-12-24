@@ -1,0 +1,30 @@
+# Test files
+**/*.test.ts
+**/*.test.js
+**/*.spec.ts
+**/*.spec.js
+
+# Test directories
+test-scripts/
+examples/
+coverage/
+__tests__/
+
+# Development files
+.actp/
+.tmp-*/
+*.log
+
+# Source maps in src (keep in dist)
+src/**/*.map
+
+# Config files
+.eslintrc*
+.prettierrc*
+jest.config.*
+tsconfig.json
+hardhat.config.*
+
+# IDE
+.vscode/
+.idea/
