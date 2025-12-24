@@ -15,6 +15,10 @@ __tests__/
 .tmp-*/
 *.log
 
+# Environment files (SECURITY: never publish secrets)
+.env
+.env.*
+
 # Source maps in src (keep in dist)
 src/**/*.map
 
