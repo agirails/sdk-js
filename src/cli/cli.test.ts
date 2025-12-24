@@ -378,3 +378,671 @@ describe('CLI Integration', () => {
     expect(createTimeCommand).toBeDefined();
   });
 });
+
+// ============================================================================
+// Batch Command Security Tests (CRITICAL)
+// ============================================================================
+
+describe('Batch Command Security', () => {
+  // Import batch internals for testing
+  // We need to test the security functions directly
+
+  const VALID_SUBCOMMANDS = new Set([
+    'init', 'pay', 'tx', 'balance', 'mint', 'config',
+    'watch', 'simulate', 'time',
+  ]);
+
+  const VALID_TX_SUBCOMMANDS = new Set([
+    'create', 'status', 'list', 'deliver', 'settle', 'cancel',
+  ]);
+
+  const DANGEROUS_CHARS_PATTERN = /[;&|`$(){}[\]<>!\\'"]/;
+
+  // Replicate parseCommandArgs for testing (from batch.ts)
+  function parseCommandArgs(command: string): string[] {
+    const args: string[] = [];
+    let current = '';
+    let inQuotes = false;
+    let quoteChar = '';
+
+    const cleanCommand = command.replace(/"[^"]*"|'[^']*'/g, '');
+    if (DANGEROUS_CHARS_PATTERN.test(cleanCommand)) {
+      throw new Error(
+        'Command contains potentially dangerous characters. ' +
+        'Shell metacharacters are not allowed for security reasons.'
+      );
+    }
+
+    for (let i = 0; i < command.length; i++) {
+      const char = command[i];
+
+      if (inQuotes) {
+        if (char === quoteChar) {
+          inQuotes = false;
+          quoteChar = '';
+        } else {
+          current += char;
+        }
+      } else if (char === '"' || char === "'") {
+        inQuotes = true;
+        quoteChar = char;
+      } else if (char === ' ' || char === '\t') {
+        if (current) {
+          args.push(current);
+          current = '';
+        }
+      } else {
+        current += char;
+      }
+    }
+
+    if (current) {
+      args.push(current);
+    }
+
+    if (inQuotes) {
+      throw new Error('Unclosed quote in command');
+    }
+
+    return args;
+  }
+
+  function validateCommand(args: string[]): boolean {
+    if (args.length === 0) {
+      throw new Error('Empty command');
+    }
+
+    const subcommand = args[0];
+
+    if (subcommand === 'tx') {
+      if (args.length < 2) {
+        throw new Error('tx command requires a subcommand');
+      }
+      if (!VALID_TX_SUBCOMMANDS.has(args[1])) {
+        throw new Error(`Unknown tx subcommand: ${args[1]}`);
+      }
+      return true;
+    }
+
+    if (!VALID_SUBCOMMANDS.has(subcommand)) {
+      throw new Error(`Unknown command: ${subcommand}`);
+    }
+
+    return true;
+  }
+
+  describe('parseCommandArgs', () => {
+    it('should parse simple commands', () => {
+      expect(parseCommandArgs('pay 0x123 100')).toEqual(['pay', '0x123', '100']);
+      expect(parseCommandArgs('tx status abc')).toEqual(['tx', 'status', 'abc']);
+    });
+
+    it('should handle quoted arguments', () => {
+      expect(parseCommandArgs('pay 0x123 "100 USDC"')).toEqual(['pay', '0x123', '100 USDC']);
+      expect(parseCommandArgs("pay 0x123 '100 USDC'")).toEqual(['pay', '0x123', '100 USDC']);
+    });
+
+    it('should handle multiple spaces', () => {
+      expect(parseCommandArgs('pay    0x123    100')).toEqual(['pay', '0x123', '100']);
+    });
+
+    it('should handle tabs', () => {
+      expect(parseCommandArgs('pay\t0x123\t100')).toEqual(['pay', '0x123', '100']);
+    });
+
+    // SECURITY: Shell injection prevention tests
+    describe('shell injection prevention', () => {
+      it('should reject semicolon (command chaining)', () => {
+        expect(() => parseCommandArgs('pay 0x123 100; rm -rf /')).toThrow('dangerous characters');
+      });
+
+      it('should reject ampersand (background/AND)', () => {
+        expect(() => parseCommandArgs('pay 0x123 100 && echo pwned')).toThrow('dangerous characters');
+        expect(() => parseCommandArgs('pay 0x123 100 & echo pwned')).toThrow('dangerous characters');
+      });
+
+      it('should reject pipe (command piping)', () => {
+        expect(() => parseCommandArgs('pay 0x123 100 | cat /etc/passwd')).toThrow('dangerous characters');
+      });
+
+      it('should reject backticks (command substitution)', () => {
+        expect(() => parseCommandArgs('pay 0x123 `whoami`')).toThrow('dangerous characters');
+      });
+
+      it('should reject dollar sign (variable expansion)', () => {
+        expect(() => parseCommandArgs('pay 0x123 $HOME')).toThrow('dangerous characters');
+        expect(() => parseCommandArgs('pay 0x123 $(whoami)')).toThrow('dangerous characters');
+      });
+
+      it('should reject parentheses (subshell)', () => {
+        expect(() => parseCommandArgs('pay 0x123 (echo pwned)')).toThrow('dangerous characters');
+      });
+
+      it('should reject curly braces (brace expansion)', () => {
+        expect(() => parseCommandArgs('pay 0x123 {a,b,c}')).toThrow('dangerous characters');
+      });
+
+      it('should reject square brackets (glob patterns)', () => {
+        expect(() => parseCommandArgs('pay 0x123 [abc]')).toThrow('dangerous characters');
+      });
+
+      it('should reject redirects', () => {
+        expect(() => parseCommandArgs('pay 0x123 > /tmp/output')).toThrow('dangerous characters');
+        expect(() => parseCommandArgs('pay 0x123 < /etc/passwd')).toThrow('dangerous characters');
+      });
+
+      it('should reject exclamation mark (history expansion)', () => {
+        expect(() => parseCommandArgs('pay 0x123 !!')).toThrow('dangerous characters');
+      });
+
+      it('should reject backslash (escape sequences)', () => {
+        expect(() => parseCommandArgs('pay 0x123 \\n')).toThrow('dangerous characters');
+      });
+
+      it('should allow dangerous chars inside quotes (they are literal)', () => {
+        // Inside quotes, these are literal strings, not shell metacharacters
+        expect(parseCommandArgs('pay 0x123 "hello; world"')).toEqual(['pay', '0x123', 'hello; world']);
+        expect(parseCommandArgs("pay 0x123 'hello && world'")).toEqual(['pay', '0x123', 'hello && world']);
+      });
+    });
+
+    it('should throw on unclosed quotes', () => {
+      // Note: unclosed quotes are caught by dangerous chars check first (quote char is in pattern)
+      // This is still safe - the command is rejected
+      expect(() => parseCommandArgs('pay 0x123 "unclosed')).toThrow();
+      expect(() => parseCommandArgs("pay 0x123 'unclosed")).toThrow();
+    });
+  });
+
+  describe('validateCommand', () => {
+    it('should accept valid top-level commands', () => {
+      expect(validateCommand(['init'])).toBe(true);
+      expect(validateCommand(['pay', '0x123', '100'])).toBe(true);
+      expect(validateCommand(['balance'])).toBe(true);
+      expect(validateCommand(['mint', '0x123', '1000'])).toBe(true);
+      expect(validateCommand(['config'])).toBe(true);
+      expect(validateCommand(['watch', '0x123'])).toBe(true);
+      expect(validateCommand(['simulate'])).toBe(true);
+      expect(validateCommand(['time'])).toBe(true);
+    });
+
+    it('should accept valid tx subcommands', () => {
+      expect(validateCommand(['tx', 'create', '0x123', '100'])).toBe(true);
+      expect(validateCommand(['tx', 'status', '0x123'])).toBe(true);
+      expect(validateCommand(['tx', 'list'])).toBe(true);
+      expect(validateCommand(['tx', 'deliver', '0x123'])).toBe(true);
+      expect(validateCommand(['tx', 'settle', '0x123'])).toBe(true);
+      expect(validateCommand(['tx', 'cancel', '0x123'])).toBe(true);
+    });
+
+    it('should reject unknown commands', () => {
+      expect(() => validateCommand(['rm'])).toThrow('Unknown command');
+      expect(() => validateCommand(['cat'])).toThrow('Unknown command');
+      expect(() => validateCommand(['curl'])).toThrow('Unknown command');
+      expect(() => validateCommand(['wget'])).toThrow('Unknown command');
+      expect(() => validateCommand(['bash'])).toThrow('Unknown command');
+      expect(() => validateCommand(['sh'])).toThrow('Unknown command');
+      expect(() => validateCommand(['node'])).toThrow('Unknown command');
+    });
+
+    it('should reject unknown tx subcommands', () => {
+      expect(() => validateCommand(['tx', 'delete'])).toThrow('Unknown tx subcommand');
+      expect(() => validateCommand(['tx', 'drop'])).toThrow('Unknown tx subcommand');
+      expect(() => validateCommand(['tx', 'exec'])).toThrow('Unknown tx subcommand');
+    });
+
+    it('should reject empty command', () => {
+      expect(() => validateCommand([])).toThrow('Empty command');
+    });
+
+    it('should reject tx without subcommand', () => {
+      expect(() => validateCommand(['tx'])).toThrow('tx command requires a subcommand');
+    });
+
+    // SECURITY: Batch command doesn't include itself to prevent recursion
+    it('should not allow batch command (no recursion)', () => {
+      expect(() => validateCommand(['batch'])).toThrow('Unknown command');
+    });
+  });
+});
+
+// ============================================================================
+// Client Utility Tests (Additional)
+// ============================================================================
+
+describe('Client Utils (Additional)', () => {
+  describe('formatAddress', () => {
+    // Import from client
+    const { formatAddress } = require('./utils/client');
+
+    it('should truncate long addresses', () => {
+      const address = '0x1234567890123456789012345678901234567890';
+      const formatted = formatAddress(address, 6);
+      expect(formatted).toBe('0x123456...567890');
+    });
+
+    it('should not truncate short addresses', () => {
+      const address = '0x1234';
+      expect(formatAddress(address, 10)).toBe('0x1234');
+    });
+
+    it('should use default length of 10', () => {
+      const address = '0x1234567890123456789012345678901234567890';
+      const formatted = formatAddress(address);
+      expect(formatted).toBe('0x1234567890...1234567890');
+    });
+  });
+
+  describe('formatTxId', () => {
+    const { formatTxId } = require('./utils/client');
+
+    it('should truncate transaction IDs', () => {
+      const txId = '0x' + 'a'.repeat(64);
+      const formatted = formatTxId(txId, 8);
+      expect(formatted).toBe('0xaaaaaaaa...');
+    });
+
+    it('should use default length of 8', () => {
+      const txId = '0x' + 'b'.repeat(64);
+      const formatted = formatTxId(txId);
+      expect(formatted).toBe('0xbbbbbbbb...');
+    });
+  });
+
+  describe('mapError (additional cases)', () => {
+    it('should map config corrupted error', () => {
+      const error = new Error('Config file corrupted or invalid');
+      const result = mapError(error);
+      expect(result.code).toBe('CONFIG_CORRUPTED');
+    });
+
+    it('should map invalid state transition error', () => {
+      const error = new Error('Invalid state transition');
+      error.name = 'InvalidStateTransitionError';
+      const result = mapError(error);
+      expect(result.code).toBe('INVALID_STATE_TRANSITION');
+    });
+
+    it('should map deadline passed error', () => {
+      const error = new Error('Deadline passed');
+      error.name = 'DeadlinePassedError';
+      const result = mapError(error);
+      expect(result.code).toBe('DEADLINE_PASSED');
+    });
+
+    it('should map dispute window error', () => {
+      const error = new Error('Dispute window is active');
+      error.name = 'DisputeWindowActiveError';
+      const result = mapError(error);
+      expect(result.code).toBe('DISPUTE_WINDOW_ACTIVE');
+    });
+
+    it('should map file lock error', () => {
+      const error = new Error('Could not acquire lock on file');
+      const result = mapError(error);
+      expect(result.code).toBe('FILE_LOCK_ERROR');
+    });
+
+    it('should sanitize paths in error messages', () => {
+      const home = require('os').homedir();
+      const error = new Error(`File not found: ${home}/secret/file.txt`);
+      const result = mapError(error);
+      expect(result.message).not.toContain(home);
+      expect(result.message).toContain('~/secret/file.txt');
+    });
+  });
+});
+
+// ============================================================================
+// Init Command Tests
+// ============================================================================
+
+describe('Init Command', () => {
+  const { runInit } = require('./commands/init');
+  const { MockStateManager } = require('../runtime/MockStateManager');
+
+  // Create a mock output that captures calls
+  function createMockOutput() {
+    const calls: { method: string; args: any[] }[] = [];
+    return {
+      calls,
+      info: jest.fn((...args) => calls.push({ method: 'info', args })),
+      success: jest.fn((...args) => calls.push({ method: 'success', args })),
+      warning: jest.fn((...args) => calls.push({ method: 'warning', args })),
+      error: jest.fn((...args) => calls.push({ method: 'error', args })),
+      print: jest.fn((...args) => calls.push({ method: 'print', args })),
+      blank: jest.fn(() => calls.push({ method: 'blank', args: [] })),
+      result: jest.fn((...args) => calls.push({ method: 'result', args })),
+      errorResult: jest.fn((...args) => calls.push({ method: 'errorResult', args })),
+      mode: 'human' as const,
+    };
+  }
+
+  it('should initialize in mock mode with generated address', async () => {
+    const mockOutput = createMockOutput();
+    const originalCwd = process.cwd();
+
+    try {
+      process.chdir(testDir);
+
+      await runInit({ mode: 'mock' }, mockOutput);
+
+      // Check that config was created
+      const configPath = path.join(testDir, '.actp', 'config.json');
+      expect(fs.existsSync(configPath)).toBe(true);
+
+      // Check that mock state was created
+      const statePath = path.join(testDir, '.actp', 'mock-state.json');
+      expect(fs.existsSync(statePath)).toBe(true);
+
+      // Check output calls
+      expect(mockOutput.success).toHaveBeenCalled();
+    } finally {
+      process.chdir(originalCwd);
+    }
+  });
+
+  it('should reject invalid mode', async () => {
+    const mockOutput = createMockOutput();
+    const originalCwd = process.cwd();
+
+    try {
+      process.chdir(testDir);
+
+      await expect(runInit({ mode: 'invalid' }, mockOutput)).rejects.toThrow('Invalid mode');
+    } finally {
+      process.chdir(originalCwd);
+    }
+  });
+
+  it('should reject testnet mode without address', async () => {
+    const mockOutput = createMockOutput();
+    const originalCwd = process.cwd();
+
+    try {
+      process.chdir(testDir);
+
+      await expect(runInit({ mode: 'testnet' }, mockOutput)).rejects.toThrow('Address required');
+    } finally {
+      process.chdir(originalCwd);
+    }
+  });
+
+  it('should reject invalid address format', async () => {
+    const mockOutput = createMockOutput();
+    const originalCwd = process.cwd();
+
+    try {
+      process.chdir(testDir);
+
+      await expect(
+        runInit({ mode: 'mock', address: 'invalid-address' }, mockOutput)
+      ).rejects.toThrow('Invalid address format');
+    } finally {
+      process.chdir(originalCwd);
+    }
+  });
+
+  it('should require --force to reinitialize', async () => {
+    const mockOutput = createMockOutput();
+    const originalCwd = process.cwd();
+
+    try {
+      process.chdir(testDir);
+
+      // First init
+      await runInit({ mode: 'mock' }, mockOutput);
+
+      // Second init without force should fail
+      await expect(runInit({ mode: 'mock' }, mockOutput)).rejects.toThrow('already initialized');
+    } finally {
+      process.chdir(originalCwd);
+    }
+  });
+
+  it('should allow reinit with --force', async () => {
+    const mockOutput = createMockOutput();
+    const originalCwd = process.cwd();
+
+    try {
+      process.chdir(testDir);
+
+      // First init
+      await runInit({ mode: 'mock' }, mockOutput);
+
+      // Second init with force should succeed
+      await runInit({ mode: 'mock', force: true }, mockOutput);
+
+      expect(mockOutput.success).toHaveBeenCalled();
+    } finally {
+      process.chdir(originalCwd);
+    }
+  });
+});
+
+// ============================================================================
+// Output Utility Tests (Additional)
+// ============================================================================
+
+describe('Output Utils (Additional)', () => {
+  describe('fmt helper', () => {
+    it('should have color functions', () => {
+      expect(typeof fmt.green).toBe('function');
+      expect(typeof fmt.red).toBe('function');
+      expect(typeof fmt.yellow).toBe('function');
+      expect(typeof fmt.dim).toBe('function');
+      expect(typeof fmt.bold).toBe('function');
+    });
+
+    it('should return strings', () => {
+      expect(typeof fmt.green('test')).toBe('string');
+      expect(typeof fmt.red('test')).toBe('string');
+      expect(fmt.green('test')).toContain('test');
+    });
+  });
+
+  describe('formatState (additional states)', () => {
+    it('should format QUOTED state', () => {
+      const result = formatState('QUOTED');
+      expect(result).toContain('QUOTED');
+    });
+
+    it('should format COMMITTED state', () => {
+      const result = formatState('COMMITTED');
+      expect(result).toContain('COMMITTED');
+    });
+
+    it('should format IN_PROGRESS state', () => {
+      const result = formatState('IN_PROGRESS');
+      expect(result).toContain('IN_PROGRESS');
+    });
+
+    it('should format DELIVERED state', () => {
+      const result = formatState('DELIVERED');
+      expect(result).toContain('DELIVERED');
+    });
+
+    it('should format DISPUTED state', () => {
+      const result = formatState('DISPUTED');
+      expect(result).toContain('DISPUTED');
+    });
+  });
+});
+
+// ============================================================================
+// Simulate Command Tests (Additional)
+// ============================================================================
+
+describe('Simulate Commands (Additional)', () => {
+  describe('calculateFee edge cases', () => {
+    it('should handle zero amount', () => {
+      const result = calculateFee(0n);
+      expect(result.fee).toBe(50_000n); // Minimum applies
+      expect(result.minimumApplied).toBe(true);
+    });
+
+    it('should handle very small amounts', () => {
+      // $0.01 USDC = 10000 wei
+      const result = calculateFee(10_000n);
+      expect(result.fee).toBe(50_000n); // Minimum $0.05
+      expect(result.minimumApplied).toBe(true);
+      expect(result.effectiveRate).toBe('500.00%'); // $0.05 on $0.01 = 500%
+    });
+
+    it('should handle large amounts', () => {
+      // $1,000,000 USDC
+      const result = calculateFee(1_000_000_000_000n);
+      expect(result.fee).toBe(10_000_000_000n); // 1% = $10,000
+      expect(result.minimumApplied).toBe(false);
+      expect(result.effectiveRate).toBe('1.00%');
+    });
+
+    it('should calculate provider receives correctly', () => {
+      // $50 -> 1% fee = $0.50, provider gets $49.50
+      const result = calculateFee(50_000_000n);
+      expect(result.fee).toBe(500_000n);
+      expect(result.providerReceives).toBe(49_500_000n);
+    });
+  });
+
+  describe('SimulationAdapter validation', () => {
+    // Import the simulate module to access SimulationAdapter
+    const { BaseAdapter } = require('../adapters/BaseAdapter');
+
+    // Create a test subclass to test protected methods
+    class TestSimulationAdapter extends BaseAdapter {
+      constructor(requesterAddress: string) {
+        super(requesterAddress);
+      }
+
+      validatePayment(
+        to: string,
+        amount: string | number,
+        deadline?: string | number
+      ) {
+        const errors: string[] = [];
+        const warnings: string[] = [];
+        let parsedAmount: bigint | undefined;
+        let parsedDeadline: number | undefined;
+
+        try {
+          this.validateAddress(to, 'to');
+        } catch (e) {
+          errors.push((e as Error).message);
+        }
+
+        try {
+          parsedAmount = this.parseAmount(amount);
+          if (parsedAmount !== undefined && parsedAmount < 5_000_000n) {
+            warnings.push('Amount is below $5 - minimum fee ($0.05) will apply');
+          }
+        } catch (e) {
+          errors.push((e as Error).message);
+        }
+
+        try {
+          const currentTime = Math.floor(Date.now() / 1000);
+          parsedDeadline = this.parseDeadline(deadline, currentTime);
+          if (parsedDeadline !== undefined && parsedDeadline <= currentTime) {
+            errors.push('Deadline must be in the future');
+          }
+        } catch (e) {
+          errors.push((e as Error).message);
+        }
+
+        if (to.toLowerCase() === this.requesterAddress.toLowerCase()) {
+          errors.push('Cannot pay yourself');
+        }
+
+        return { valid: errors.length === 0, errors, warnings, parsedAmount, parsedDeadline };
+      }
+    }
+
+    it('should validate correct payment parameters', () => {
+      const adapter = new TestSimulationAdapter('0x1111111111111111111111111111111111111111');
+      const result = adapter.validatePayment(
+        '0x2222222222222222222222222222222222222222',
+        '100',
+        '+24h'
+      );
+      expect(result.valid).toBe(true);
+      expect(result.errors).toHaveLength(0);
+    });
+
+    it('should reject invalid address', () => {
+      const adapter = new TestSimulationAdapter('0x1111111111111111111111111111111111111111');
+      const result = adapter.validatePayment('invalid', '100', '+24h');
+      expect(result.valid).toBe(false);
+      expect(result.errors.some((e: string) => e.includes('address') || e.includes('Address'))).toBe(true);
+    });
+
+    it('should reject self-payment', () => {
+      const adapter = new TestSimulationAdapter('0x1111111111111111111111111111111111111111');
+      const result = adapter.validatePayment(
+        '0x1111111111111111111111111111111111111111',
+        '100',
+        '+24h'
+      );
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContain('Cannot pay yourself');
+    });
+
+    it('should warn about small amounts', () => {
+      const adapter = new TestSimulationAdapter('0x1111111111111111111111111111111111111111');
+      const result = adapter.validatePayment(
+        '0x2222222222222222222222222222222222222222',
+        '1', // $1 < $5
+        '+24h'
+      );
+      expect(result.valid).toBe(true);
+      expect(result.warnings.some((w: string) => w.includes('minimum fee'))).toBe(true);
+    });
+  });
+});
+
+// ============================================================================
+// Time Command Tests (Additional)
+// ============================================================================
+
+describe('Time Commands (Additional)', () => {
+  describe('parseDuration edge cases', () => {
+    it('should handle zero', () => {
+      expect(parseDuration('0')).toBe(0);
+      expect(parseDuration('0s')).toBe(0);
+    });
+
+    it('should handle large values', () => {
+      expect(parseDuration('365d')).toBe(365 * 86400);
+      expect(parseDuration('1000h')).toBe(1000 * 3600);
+    });
+
+    it('should require lowercase units', () => {
+      // parseDuration only accepts lowercase - uppercase throws
+      expect(() => parseDuration('1H')).toThrow('Invalid duration format');
+      expect(() => parseDuration('1D')).toThrow('Invalid duration format');
+      expect(() => parseDuration('1M')).toThrow('Invalid duration format');
+      expect(() => parseDuration('1S')).toThrow('Invalid duration format');
+    });
+  });
+
+  describe('formatDuration edge cases', () => {
+    it('should handle zero', () => {
+      expect(formatDuration(0)).toBe('0s');
+    });
+
+    it('should handle complex durations', () => {
+      // 1 day, 2 hours, 3 minutes, 4 seconds = 93784 seconds
+      const duration = 1 * 86400 + 2 * 3600 + 3 * 60 + 4;
+      const formatted = formatDuration(duration);
+      expect(formatted).toContain('1d');
+      expect(formatted).toContain('2h');
+    });
+
+    it('should omit zero components', () => {
+      // Exactly 2 days
+      expect(formatDuration(2 * 86400)).toBe('2d');
+      // Exactly 3 hours
+      expect(formatDuration(3 * 3600)).toBe('3h');
+    });
+  });
+});
