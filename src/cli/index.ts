@@ -15,6 +15,27 @@
  */
 
 import { Command } from 'commander';
+import { readFileSync } from 'fs';
+import { join } from 'path';
+
+// Read version from package.json (works in both src and dist)
+function getVersion(): string {
+  try {
+    // Try dist location first (when running compiled)
+    const distPath = join(__dirname, '../../package.json');
+    const pkg = JSON.parse(readFileSync(distPath, 'utf-8'));
+    return pkg.version;
+  } catch {
+    try {
+      // Fallback to src location (when running ts-node)
+      const srcPath = join(__dirname, '../../../package.json');
+      const pkg = JSON.parse(readFileSync(srcPath, 'utf-8'));
+      return pkg.version;
+    } catch {
+      return '0.0.0'; // Fallback if package.json not found
+    }
+  }
+}
 
 // Import commands
 import { createInitCommand } from './commands/init';
@@ -48,7 +69,7 @@ program
       '  --json     Machine-readable JSON output\n' +
       '  --quiet    Minimal output (just the essential value)'
   )
-  .version('0.1.0', '-v, --version', 'Output the version number')
+  .version(getVersion(), '-v, --version', 'Output the version number')
   .helpOption('-h, --help', 'Display help for command');
 
 // ============================================================================

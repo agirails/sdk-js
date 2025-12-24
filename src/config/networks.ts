@@ -1,5 +1,20 @@
 import { ethers } from 'ethers';
 
+// ============================================================================
+// SECURITY FIX (C-7): RPC URL Configuration
+// ============================================================================
+// Environment variables take priority over hardcoded defaults.
+// This prevents accidental API key leakage if developers modify this file.
+// Public RPC endpoints are used as fallbacks for ease of use.
+//
+// Set these environment variables to use your own RPC provider:
+//   BASE_SEPOLIA_RPC - Custom RPC for Base Sepolia testnet
+//   BASE_MAINNET_RPC - Custom RPC for Base Mainnet
+// ============================================================================
+
+const BASE_SEPOLIA_RPC_URL = process.env.BASE_SEPOLIA_RPC || 'https://sepolia.base.org';
+const BASE_MAINNET_RPC_URL = process.env.BASE_MAINNET_RPC || 'https://mainnet.base.org';
+
 /**
  * Network configuration
  */
@@ -31,7 +46,7 @@ export interface NetworkConfig {
 export const BASE_SEPOLIA: NetworkConfig = {
   name: 'Base Sepolia',
   chainId: 84532,
-  rpcUrl: 'https://sepolia.base.org',
+  rpcUrl: BASE_SEPOLIA_RPC_URL,
   blockExplorer: 'https://sepolia.basescan.org',
   contracts: {
     // Redeployed 2025-12-10 by Arha (new deployer wallet 0x42a2f11555b9363fb7ebdcdc76d7cb26e01dcb00)
@@ -60,7 +75,7 @@ export const BASE_SEPOLIA: NetworkConfig = {
 export const BASE_MAINNET: NetworkConfig = {
   name: 'Base Mainnet',
   chainId: 8453,
-  rpcUrl: 'https://mainnet.base.org',
+  rpcUrl: BASE_MAINNET_RPC_URL,
   blockExplorer: 'https://basescan.org',
   contracts: {
     // TODO: Update after mainnet deployment
