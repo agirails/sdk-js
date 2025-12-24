@@ -1046,3 +1046,177 @@ describe('Time Commands (Additional)', () => {
     });
   });
 });
+
+// ============================================================================
+// Transaction Command Tests
+// ============================================================================
+
+describe('Transaction Commands', () => {
+  // Helper to format USDC (replicates tx.ts logic for testing)
+  function formatUsdc(weiAmount: string): string {
+    const amount = BigInt(weiAmount);
+    const whole = amount / 1_000_000n;
+    const decimal = amount % 1_000_000n;
+    const decimalStr = decimal.toString().padStart(6, '0').slice(0, 2);
+    return `${whole}.${decimalStr}`;
+  }
+
+  describe('formatUsdc helper', () => {
+    it('should format whole USDC amounts', () => {
+      expect(formatUsdc('10000000')).toBe('10.00'); // 10 USDC
+      expect(formatUsdc('100000000')).toBe('100.00'); // 100 USDC
+      expect(formatUsdc('1000000')).toBe('1.00'); // 1 USDC
+    });
+
+    it('should format fractional USDC amounts', () => {
+      expect(formatUsdc('10500000')).toBe('10.50'); // 10.50 USDC
+      expect(formatUsdc('1234567')).toBe('1.23'); // 1.234567 USDC (truncated to 2 decimals)
+      expect(formatUsdc('500000')).toBe('0.50'); // 0.50 USDC
+    });
+
+    it('should handle small amounts', () => {
+      expect(formatUsdc('50000')).toBe('0.05'); // $0.05 minimum fee
+      expect(formatUsdc('1000')).toBe('0.00'); // Very small (shows 0.00)
+      expect(formatUsdc('0')).toBe('0.00'); // Zero
+    });
+
+    it('should handle large amounts', () => {
+      expect(formatUsdc('1000000000000')).toBe('1000000.00'); // $1M
+      expect(formatUsdc('999999999999')).toBe('999999.99'); // Just under $1M
+    });
+  });
+
+  describe('isValidTxId', () => {
+    it('should validate correct transaction IDs', () => {
+      // 66 chars: 0x + 64 hex chars
+      const validTxId = '0x' + 'a'.repeat(64);
+      expect(isValidTxId(validTxId)).toBe(true);
+    });
+
+    it('should validate with mixed case hex', () => {
+      const txId = '0x' + 'aAbBcCdDeEfF'.repeat(5) + 'aaaa';
+      expect(isValidTxId(txId)).toBe(true);
+    });
+
+    it('should reject invalid transaction IDs', () => {
+      expect(isValidTxId('invalid')).toBe(false);
+      expect(isValidTxId('0x123')).toBe(false); // Too short
+      expect(isValidTxId('0x' + 'g'.repeat(64))).toBe(false); // Invalid hex
+      expect(isValidTxId('')).toBe(false);
+      expect(isValidTxId('0x' + 'a'.repeat(63))).toBe(false); // 65 chars (1 short)
+      expect(isValidTxId('0x' + 'a'.repeat(65))).toBe(false); // 67 chars (1 extra)
+    });
+
+    it('should require 0x prefix', () => {
+      const noPrefixTxId = 'a'.repeat(64);
+      expect(isValidTxId(noPrefixTxId)).toBe(false);
+    });
+  });
+
+  describe('Transaction state validation', () => {
+    const validStates = [
+      'INITIATED',
+      'QUOTED',
+      'COMMITTED',
+      'IN_PROGRESS',
+      'DELIVERED',
+      'SETTLED',
+      'DISPUTED',
+      'CANCELLED',
+    ];
+
+    it('should recognize all valid states', () => {
+      validStates.forEach(state => {
+        const formatted = formatState(state as any);
+        expect(formatted).toContain(state);
+      });
+    });
+  });
+
+  describe('Transaction deadline parsing', () => {
+    it('should parse relative deadlines', () => {
+      // These are parsed in tx.ts using parseDuration or direct regex
+      expect(parseDuration('24h')).toBe(86400);
+      expect(parseDuration('7d')).toBe(604800);
+      expect(parseDuration('1h')).toBe(3600);
+    });
+
+    it('should handle numeric deadlines as Unix timestamps', () => {
+      // In tx.ts, numeric strings are parsed as integers
+      const numericDeadline = '1735084800'; // Some future timestamp
+      expect(parseInt(numericDeadline, 10)).toBe(1735084800);
+    });
+  });
+});
+
+// ============================================================================
+// CLI Version Tests
+// ============================================================================
+
+describe('CLI Version', () => {
+  it('should read version from package.json', () => {
+    const packageJson = require('../../package.json');
+    expect(packageJson.version).toBe('2.0.0');
+  });
+
+  it('should have version in correct semver format', () => {
+    const packageJson = require('../../package.json');
+    const semverPattern = /^\d+\.\d+\.\d+(-[a-zA-Z0-9.]+)?$/;
+    expect(packageJson.version).toMatch(semverPattern);
+  });
+});
+
+// ============================================================================
+// CLI Command Structure Tests
+// ============================================================================
+
+describe('CLI Command Structure', () => {
+  it('should export all required commands', () => {
+    const { createInitCommand } = require('./commands/init');
+    const { createPayCommand } = require('./commands/pay');
+    const { createTxCommand } = require('./commands/tx');
+    const { createBalanceCommand } = require('./commands/balance');
+    const { createMintCommand } = require('./commands/mint');
+    const { createConfigCommand } = require('./commands/config');
+    const { createWatchCommand } = require('./commands/watch');
+    const { createSimulateCommand } = require('./commands/simulate');
+    const { createBatchCommand } = require('./commands/batch');
+    const { createTimeCommand } = require('./commands/time');
+
+    // All command creators should be functions
+    expect(typeof createInitCommand).toBe('function');
+    expect(typeof createPayCommand).toBe('function');
+    expect(typeof createTxCommand).toBe('function');
+    expect(typeof createBalanceCommand).toBe('function');
+    expect(typeof createMintCommand).toBe('function');
+    expect(typeof createConfigCommand).toBe('function');
+    expect(typeof createWatchCommand).toBe('function');
+    expect(typeof createSimulateCommand).toBe('function');
+    expect(typeof createBatchCommand).toBe('function');
+    expect(typeof createTimeCommand).toBe('function');
+  });
+
+  it('should create tx command with all subcommands', () => {
+    const { createTxCommand } = require('./commands/tx');
+    const txCmd = createTxCommand();
+
+    // Check that tx command has the expected subcommands
+    const subcommandNames = txCmd.commands.map((cmd: any) => cmd.name());
+    expect(subcommandNames).toContain('create');
+    expect(subcommandNames).toContain('status');
+    expect(subcommandNames).toContain('list');
+    expect(subcommandNames).toContain('deliver');
+    expect(subcommandNames).toContain('settle');
+    expect(subcommandNames).toContain('cancel');
+    expect(subcommandNames).toHaveLength(6);
+  });
+
+  it('should create config command with all subcommands', () => {
+    const { createConfigCommand } = require('./commands/config');
+    const configCmd = createConfigCommand();
+
+    const subcommandNames = configCmd.commands.map((cmd: any) => cmd.name());
+    expect(subcommandNames).toContain('show');
+    expect(subcommandNames).toContain('set');
+  });
+});
