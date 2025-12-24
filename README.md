@@ -10,47 +10,61 @@ npm install @agirails/sdk
 
 ## Quick Start
 
-### 1. Create a Transaction (Requester)
+### Simple API (Beginner)
 
 ```typescript
 import { ACTPClient } from '@agirails/sdk';
-import { parseUnits } from 'ethers';
 
 const client = await ACTPClient.create({
   network: 'base-sepolia',
   privateKey: process.env.PRIVATE_KEY
 });
 
-// Create transaction with escrow
-const txId = await client.kernel.createTransaction({
+// One-liner: pay an AI agent for a service
+const result = await client.beginner.pay({
   provider: '0xProviderAddress...',
-  amount: parseUnits('10', 6), // 10 USDC
-  serviceRef: 'ipfs://Qm...',  // Service specification
-  deadline: Math.floor(Date.now() / 1000) + 86400 // 24h
+  amount: '10.00',  // 10 USDC
+  service: 'echo'
 });
 
-// Fund the escrow
-await client.escrow.lockFunds(txId, parseUnits('10', 6));
+console.log('Transaction ID:', result.txId);
+console.log('Status:', result.status);
 ```
 
-### 2. Accept & Deliver (Provider)
+### Standard API (Intermediate)
 
 ```typescript
+import { ACTPClient } from '@agirails/sdk';
+
 const client = await ACTPClient.create({
   network: 'base-sepolia',
-  privateKey: process.env.PROVIDER_KEY
+  privateKey: process.env.PRIVATE_KEY
 });
 
-// Deliver result with proof
-await client.kernel.transitionState(txId, 'DELIVERED');
-await client.kernel.anchorAttestation(txId, attestationUID);
+// 1. Create transaction
+const txId = await client.intermediate.createTransaction({
+  provider: '0xProviderAddress...',
+  amount: '10.00',
+  serviceRef: 'ipfs://Qm...'
+});
+
+// 2. Link escrow (funds locked, state → COMMITTED)
+await client.intermediate.linkEscrow(txId);
+
+// 3. Provider delivers (after work is done)
+await client.intermediate.transitionState(txId, 'DELIVERED');
+
+// 4. Release payment to provider
+await client.intermediate.releaseEscrow(txId);
 ```
 
-### 3. Release Payment (Requester)
+### Check Transaction Status
 
 ```typescript
-// After verifying delivery, release funds
-await client.escrow.releaseFunds(txId);
+const status = await client.beginner.checkStatus(txId);
+console.log(status.state);     // 'COMMITTED', 'DELIVERED', 'SETTLED', etc.
+console.log(status.amount);    // '10.00'
+console.log(status.provider);  // '0x...'
 ```
 
 ## CLI Usage
@@ -74,17 +88,21 @@ actp list
 
 ## Mock Mode (Testing)
 
-Test without blockchain:
+Test without blockchain - no gas fees, instant transactions:
 
 ```typescript
 import { ACTPClient } from '@agirails/sdk';
 
 const client = await ACTPClient.create({
-  mode: 'mock'  // No blockchain, no gas fees
+  mode: 'mock'
 });
 
 // Full ACTP flow works identically
-const txId = await client.kernel.createTransaction({...});
+const result = await client.beginner.pay({
+  provider: '0x1234...',
+  amount: '5.00',
+  service: 'test-service'
+});
 ```
 
 ## Networks
@@ -102,37 +120,30 @@ INITIATED → QUOTED → COMMITTED → IN_PROGRESS → DELIVERED → SETTLED
                                   DISPUTED → SETTLED
 ```
 
-## API Reference
+## API Layers
 
-### ACTPClient
+### Beginner (Simple)
 
 ```typescript
-// Create client
-const client = await ACTPClient.create(options);
-
-// Modules
-client.kernel    // Transaction lifecycle
-client.escrow    // Fund management
-client.events    // Event monitoring
-client.messages  // EIP-712 signing
+client.beginner.pay(params)         // Create, fund, and track in one call
+client.beginner.checkStatus(txId)   // Get human-readable status
 ```
 
-### Kernel Methods
+### Intermediate (Standard)
 
 ```typescript
-kernel.createTransaction(params)     // Create new transaction
-kernel.transitionState(txId, state)  // Change state
-kernel.anchorAttestation(txId, uid)  // Attach EAS proof
-kernel.getTransaction(txId)          // Get transaction details
+client.intermediate.createTransaction(params)  // Create transaction
+client.intermediate.linkEscrow(txId)           // Lock funds in escrow
+client.intermediate.transitionState(txId, state)  // Change state
+client.intermediate.releaseEscrow(txId)        // Release funds to provider
+client.intermediate.getTransaction(txId)       // Get transaction details
+client.intermediate.getEscrowBalance(escrowId) // Check locked amount
 ```
 
-### Escrow Methods
+### Runtime (Low-Level)
 
 ```typescript
-escrow.lockFunds(txId, amount)       // Lock USDC in escrow
-escrow.releaseFunds(txId)            // Release to provider
-escrow.refund(txId)                  // Refund to requester
-escrow.getBalance(txId)              // Check locked amount
+client.runtime  // Direct access to BlockchainRuntime or MockRuntime
 ```
 
 ## Environment Variables
@@ -166,4 +177,4 @@ IPFS_GATEWAY=https://...
 
 ## License
 
-MIT
+Apache-2.0
