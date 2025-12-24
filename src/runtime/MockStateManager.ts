@@ -19,6 +19,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import lockfile from 'proper-lockfile';
 import { MockState, MOCK_STATE_DEFAULTS } from './types/MockState';
+import { assertSafeFileForRead, ensureSafeDir } from '../utils/fsSafe';
 
 /**
  * Error thrown when mock state file is corrupted.
@@ -220,9 +221,7 @@ export class MockStateManager {
    * Creates it with secure permissions if missing.
    */
   private ensureDirectory(): void {
-    if (!fs.existsSync(this.actpDir)) {
-      fs.mkdirSync(this.actpDir, { recursive: true, mode: 0o755 });
-    }
+    ensureSafeDir(this.actpDir, 0o755);
   }
 
   /**
@@ -250,6 +249,9 @@ export class MockStateManager {
     if (!fs.existsSync(this.statePath)) {
       return this.getDefaultState();
     }
+
+    // SECURITY: Refuse to read from symlinked state files
+    assertSafeFileForRead(this.statePath);
 
     // Check file size limit
     const stats = fs.statSync(this.statePath);
@@ -337,9 +339,18 @@ export class MockStateManager {
     const tempPath = `${this.statePath}.tmp`;
 
     try {
+      // Prevent clobbering via pre-created temp symlink/file
+      if (fs.existsSync(tempPath)) {
+        fs.unlinkSync(tempPath);
+      }
+
       // Write to temp file first (pretty-printed for human readability)
       const json = JSON.stringify(state, null, 2);
-      fs.writeFileSync(tempPath, json, { encoding: 'utf-8', mode: 0o644 });
+      fs.writeFileSync(tempPath, json, {
+        encoding: 'utf-8',
+        mode: 0o644,
+        flag: 'wx', // exclusive create: do not follow existing symlink
+      });
 
       // Rename atomically (POSIX rename is atomic)
       fs.renameSync(tempPath, this.statePath);
@@ -355,7 +366,7 @@ export class MockStateManager {
 
       throw new Error(
         `Failed to save mock state: ${(error as Error).message}\n` +
-          `Path: ${this.statePath}`
+          `Path: ${sanitizePath(this.statePath)}`
       );
     }
   }
@@ -401,6 +412,9 @@ export class MockStateManager {
     if (!fs.existsSync(this.statePath)) {
       this.saveState(this.getDefaultState());
     }
+
+    // SECURITY: Refuse to lock/use symlinked state files
+    assertSafeFileForRead(this.statePath);
 
     let release: (() => Promise<void>) | null = null;
 

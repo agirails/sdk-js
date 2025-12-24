@@ -10,6 +10,9 @@ coverage/
 # Local state
 .actp/
 
+# Test temp directories
+.tmp-*/
+
 # Environment files
 .env
 .env.*

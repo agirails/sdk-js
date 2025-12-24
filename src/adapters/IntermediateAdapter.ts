@@ -228,24 +228,51 @@ export class IntermediateAdapter extends BaseAdapter {
     escrowId: string,
     attestationParams?: { txId: string; attestationUID: string }
   ): Promise<void> {
-    // SECURITY FIX (HIGH-5): Enforce attestation verification when EASHelper is available
-    if (this.easHelper) {
-      if (!attestationParams) {
-        throw new Error(
-          'Attestation verification is REQUIRED for escrow release in testnet/mainnet modes. ' +
-          'Provide attestationParams: { txId: string, attestationUID: string }. ' +
-          'This ensures the provider has submitted valid delivery proof before receiving funds.'
-        );
-      }
+    // Determine whether the underlying runtime requires attestation.
+    // BlockchainRuntime exposes isAttestationRequired(), but it's not part of the generic interface.
+    const runtimeAny = this.runtime as any;
+    const runtimeSupportsAttestationFlag =
+      typeof runtimeAny?.isAttestationRequired === 'function';
 
-      // Verify attestation before release
-      await this.easHelper.verifyAndRecordForRelease(
-        attestationParams.txId,
-        attestationParams.attestationUID
+    const attestationRequired: boolean = runtimeSupportsAttestationFlag
+      ? Boolean(runtimeAny.isAttestationRequired())
+      : Boolean(this.easHelper);
+
+    if (attestationRequired && !attestationParams) {
+      throw new Error(
+        'Attestation verification is REQUIRED for escrow release. ' +
+          'Provide attestationParams: { txId: string, attestationUID: string }.'
       );
     }
 
-    return this.runtime.releaseEscrow(escrowId);
+    // If caller provided attestation params, ensure they match the escrow/tx being released.
+    if (attestationParams) {
+      // Support legacy escrowId format "escrow-{txId}-{timestamp}".
+      // Standard is escrowId === txId.
+      const legacyMatch = escrowId.match(/^escrow-(.+)-\d+$/);
+      const txIdFromEscrowId = legacyMatch ? legacyMatch[1] : escrowId;
+
+      if (txIdFromEscrowId.toLowerCase() !== attestationParams.txId.toLowerCase()) {
+        throw new Error(
+          `Attestation txId (${attestationParams.txId}) does not match escrow/txId (${txIdFromEscrowId}). ` +
+            `Refusing to release escrow with mismatched attestation.`
+        );
+      }
+
+      // If runtime does NOT handle attestation internally but EASHelper exists, verify here.
+      // Otherwise, pass attestationUID down so BlockchainRuntime can enforce/record.
+      if (!runtimeSupportsAttestationFlag && this.easHelper) {
+        await this.easHelper.verifyAndRecordForRelease(
+          attestationParams.txId,
+          attestationParams.attestationUID
+        );
+      }
+    }
+
+    return this.runtime.releaseEscrow(
+      escrowId,
+      attestationParams?.attestationUID
+    );
   }
 
   /**

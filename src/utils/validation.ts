@@ -202,26 +202,28 @@ export async function validateEndpointURL(endpoint: string, fieldName: string = 
       const dns = await import('dns').catch(() => null);
 
       if (dns) {
-        // Resolve hostname to IP addresses
-        const { address, family } = await dns.promises.lookup(hostname);
+        // Resolve hostname to ALL IP addresses and validate each (prevents AAAA/A bypass)
+        const results = await dns.promises.lookup(hostname, { all: true });
 
-        // Validate resolved IP is not private
-        if (isPrivateIP(address)) {
-          throw new ValidationError(
-            fieldName,
-            `Endpoint hostname "${hostname}" resolves to private IP address ${address} (SSRF protection). ` +
-            `This could be an attempt to access internal services. ` +
-            `IP family: IPv${family}`
-          );
-        }
+        for (const { address, family } of results) {
+          // Validate resolved IP is not private
+          if (isPrivateIP(address)) {
+            throw new ValidationError(
+              fieldName,
+              `Endpoint hostname "${hostname}" resolves to private IP address ${address} (SSRF protection). ` +
+                `This could be an attempt to access internal services. ` +
+                `IP family: IPv${family}`
+            );
+          }
 
-        // SECURITY FIX (H-1): CRITICAL - Block AWS metadata endpoint
-        if (address === '169.254.169.254') {
-          throw new ValidationError(
-            fieldName,
-            `Endpoint resolves to AWS metadata endpoint (169.254.169.254). ` +
-            `This is blocked for security reasons (credential theft prevention).`
-          );
+          // SECURITY FIX (H-1): CRITICAL - Block AWS metadata endpoint explicitly
+          if (address === '169.254.169.254') {
+            throw new ValidationError(
+              fieldName,
+              `Endpoint resolves to AWS metadata endpoint (169.254.169.254). ` +
+                `This is blocked for security reasons (credential theft prevention).`
+            );
+          }
         }
       }
     } catch (error: any) {

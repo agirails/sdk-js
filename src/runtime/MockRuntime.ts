@@ -489,6 +489,50 @@ export class MockRuntime implements IACTPRuntime {
   }
 
   /**
+   * Gets transactions filtered by provider address and optionally state.
+   *
+   * SECURITY FIX (H-1): Filtered query to prevent DoS via memory exhaustion.
+   * Instead of loading all transactions and filtering client-side, we filter
+   * server-side and limit the result set.
+   *
+   * @param provider - Provider address to filter by
+   * @param state - Optional state filter (e.g., 'INITIATED', 'DELIVERED')
+   * @param limit - Maximum number of transactions to return (default 100)
+   * @returns Promise resolving to filtered transactions
+   *
+   * @example
+   * ```typescript
+   * // Get up to 100 INITIATED transactions for this provider
+   * const pending = await runtime.getTransactionsByProvider(
+   *   providerAddress,
+   *   'INITIATED',
+   *   100
+   * );
+   * ```
+   */
+  async getTransactionsByProvider(
+    provider: string,
+    state?: TransactionState,
+    limit: number = 100
+  ): Promise<MockTransaction[]> {
+    return this.stateManager.withLock(async (s) => {
+      let txs = Object.values(s.transactions).filter(
+        (tx) => tx.provider === provider
+      );
+
+      if (state) {
+        txs = txs.filter((tx) => tx.state === state);
+      }
+
+      if (limit > 0) {
+        txs = txs.slice(0, limit);
+      }
+
+      return txs;
+    });
+  }
+
+  /**
    * Transitions a transaction to a new state.
    *
    * Validates the transition against the ACTP 8-state machine:
@@ -510,9 +554,15 @@ export class MockRuntime implements IACTPRuntime {
    * ```typescript
    * // Transition to DELIVERED state
    * await runtime.transitionState(txId, 'DELIVERED');
+   *
+   * // With delivery proof
+   * await runtime.transitionState(txId, 'DELIVERED', deliveryProofBytes);
    * ```
    */
-  async transitionState(txId: string, newState: TransactionState): Promise<void> {
+  async transitionState(txId: string, newState: TransactionState, proof?: string): Promise<void> {
+    // SECURITY FIX (PROOF-PARAM): Accept optional proof parameter for interface compliance
+    // In MockRuntime, proof is stored but not validated (no on-chain verification)
+    // This allows testing delivery proof flows without actual blockchain interaction
     return this.stateManager.withLock(async (state) => {
       const tx = state.transactions[txId];
       if (!tx) {
@@ -543,6 +593,10 @@ export class MockRuntime implements IACTPRuntime {
       // Record completion time for DELIVERED state
       if (newState === 'DELIVERED') {
         tx.completedAt = currentTime;
+        // SECURITY FIX (PROOF-PARAM): Store delivery proof if provided
+        if (proof) {
+          tx.deliveryProof = proof;
+        }
       }
 
       // Handle escrow refund on CANCELLED state (Issue #1 fix)
@@ -754,7 +808,7 @@ export class MockRuntime implements IACTPRuntime {
    * const balance = await runtime.getBalance(provider);
    * ```
    */
-  async releaseEscrow(escrowId: string): Promise<void> {
+  async releaseEscrow(escrowId: string, _attestationUID?: string): Promise<void> {
     return this.stateManager.withLock(async (state) => {
       const escrow = state.escrows[escrowId];
       if (!escrow) {

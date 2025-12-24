@@ -46,7 +46,6 @@ export {
 
 export {
   BaseAdapter,
-  ValidationError,
   DEFAULT_DISPUTE_WINDOW_SECONDS,
   DEFAULT_DEADLINE_SECONDS,
   MIN_AMOUNT_WEI,
@@ -79,13 +78,10 @@ export {
 // MockRuntime (for local development)
 export {
   MockRuntime,
-  TransactionNotFoundError,
-  InvalidStateTransitionError,
   InsufficientBalanceError,
   EscrowNotFoundError,
   DeadlinePassedError,
   ContractPausedError,
-  InvalidAmountError,
   DisputeWindowActiveError,
 } from './runtime/MockRuntime';
 
@@ -128,7 +124,7 @@ export { ACTPKernel } from './protocol/ACTPKernel';
 export { EscrowVault } from './protocol/EscrowVault';
 export { EventMonitor } from './protocol/EventMonitor';
 export { MessageSigner } from './protocol/MessageSigner';
-export { ProofGenerator } from './protocol/ProofGenerator';
+export { ProofGenerator, URLValidationConfig } from './protocol/ProofGenerator';
 export { EASHelper, EASConfig } from './protocol/EASHelper';
 export { AgentRegistry } from './protocol/AgentRegistry';
 export { DIDManager } from './protocol/DIDManager';
@@ -154,5 +150,95 @@ export type {
 // Utils
 export { NonceManager, InMemoryNonceManager } from './utils/NonceManager';
 export { IReceivedNonceTracker, InMemoryReceivedNonceTracker } from './utils/ReceivedNonceTracker';
-export { IPFSClient } from './utils/IPFSClient';
+// Note: IPFSClient is not exported from main index to avoid ESM compatibility issues
+// Import directly from '@agirails/sdk/utils/IPFSClient' if needed
+export type { IPFSClient, IPFSClientConfig } from './utils/IPFSClient';
 export { generateSecureNonce, isValidNonce, generateSecureNonces } from './utils/SecureNonce';
+export { Semaphore, RateLimiter } from './utils/Semaphore';
+export {
+  IUsedAttestationTracker,
+  InMemoryUsedAttestationTracker,
+  FileBasedUsedAttestationTracker,
+  createUsedAttestationTracker,
+} from './utils/UsedAttestationTracker';
+
+// Helper utilities
+export {
+  USDC,
+  Deadline,
+  Address,
+  Bytes32,
+  State as StateHelpers,
+  DisputeWindow,
+  parseUSDC,
+  formatUSDC,
+  shortenAddress,
+  ServiceHash,
+  hashServiceMetadata,
+} from './utils/Helpers';
+export type { ServiceMetadata } from './utils/Helpers';
+
+// =============================================================================
+// Basic API - Simple provide/request interface
+// =============================================================================
+
+export { provide, request, serviceDirectory } from './level0';
+export type {
+  Provider,
+  ProviderStatus,
+  ProviderStats,
+  ProviderBalance,
+} from './level0';
+
+// =============================================================================
+// Standard API - Agent-based interface
+// =============================================================================
+
+export { Agent, calculatePrice, DEFAULT_PRICING_STRATEGY } from './level1';
+export type {
+  AgentConfig,
+  AgentStatus,
+  AgentStats,
+  AgentBalance,
+  ServiceConfig,
+  Job,
+  JobHandler,
+  JobContext,
+  ProvideOptions,
+  RequestOptions,
+  RequestResult,
+  RequestStatus,
+  WalletOption,
+  NetworkOption,
+  PricingStrategy,
+  ServiceCost,
+  BelowPriceBehavior,
+  BelowCostBehavior,
+  PriceCalculation,
+} from './level1';
+
+// =============================================================================
+// Enhanced Error Exports
+// =============================================================================
+
+export {
+  ACTPError,
+  InsufficientFundsError,
+  TransactionNotFoundError,
+  DeadlineExpiredError,
+  InvalidStateTransitionError,
+  SignatureVerificationError,
+  TransactionRevertedError,
+  NetworkError,
+  ValidationError,
+  InvalidAddressError,
+  InvalidAmountError,
+  // Basic/Standard API errors
+  NoProviderFoundError,
+  TimeoutError,
+  ProviderRejectedError,
+  DeliveryFailedError,
+  DisputeRaisedError,
+  ServiceConfigError,
+  AgentLifecycleError,
+} from './errors';

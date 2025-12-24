@@ -1,65 +1,133 @@
 [
   {
+    "type": "constructor",
     "inputs": [
-      {"name": "kernel", "type": "address"},
-      {"name": "txId", "type": "bytes32"},
-      {"name": "token", "type": "address"},
-      {"name": "amount", "type": "uint256"},
-      {"name": "beneficiary", "type": "address"}
+      { "name": "_token", "type": "address", "internalType": "address" },
+      { "name": "_kernel", "type": "address", "internalType": "address" }
     ],
-    "name": "createEscrow",
-    "outputs": [{"name": "escrowId", "type": "bytes32"}],
-    "stateMutability": "nonpayable",
-    "type": "function"
+    "stateMutability": "nonpayable"
   },
   {
-    "inputs": [
-      {"name": "escrowId", "type": "bytes32"},
-      {"name": "recipients", "type": "address[]"},
-      {"name": "amounts", "type": "uint256[]"}
-    ],
-    "name": "disburse",
-    "outputs": [],
-    "stateMutability": "nonpayable",
-    "type": "function"
+    "type": "function",
+    "name": "token",
+    "inputs": [],
+    "outputs": [{ "name": "", "type": "address", "internalType": "address" }],
+    "stateMutability": "view"
   },
   {
-    "inputs": [
-      {"name": "escrowId", "type": "bytes32"}
-    ],
+    "type": "function",
+    "name": "kernel",
+    "inputs": [],
+    "outputs": [{ "name": "", "type": "address", "internalType": "address" }],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "escrows",
+    "inputs": [{ "name": "", "type": "bytes32", "internalType": "bytes32" }],
     "outputs": [
-      {"name": "kernel", "type": "address"},
-      {"name": "txId", "type": "bytes32"},
-      {"name": "token", "type": "address"},
-      {"name": "amount", "type": "uint256"},
-      {"name": "beneficiary", "type": "address"},
-      {"name": "released", "type": "bool"}
+      { "name": "requester", "type": "address", "internalType": "address" },
+      { "name": "provider", "type": "address", "internalType": "address" },
+      { "name": "amount", "type": "uint256", "internalType": "uint256" },
+      { "name": "releasedAmount", "type": "uint256", "internalType": "uint256" },
+      { "name": "active", "type": "bool", "internalType": "bool" }
     ],
-    "stateMutability": "view",
-    "type": "function"
+    "stateMutability": "view"
   },
   {
-    "anonymous": false,
+    "type": "function",
+    "name": "createEscrow",
     "inputs": [
-      {"indexed": true, "name": "escrowId", "type": "bytes32"},
-      {"indexed": true, "name": "kernel", "type": "address"},
-      {"indexed": true, "name": "txId", "type": "bytes32"},
-      {"indexed": false, "name": "token", "type": "address"},
-      {"indexed": false, "name": "amount", "type": "uint256"}
+      { "name": "escrowId", "type": "bytes32", "internalType": "bytes32" },
+      { "name": "requester", "type": "address", "internalType": "address" },
+      { "name": "provider", "type": "address", "internalType": "address" },
+      { "name": "amount", "type": "uint256", "internalType": "uint256" }
     ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "verifyEscrow",
+    "inputs": [
+      { "name": "escrowId", "type": "bytes32", "internalType": "bytes32" },
+      { "name": "requester", "type": "address", "internalType": "address" },
+      { "name": "provider", "type": "address", "internalType": "address" },
+      { "name": "amount", "type": "uint256", "internalType": "uint256" }
+    ],
+    "outputs": [
+      { "name": "isActive", "type": "bool", "internalType": "bool" },
+      { "name": "escrowAmount", "type": "uint256", "internalType": "uint256" }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "payoutToProvider",
+    "inputs": [
+      { "name": "escrowId", "type": "bytes32", "internalType": "bytes32" },
+      { "name": "amount", "type": "uint256", "internalType": "uint256" }
+    ],
+    "outputs": [{ "name": "", "type": "uint256", "internalType": "uint256" }],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "refundToRequester",
+    "inputs": [
+      { "name": "escrowId", "type": "bytes32", "internalType": "bytes32" },
+      { "name": "amount", "type": "uint256", "internalType": "uint256" }
+    ],
+    "outputs": [{ "name": "", "type": "uint256", "internalType": "uint256" }],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "payout",
+    "inputs": [
+      { "name": "escrowId", "type": "bytes32", "internalType": "bytes32" },
+      { "name": "recipient", "type": "address", "internalType": "address" },
+      { "name": "amount", "type": "uint256", "internalType": "uint256" }
+    ],
+    "outputs": [{ "name": "", "type": "uint256", "internalType": "uint256" }],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "remaining",
+    "inputs": [{ "name": "escrowId", "type": "bytes32", "internalType": "bytes32" }],
+    "outputs": [{ "name": "", "type": "uint256", "internalType": "uint256" }],
+    "stateMutability": "view"
+  },
+  {
+    "type": "event",
     "name": "EscrowCreated",
-    "type": "event"
-  },
-  {
     "anonymous": false,
     "inputs": [
-      {"indexed": true, "name": "escrowId", "type": "bytes32"},
-      {"indexed": false, "name": "recipients", "type": "address[]"},
-      {"indexed": false, "name": "amounts", "type": "uint256[]"}
-    ],
-    "name": "EscrowReleased",
-    "type": "event"
+      { "name": "escrowId", "type": "bytes32", "indexed": true, "internalType": "bytes32" },
+      { "name": "requester", "type": "address", "indexed": true, "internalType": "address" },
+      { "name": "provider", "type": "address", "indexed": true, "internalType": "address" },
+      { "name": "amount", "type": "uint256", "indexed": false, "internalType": "uint256" }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "EscrowPayout",
+    "anonymous": false,
+    "inputs": [
+      { "name": "escrowId", "type": "bytes32", "indexed": true, "internalType": "bytes32" },
+      { "name": "recipient", "type": "address", "indexed": true, "internalType": "address" },
+      { "name": "amount", "type": "uint256", "indexed": false, "internalType": "uint256" }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "EscrowCompleted",
+    "anonymous": false,
+    "inputs": [
+      { "name": "escrowId", "type": "bytes32", "indexed": true, "internalType": "bytes32" },
+      { "name": "totalReleased", "type": "uint256", "indexed": false, "internalType": "uint256" }
+    ]
   }
 ]
 

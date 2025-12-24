@@ -6,21 +6,21 @@
 import * as dotenv from 'dotenv';
 dotenv.config(); // Load .env file
 
-import { ethers } from 'ethers';
-import { parseUnits, formatUnits } from 'ethers/lib/utils';
+import { ethers, parseUnits, formatUnits, JsonRpcProvider, Wallet, Contract } from 'ethers';
 
 // Base Sepolia configuration
-const RPC_URL = 'https://sepolia.base.org';
-const MOCK_USDC_ADDRESS = '0x444b4e1A65949AB2ac75979D5d0166Eb7A248Ccb';
-
-// Test wallets
-const CLIENT_ADDRESS = '0xe174bd855aaA8d907334288323044d4cf79BfAfC';
-const PROVIDER_ADDRESS = '0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC';
+const RPC_URL = process.env.RPC_URL || 'https://sepolia.base.org';
+const MOCK_USDC_ADDRESS = process.env.MOCK_USDC_ADDRESS || '0x444b4e1A65949AB2ac75979D5d0166Eb7A248Ccb';
 
 // You need to set these environment variables
 // NOTE: MockUSDC has OPEN MINTING - any wallet can mint!
-// ADMIN_PRIVATE_KEY just needs ETH for gas fees
-const ADMIN_PRIVATE_KEY = process.env.ADMIN_PRIVATE_KEY || process.env.CLIENT_PRIVATE_KEY || '';
+const CLIENT_PRIVATE_KEY = process.env.CLIENT_PRIVATE_KEY || '';
+const PROVIDER_PRIVATE_KEY = process.env.PROVIDER_PRIVATE_KEY || '';
+const ADMIN_PRIVATE_KEY = process.env.ADMIN_PRIVATE_KEY || CLIENT_PRIVATE_KEY || '';
+
+// Derive addresses from private keys (don't hardcode)
+const CLIENT_ADDRESS = CLIENT_PRIVATE_KEY ? new Wallet(CLIENT_PRIVATE_KEY).address : '';
+const PROVIDER_ADDRESS = PROVIDER_PRIVATE_KEY ? new Wallet(PROVIDER_PRIVATE_KEY).address : '';
 
 if (!ADMIN_PRIVATE_KEY) {
   console.error('❌ Missing ADMIN_PRIVATE_KEY environment variable');
@@ -40,9 +40,9 @@ const USDC_ABI = [
 async function main() {
   console.log('🚀 ACTP Test Setup - Minting MockUSDC\n');
 
-  const provider = new ethers.providers.JsonRpcProvider(RPC_URL);
-  const adminWallet = new ethers.Wallet(ADMIN_PRIVATE_KEY, provider);
-  const usdc = new ethers.Contract(MOCK_USDC_ADDRESS, USDC_ABI, adminWallet);
+  const provider = new JsonRpcProvider(RPC_URL);
+  const adminWallet = new Wallet(ADMIN_PRIVATE_KEY, provider);
+  const usdc = new Contract(MOCK_USDC_ADDRESS, USDC_ABI, adminWallet);
 
   console.log('Admin wallet:', adminWallet.address);
   console.log('MockUSDC:', MOCK_USDC_ADDRESS);

@@ -11,6 +11,8 @@
  * @module utils/UsedAttestationTracker
  */
 
+import { assertSafeFileForRead, ensureSafeDir, ensureSafeFile } from './fsSafe';
+
 /**
  * Interface for tracking used attestations
  */
@@ -235,9 +237,7 @@ export class FileBasedUsedAttestationTracker implements IUsedAttestationTracker 
 
     // Ensure directory exists
     const actpDir = this.path.join(stateDirectory, '.actp');
-    if (!this.fs.existsSync(actpDir)) {
-      this.fs.mkdirSync(actpDir, { recursive: true, mode: 0o755 });
-    }
+    ensureSafeDir(actpDir, 0o755);
 
     this.filePath = this.path.join(actpDir, 'used-attestations.json');
 
@@ -246,15 +246,31 @@ export class FileBasedUsedAttestationTracker implements IUsedAttestationTracker 
   }
 
   private loadFromFile(): void {
-    if (this.fs.existsSync(this.filePath)) {
-      try {
-        const data = JSON.parse(this.fs.readFileSync(this.filePath, 'utf-8'));
-        for (const [uid, txId] of Object.entries(data)) {
-          this.inMemory.recordUsage(uid, txId as string);
-        }
-      } catch {
-        // Ignore corrupted file, start fresh
+    if (!this.fs.existsSync(this.filePath)) return;
+
+    // SECURITY: Refuse to read from symlinked tracker files
+    assertSafeFileForRead(this.filePath);
+
+    // Basic size limit to avoid memory DoS on parse
+    const MAX_TRACKER_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+    const st = this.fs.statSync(this.filePath);
+    if (st.size > MAX_TRACKER_FILE_SIZE) {
+      throw new Error(
+        `used-attestations.json exceeds ${MAX_TRACKER_FILE_SIZE / 1024 / 1024}MB limit: ${this.filePath}`
+      );
+    }
+
+    try {
+      const data = JSON.parse(this.fs.readFileSync(this.filePath, 'utf-8'));
+      for (const [uid, txId] of Object.entries(data)) {
+        this.inMemory.recordUsageSync(uid, txId as string);
       }
+    } catch (e: any) {
+      // Fail closed: losing replay-protection state is a security issue.
+      throw new Error(
+        `Failed to parse used-attestations.json (replay protection would be disabled). ` +
+          `Fix/delete the file: ${this.filePath}. Error: ${e?.message || String(e)}`
+      );
     }
   }
 
@@ -270,13 +286,7 @@ export class FileBasedUsedAttestationTracker implements IUsedAttestationTracker 
 
     // SECURITY FIX (NEW-HIGH-1): Ensure file exists before locking
     // proper-lockfile.lock() fails on non-existent files
-    if (!this.fs.existsSync(this.filePath)) {
-      // Create empty file with secure permissions
-      this.fs.writeFileSync(this.filePath, '{}', {
-        encoding: 'utf-8',
-        mode: 0o644
-      });
-    }
+    ensureSafeFile(this.filePath, '{}', 0o644);
 
     // SECURITY FIX (NEW-H-4): Acquire file lock before writing
     let release: (() => Promise<void>) | null = null;
@@ -291,9 +301,13 @@ export class FileBasedUsedAttestationTracker implements IUsedAttestationTracker 
       });
 
       // Atomic write: temp file + rename
+      if (this.fs.existsSync(tempPath)) {
+        this.fs.unlinkSync(tempPath);
+      }
       this.fs.writeFileSync(tempPath, JSON.stringify(data, null, 2), {
         encoding: 'utf-8',
-        mode: 0o644
+        mode: 0o644,
+        flag: 'wx'
       });
       this.fs.renameSync(tempPath, this.filePath);
     } catch (error) {

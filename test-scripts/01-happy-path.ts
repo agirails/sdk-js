@@ -1,21 +1,24 @@
 /**
  * ACTP Happy Path Test
  * Tests full transaction lifecycle: Create → Link → Progress → Deliver → Settle
+ *
+ * Updated for SDK v2.0.0 API (uses intermediate adapter)
  */
 
 import * as dotenv from 'dotenv';
 dotenv.config(); // Load .env file
 
 import { ACTPClient } from '../src/ACTPClient';
-import { parseUnits, formatUnits } from 'ethers/lib/utils';
-import { ethers } from 'ethers';
+import { ethers, parseUnits, formatUnits, Wallet, Contract, keccak256, toUtf8Bytes, JsonRpcProvider } from 'ethers';
+import { getNetwork } from '../src/config/networks';
 
-// Test wallets
-const CLIENT_ADDRESS = '0xe174bd855aaA8d907334288323044d4cf79BfAfC';
-const PROVIDER_ADDRESS = '0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC'; // Hardhat account #2
-
+// Test wallets - derived from private keys in .env
 const CLIENT_PRIVATE_KEY = process.env.CLIENT_PRIVATE_KEY || '';
 const PROVIDER_PRIVATE_KEY = process.env.PROVIDER_PRIVATE_KEY || '';
+
+// Derive addresses from private keys (don't hardcode)
+const CLIENT_ADDRESS = CLIENT_PRIVATE_KEY ? new Wallet(CLIENT_PRIVATE_KEY).address : '';
+const PROVIDER_ADDRESS = PROVIDER_PRIVATE_KEY ? new Wallet(PROVIDER_PRIVATE_KEY).address : '';
 
 if (!CLIENT_PRIVATE_KEY || !PROVIDER_PRIVATE_KEY) {
   console.error('❌ Missing environment variables');
@@ -28,152 +31,130 @@ async function sleep(ms: number) {
 }
 
 async function main() {
-  console.log('🧪 ACTP Happy Path Test\n');
+  console.log('🧪 ACTP Happy Path Test (SDK v2.0.0)\n');
   console.log('Client:  ', CLIENT_ADDRESS);
   console.log('Provider:', PROVIDER_ADDRESS);
   console.log('');
 
+  const networkConfig = getNetwork('base-sepolia');
+  console.log('Network:', networkConfig.name);
+  console.log('Kernel: ', networkConfig.contracts.actpKernel);
+  console.log('Escrow: ', networkConfig.contracts.escrowVault);
+  console.log('');
+
   // Initialize clients
   const clientSDK = await ACTPClient.create({
-    network: 'base-sepolia',
-    privateKey: CLIENT_PRIVATE_KEY
+    mode: 'testnet',
+    requesterAddress: CLIENT_ADDRESS,
+    privateKey: CLIENT_PRIVATE_KEY,
+    rpcUrl: networkConfig.rpcUrl,
   });
 
   const providerSDK = await ACTPClient.create({
-    network: 'base-sepolia',
-    privateKey: PROVIDER_PRIVATE_KEY
+    mode: 'testnet',
+    requesterAddress: PROVIDER_ADDRESS,
+    privateKey: PROVIDER_PRIVATE_KEY,
+    rpcUrl: networkConfig.rpcUrl,
   });
 
   console.log('✅ SDK clients initialized\n');
 
   // Transaction parameters
-  const amount = parseUnits('100', 6); // 100 USDC
+  // Note: IntermediateAdapter.parseAmount() expects human-readable amounts
+  // '100' = 100 USDC, NOT '100000000' (which would be 100M USDC!)
+  const amount = '100'; // 100 USDC (human-readable)
+  const amountWei = '100000000'; // 100 USDC in wei for balance checks (6 decimals)
   const deadline = Math.floor(Date.now() / 1000) + 86400; // 24 hours
   const disputeWindow = 7200; // 2 hours
-  const metadata = ethers.utils.keccak256(ethers.utils.toUtf8Bytes('Test service - translation'));
 
   try {
+    // Check USDC balance first
+    console.log('💳 STEP 0: Checking USDC balance');
+
+    const provider = new JsonRpcProvider(networkConfig.rpcUrl);
+    const signer = new Wallet(CLIENT_PRIVATE_KEY, provider);
+
+    const usdcABI = [
+      'function balanceOf(address owner) view returns (uint256)'
+    ];
+    const usdc = new Contract(networkConfig.contracts.usdc, usdcABI, signer);
+
+    const balance = await usdc.balanceOf(CLIENT_ADDRESS);
+    console.log('   Client USDC balance:', formatUnits(balance, 6), 'USDC');
+
+    if (balance < BigInt(amountWei)) {
+      throw new Error(`Insufficient USDC balance. Have ${formatUnits(balance, 6)}, need ${amount} USDC`);
+    }
+    console.log('   ✅ Sufficient balance\n');
+
     // STEP 1: Create transaction
     console.log('📝 STEP 1: Client creates transaction');
-    console.log('   Amount:', formatUnits(amount, 6), 'USDC');
+    console.log('   Amount:', amount, 'USDC');
+    console.log('   Provider:', PROVIDER_ADDRESS);
     console.log('   Deadline: 24 hours');
     console.log('   Dispute window: 2 hours');
 
-    const txId = await clientSDK.kernel.createTransaction({
+    const txId = await clientSDK.intermediate.createTransaction({
       provider: PROVIDER_ADDRESS,
-      requester: CLIENT_ADDRESS,
-      amount,
-      deadline,
-      disputeWindow,
-      metadata
+      amount: amount,
+      deadline: deadline,
+      disputeWindow: disputeWindow,
+      serviceDescription: 'Test service - translation',
     });
 
     console.log('   ✅ Transaction ID:', txId);
     await sleep(2000);
 
     // Check state
-    let tx = await clientSDK.kernel.getTransaction(txId);
-    console.log('   State:', tx.state, '(INITIATED)');
+    let tx = await clientSDK.runtime.getTransaction(txId);
+    console.log('   State:', tx?.state, '(INITIATED)');
     console.log('');
 
-    // STEP 2: Link escrow (Kernel creates escrow internally)
-    console.log('💰 STEP 2: Client links escrow');
-    console.log('   Approving USDC for EscrowVault...');
-
-    const networkConfig = clientSDK.getNetworkConfig();
-
-    // Approve USDC transfer to EscrowVault
-    const { ethers } = await import('ethers');
-    const usdcABI = [
-      'function approve(address spender, uint256 amount) returns (bool)',
-      'function allowance(address owner, address spender) view returns (uint256)',
-      'function balanceOf(address owner) view returns (uint256)'
-    ];
-
-    // Get signer from SDK (uses CLIENT_PRIVATE_KEY)
-    const provider = clientSDK.getProvider();
-    const signer = new ethers.Wallet(CLIENT_PRIVATE_KEY, provider);
-    const usdc = new ethers.Contract(networkConfig.contracts.usdc, usdcABI, signer);
-
-    // Check balance first
-    const balance = await usdc.balanceOf(await signer.getAddress());
-    console.log('   Client USDC balance:', formatUnits(balance, 6), 'USDC');
-
-    console.log('   Approving', formatUnits(amount, 6), 'USDC for EscrowVault...');
-    console.log('   Spender:', networkConfig.contracts.escrowVault);
-
-    const approveTx = await usdc.approve(networkConfig.contracts.escrowVault, amount);
-    console.log('   Approve tx:', approveTx.hash);
-    const receipt = await approveTx.wait();
-    console.log('   Approve confirmed in block:', receipt.blockNumber);
-    console.log('   Approve status:', receipt.status === 1 ? 'SUCCESS' : 'FAILED');
-
-    if (receipt.status !== 1) {
-      throw new Error('USDC approval transaction failed');
-    }
-
-    // Wait for state to propagate (increased delay for RPC caching)
-    await sleep(3000);
-
-    // Verify allowance
-    const signerAddress = await signer.getAddress();
-    console.log('   Checking allowance for owner:', signerAddress);
-    const allowance = await usdc.allowance(signerAddress, networkConfig.contracts.escrowVault);
-    console.log('   ✅ USDC approved. Allowance:', formatUnits(allowance, 6), 'USDC');
-
-    if (allowance.lt(amount)) {
-      throw new Error(`Allowance insufficient! Expected ${formatUnits(amount, 6)} but got ${formatUnits(allowance, 6)}`);
-    }
-
-    // Generate escrowId (hash of transaction params)
-    const escrowId = ethers.utils.keccak256(
-      ethers.utils.defaultAbiCoder.encode(
-        ['bytes32', 'address', 'uint256'],
-        [txId, networkConfig.contracts.escrowVault, Date.now()]
-      )
-    );
-
-    console.log('   Linking escrow (Kernel creates escrow)...');
-    await clientSDK.kernel.linkEscrow(
-      txId,
-      networkConfig.contracts.escrowVault,
-      escrowId
-    );
-    console.log('   ✅ Escrow linked! USDC locked in vault');
+    // STEP 2: Link escrow (transitions to COMMITTED)
+    // Note: SDK's linkEscrow() handles USDC approval internally
+    console.log('💰 STEP 2: Client links escrow (SDK handles USDC approval)');
+    const escrowId = await clientSDK.intermediate.linkEscrow(txId);
+    console.log('   ✅ Escrow linked! ID:', escrowId);
     await sleep(2000);
 
-    tx = await clientSDK.kernel.getTransaction(txId);
-    console.log('   State:', tx.state, '(COMMITTED)');
+    tx = await clientSDK.runtime.getTransaction(txId);
+    console.log('   State:', tx?.state, '(COMMITTED)');
     console.log('');
 
-    // STEP 3: Provider signals work in progress
+    // STEP 4: Provider signals work in progress
     console.log('🔨 STEP 3: Provider starts work');
-    await providerSDK.kernel.transitionState(txId, 3); // IN_PROGRESS
+    await providerSDK.intermediate.transitionState(txId, 'IN_PROGRESS');
     console.log('   ✅ State: IN_PROGRESS');
     await sleep(2000);
     console.log('');
 
-    // STEP 4: Provider delivers result
+    // STEP 5: Provider delivers result
     console.log('📦 STEP 4: Provider delivers result');
-    await providerSDK.kernel.transitionState(txId, 4); // DELIVERED
+    // Note: For DELIVERED transition, 'proof' is actually the dispute window duration (uint256)
+    // - Empty bytes (0x) → uses DEFAULT_DISPUTE_WINDOW
+    // - ABI-encoded uint256 → custom dispute window
+    // We pass empty to use default dispute window
+    await providerSDK.runtime.transitionState(txId, 'DELIVERED', '0x');
     console.log('   ✅ State: DELIVERED');
     await sleep(2000);
 
-    tx = await clientSDK.kernel.getTransaction(txId);
-    console.log('   Created at:', new Date(tx.createdAt * 1000).toLocaleString());
+    tx = await clientSDK.runtime.getTransaction(txId);
+    console.log('   Completed at:', tx?.completedAt ? new Date(tx.completedAt * 1000).toLocaleString() : 'N/A');
     console.log('');
 
-    // STEP 5: Client settles transaction (releases payment)
-    console.log('💸 STEP 5: Client settles transaction');
-    console.log('   (In production, this can happen after dispute window expires)');
-    console.log('   Transitioning to SETTLED state (auto-releases escrow)...');
+    // STEP 6: Wait for dispute window (or skip for testing)
+    console.log('⏱️  STEP 5: Waiting for dispute window...');
+    console.log('   (In production, would wait', disputeWindow / 3600, 'hours)');
+    console.log('   For testing, settling immediately...');
 
-    await clientSDK.kernel.transitionState(txId, 5); // 5 = SETTLED state
-    console.log('   ✅ Transaction settled! Payment released to provider.');
+    // In mock mode, we can advance time. In testnet, we settle immediately.
+    // Note: On-chain settlement requires dispute window to expire
+    await clientSDK.intermediate.transitionState(txId, 'SETTLED');
+    console.log('   ✅ Transaction settled!');
     await sleep(2000);
 
-    tx = await clientSDK.kernel.getTransaction(txId);
-    console.log('   State:', tx.state, '(SETTLED)');
+    tx = await clientSDK.runtime.getTransaction(txId);
+    console.log('   Final State:', tx?.state);
     console.log('');
 
     // Final summary
@@ -181,7 +162,7 @@ async function main() {
     console.log('✅ HAPPY PATH TEST COMPLETE!');
     console.log('═══════════════════════════════════════');
     console.log('Transaction ID:', txId);
-    console.log('Final State:   SETTLED');
+    console.log('Final State:   ', tx?.state);
     console.log('');
     console.log('💰 Financial Summary:');
     console.log('   Gross amount:   100.00 USDC');
@@ -189,11 +170,12 @@ async function main() {
     console.log('   Provider net:    99.00 USDC');
     console.log('');
     console.log('📊 View on Basescan:');
-    console.log(`   https://sepolia.basescan.org/address/${tx.escrowContract}`);
+    console.log(`   https://sepolia.basescan.org/tx/${txId}`);
 
   } catch (error: any) {
     console.error('\n❌ Test failed:', error.message);
     if (error.reason) console.error('Reason:', error.reason);
+    if (error.data) console.error('Data:', error.data);
     if (error.transaction) console.error('Transaction:', error.transaction);
     process.exit(1);
   }

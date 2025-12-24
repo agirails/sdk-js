@@ -1,4 +1,5 @@
-import { Contract, Signer, AbiCoder, zeroPadValue } from 'ethers';
+import { AbiCoder, Signer } from 'ethers';
+import { EAS } from '@ethereum-attestation-service/eas-sdk';
 import { DeliveryProof } from '../types';
 import { deliveryProofDataFromProof } from '../types/eip712';
 import {
@@ -19,15 +20,8 @@ export interface AttestationResponse {
 /**
  * EASHelper - utility wrapper for Ethereum Attestation Service interactions
  */
-const EAS_ABI = [
-  'event Attested(address indexed attester, bytes32 indexed uid, bytes32 indexed schema)',
-  'function attest(tuple(bytes32 schema, tuple(address recipient, uint64 expirationTime, bool revocable, bytes32 refUID, bytes data) data) request) external returns (bytes32)',
-  'function revoke(tuple(bytes32 schema, bytes32 uid) request) external returns (bytes32)',
-  'function getAttestation(bytes32 uid) external view returns (tuple(bytes32 uid, bytes32 schema, address recipient, address attester, uint64 time, uint64 expirationTime, bool revocable, bytes32 refUID, bytes data, uint32 bump))'
-];
-
 export class EASHelper {
-  private readonly eas: Contract;
+  private readonly eas: EAS;
   private readonly attestationTracker: IUsedAttestationTracker;
 
   /**
@@ -56,8 +50,27 @@ export class EASHelper {
       throw new Error('deliveryProofSchemaId cannot be zero bytes32');
     }
 
-    this.eas = new Contract(config.contractAddress, EAS_ABI, signer);
+    // Use official EAS SDK wrapper to ensure ABI correctness across deployments
+    // (includes fields like revocationTime that are required for security checks).
+    this.eas = new EAS(config.contractAddress);
+    this.eas.connect(signer as any);
     // SECURITY FIX (C-1): Use provided tracker or create new in-memory one
+    if (!attestationTracker) {
+      // SECURITY WARNING (HIGH-5): In-memory tracker does not persist across restarts!
+      // For production use, provide a FileBasedUsedAttestationTracker with a stateDirectory:
+      //
+      //   import { FileBasedUsedAttestationTracker } from '../utils/UsedAttestationTracker';
+      //   const tracker = new FileBasedUsedAttestationTracker('/path/to/state');
+      //   const easHelper = new EASHelper(signer, config, tracker);
+      //
+      // Without persistence, attestation replay protection is lost on process restart,
+      // allowing potential double-spend attacks.
+      console.warn(
+        '[SECURITY WARNING] EASHelper: Using in-memory attestation tracker. ' +
+        'Replay protection will be lost on process restart. ' +
+        'For production, provide FileBasedUsedAttestationTracker for persistence.'
+      );
+    }
     this.attestationTracker = attestationTracker || new InMemoryUsedAttestationTracker();
   }
 
@@ -96,31 +109,26 @@ export class EASHelper {
       schema: this.config.deliveryProofSchemaId,
       data: {
         recipient,
-        expirationTime,
+        expirationTime: BigInt(expirationTime),
         revocable,
         refUID: proof.txId,
-        data: encodedData
+        data: encodedData,
+        // For Base EAS, value is typically 0. Keep explicit to avoid ambiguity.
+        value: 0n
       }
     });
 
-    const receipt = await tx.wait();
-    // ethers v6: events → logs, and logs are parsed differently
-    const attestedLog = receipt?.logs?.find((log: any) => {
-      try {
-        const parsed = this.eas.interface.parseLog(log);
-        return parsed?.name === 'Attested';
-      } catch {
-        return false;
-      }
-    });
-
-    const uid = attestedLog
-      ? this.eas.interface.parseLog(attestedLog)?.args?.uid
-      : zeroPadValue('0x00', 32);
+    const uid = await tx.wait();
+    if (!uid || !/^0x[a-fA-F0-9]{64}$/.test(uid)) {
+      throw new Error(`Failed to obtain attestation UID from EAS transaction. Got: ${String(uid)}`);
+    }
+    if (uid === '0x0000000000000000000000000000000000000000000000000000000000000000') {
+      throw new Error('EAS returned zero UID for attestation (unexpected).');
+    }
 
     return {
       uid,
-      transactionHash: receipt.transactionHash
+      transactionHash: tx.tx.hash
     };
   }
 
@@ -128,18 +136,24 @@ export class EASHelper {
    * Revoke a previously issued attestation by UID.
    */
   async revokeAttestation(uid: string): Promise<string> {
+    if (!uid || !/^0x[a-fA-F0-9]{64}$/.test(uid)) {
+      throw new Error(`Invalid attestation UID format: ${uid}`);
+    }
     const tx = await this.eas.revoke({
       schema: this.config.deliveryProofSchemaId,
-      uid
+      data: { uid }
     });
-    const receipt = await tx.wait();
-    return receipt.transactionHash;
+    await tx.wait();
+    return tx.tx.hash;
   }
 
   /**
    * Fetch attestation data from the EAS contract.
    */
   async getAttestation(uid: string) {
+    if (!uid || !/^0x[a-fA-F0-9]{64}$/.test(uid)) {
+      throw new Error(`Invalid attestation UID format: ${uid}`);
+    }
     return await this.eas.getAttestation(uid);
   }
 
@@ -164,6 +178,13 @@ export class EASHelper {
     txId: string,
     attestationUID: string
   ): Promise<boolean> {
+    if (!txId || !/^0x[a-fA-F0-9]{64}$/.test(txId)) {
+      throw new Error(`Invalid txId format (expected bytes32): ${txId}`);
+    }
+    if (!attestationUID || !/^0x[a-fA-F0-9]{64}$/.test(attestationUID)) {
+      throw new Error(`Invalid attestationUID format (expected bytes32): ${attestationUID}`);
+    }
+
     // 1. Fetch attestation from EAS contract
     const attestation = await this.eas.getAttestation(attestationUID);
 
@@ -184,84 +205,126 @@ export class EASHelper {
     // 4. Check revocation - EAS uses revocationTime field (not revoked boolean)
     // revocationTime = 0 means not revoked
     // revocationTime > 0 means revoked at that timestamp
-    // NOTE: attestation.revoked field does NOT exist! (see genetic-memory.md)
-    //
-    // SECURITY FIX (NEW-M-1): Fallback check for both revocationTime and revoked field
-    // Some EAS contract versions may use different field names
-    const isRevoked = (attestation.revocationTime && attestation.revocationTime > 0n) ||
-                      (attestation.revoked === true);
+    const revocationTime = BigInt((attestation as any).revocationTime ?? 0);
+    const isRevoked = revocationTime > 0n;
 
     if (isRevoked) {
-      const revokedAt = attestation.revocationTime || 'unknown';
       throw new Error(
-        `Attestation has been revoked: ${attestationUID} (revoked at timestamp ${revokedAt})`
+        `Attestation has been revoked: ${attestationUID} (revoked at timestamp ${revocationTime})`
       );
     }
 
     // 5. Check expiration
     // expirationTime = 0 means no expiration
     // expirationTime > 0 means expires at that timestamp
-    if (attestation.expirationTime > 0n) {
+    const expirationTime = BigInt((attestation as any).expirationTime ?? 0);
+    if (expirationTime > 0n) {
       const now = Math.floor(Date.now() / 1000);
-      if (Number(attestation.expirationTime) < now) {
+      if (Number(expirationTime) < now) {
         throw new Error(
-          `Attestation has expired: ${attestationUID} (expired at ${attestation.expirationTime})`
+          `Attestation has expired: ${attestationUID} (expired at ${expirationTime})`
         );
       }
     }
 
     // 6. Decode attestation data to extract txId
-    // Schema: bytes32 txId, bytes32 contentHash, uint256 timestamp, string deliveryUrl, uint256 size, string mimeType
-    let attestedTxId: string;
-    let contentHash: string;
-    let timestamp: bigint;
-    let deliveryUrl: string;
-    let size: bigint;
-    let mimeType: string;
+    let attestedTxId: string = '';
 
     try {
       const abiCoder = AbiCoder.defaultAbiCoder();
-      const decoded = abiCoder.decode(
-        ['bytes32', 'bytes32', 'uint256', 'string', 'uint256', 'string'],
-        attestation.data
-      );
+      const rawData: string = (attestation as any).data;
 
-      // SECURITY FIX (NEW-M-3): Validate decoded values explicitly
-      attestedTxId = decoded[0];
-      contentHash = decoded[1];
-      timestamp = decoded[2];
-      deliveryUrl = decoded[3];
-      size = decoded[4];
-      mimeType = decoded[5];
-
-      // Validate txId is bytes32 format
-      if (!attestedTxId || !/^0x[a-fA-F0-9]{64}$/.test(attestedTxId)) {
-        throw new Error(`Decoded txId is not valid bytes32: ${attestedTxId}`);
-      }
-
-      // Validate contentHash is bytes32 format
-      if (!contentHash || !/^0x[a-fA-F0-9]{64}$/.test(contentHash)) {
-        throw new Error(`Decoded contentHash is not valid bytes32: ${contentHash}`);
-      }
-
-      // Validate timestamp is reasonable (not in far future)
-      const now = Math.floor(Date.now() / 1000);
-      const maxFutureTime = now + 86400; // Allow 1 day clock skew
-      if (Number(timestamp) > maxFutureTime) {
-        throw new Error(
-          `Decoded timestamp is in far future: ${timestamp} (current time: ${now})`
+      // Prefer AIP-6 decoding (current DX Playground schema)
+      // - Official AIP-6: bytes32 txId,string resultCID,bytes32 resultHash,uint256 deliveredAt
+      // - Test schema:    + uint256 testTimestamp
+      try {
+        const decoded = abiCoder.decode(
+          ['bytes32', 'string', 'bytes32', 'uint256', 'uint256'],
+          rawData
         );
-      }
+        attestedTxId = decoded[0];
+        const resultCID: string = decoded[1];
+        const resultHash: string = decoded[2];
+        const deliveredAt: bigint = decoded[3];
 
-      // Validate size is non-negative
-      if (size < 0n) {
-        throw new Error(`Decoded size is negative: ${size}`);
+        if (!attestedTxId || !/^0x[a-fA-F0-9]{64}$/.test(attestedTxId)) {
+          throw new Error(`Decoded txId is not valid bytes32: ${attestedTxId}`);
+        }
+        if (typeof resultCID !== 'string' || resultCID.length === 0 || resultCID.length > 2048) {
+          throw new Error(`Decoded resultCID invalid length: ${resultCID?.length}`);
+        }
+        if (!resultHash || !/^0x[a-fA-F0-9]{64}$/.test(resultHash)) {
+          throw new Error(`Decoded resultHash is not valid bytes32: ${resultHash}`);
+        }
+        const now = BigInt(Math.floor(Date.now() / 1000));
+        if (deliveredAt > now + 86400n) {
+          throw new Error(`Decoded deliveredAt is in far future: ${deliveredAt.toString()}`);
+        }
+      } catch (_e) {
+        // Fallback: official AIP-6 schema without testTimestamp
+        try {
+          const decoded = abiCoder.decode(
+            ['bytes32', 'string', 'bytes32', 'uint256'],
+            rawData
+          );
+          attestedTxId = decoded[0];
+          const resultCID: string = decoded[1];
+          const resultHash: string = decoded[2];
+          const deliveredAt: bigint = decoded[3];
+
+          if (!attestedTxId || !/^0x[a-fA-F0-9]{64}$/.test(attestedTxId)) {
+            throw new Error(`Decoded txId is not valid bytes32: ${attestedTxId}`);
+          }
+          if (typeof resultCID !== 'string' || resultCID.length === 0 || resultCID.length > 2048) {
+            throw new Error(`Decoded resultCID invalid length: ${resultCID?.length}`);
+          }
+          if (!resultHash || !/^0x[a-fA-F0-9]{64}$/.test(resultHash)) {
+            throw new Error(`Decoded resultHash is not valid bytes32: ${resultHash}`);
+          }
+          const now = BigInt(Math.floor(Date.now() / 1000));
+          if (deliveredAt > now + 86400n) {
+            throw new Error(`Decoded deliveredAt is in far future: ${deliveredAt.toString()}`);
+          }
+        } catch (__e) {
+          // Final fallback: legacy AIP-4 schema
+          // Schema: bytes32 txId, bytes32 contentHash, uint256 timestamp, string deliveryUrl, uint256 size, string mimeType
+          const decoded = abiCoder.decode(
+            ['bytes32', 'bytes32', 'uint256', 'string', 'uint256', 'string'],
+            rawData
+          );
+          attestedTxId = decoded[0];
+          const contentHash: string = decoded[1];
+          const timestamp: bigint = decoded[2];
+          const deliveryUrl: string = decoded[3];
+          const size: bigint = decoded[4];
+          const mimeType: string = decoded[5];
+
+          if (!attestedTxId || !/^0x[a-fA-F0-9]{64}$/.test(attestedTxId)) {
+            throw new Error(`Decoded txId is not valid bytes32: ${attestedTxId}`);
+          }
+          if (!contentHash || !/^0x[a-fA-F0-9]{64}$/.test(contentHash)) {
+            throw new Error(`Decoded contentHash is not valid bytes32: ${contentHash}`);
+          }
+          const now = BigInt(Math.floor(Date.now() / 1000));
+          if (timestamp > now + 86400n) {
+            throw new Error(`Decoded timestamp is in far future: ${timestamp.toString()}`);
+          }
+          if (typeof deliveryUrl !== 'string' || deliveryUrl.length > 2048) {
+            throw new Error('Decoded deliveryUrl too long');
+          }
+          if (size < 0n) {
+            throw new Error(`Decoded size is negative: ${size}`);
+          }
+          if (typeof mimeType !== 'string' || mimeType.length > 256) {
+            throw new Error('Decoded mimeType too long');
+          }
+        }
       }
 
     } catch (error: any) {
       throw new Error(
         `Attestation data format mismatch: cannot decode attestation ${attestationUID}. ` +
-        `Expected AIP-4 delivery proof schema format. ` +
+        `Expected AIP-6 (preferred) or AIP-4 (legacy) delivery proof schema format. ` +
         `Original error: ${error.message}`
       );
     }
@@ -285,7 +348,14 @@ export class EASHelper {
     }
 
     // Record this attestation as used for this transaction
-    this.attestationTracker.recordUsage(attestationUID, txId);
+    const recorded = await this.attestationTracker.recordUsage(attestationUID, txId);
+    if (!recorded) {
+      const usedFor = this.attestationTracker.getUsageForAttestation(attestationUID);
+      throw new Error(
+        `Attestation replay attack detected: attestation ${attestationUID} ` +
+          `was already used for transaction ${usedFor}. Cannot reuse for ${txId}.`
+      );
+    }
 
     // All checks passed
     return true;
@@ -307,14 +377,5 @@ export class EASHelper {
   ): Promise<void> {
     // Verify the attestation
     await this.verifyDeliveryAttestation(txId, attestationUID);
-
-    // Additional check: Ensure it's recorded (verifyDeliveryAttestation already does this,
-    // but we explicitly verify here for safety)
-    if (!this.attestationTracker.isValidForTransaction(attestationUID, txId)) {
-      throw new Error(
-        `Attestation ${attestationUID} cannot be used for transaction ${txId}. ` +
-        `It may have been used for another transaction.`
-      );
-    }
   }
 }

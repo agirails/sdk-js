@@ -37,6 +37,7 @@
 
 import * as path from 'path';
 import * as os from 'os';
+import * as fs from 'fs';
 import { ethers } from 'ethers';
 import { MockRuntime } from './runtime/MockRuntime';
 import { MockStateManager } from './runtime/MockStateManager';
@@ -45,6 +46,7 @@ import { IACTPRuntime, IMockRuntime } from './runtime/IACTPRuntime';
 import { BeginnerAdapter } from './adapters/BeginnerAdapter';
 import { IntermediateAdapter } from './adapters/IntermediateAdapter';
 import { EASHelper, EASConfig } from './protocol/EASHelper';
+import { getNetwork } from './config/networks';
 
 // ============================================================================
 // Security: Path Validation
@@ -73,12 +75,31 @@ function validateStateDirectory(stateDirectory: string): void {
   // Resolve the path to get the absolute path
   const resolvedPath = path.resolve(stateDirectory);
 
+  // If path exists, reject symlinks and use realpath for boundary checks.
+  // This blocks symlink escapes like "~/project" -> "/etc".
+  let effectivePath = resolvedPath;
+  if (fs.existsSync(resolvedPath)) {
+    const st = fs.lstatSync(resolvedPath);
+    if (st.isSymbolicLink()) {
+      throw new Error(
+        'stateDirectory cannot be a symbolic link. ' +
+          `Path "${stateDirectory}" resolves to a symlink at "${resolvedPath}".`
+      );
+    }
+    if (!st.isDirectory()) {
+      throw new Error(
+        `stateDirectory must be a directory. Path "${resolvedPath}" is not a directory.`
+      );
+    }
+    effectivePath = fs.realpathSync(resolvedPath);
+  }
+
   // Get safe base directories
   const homeDir = os.homedir();
   const cwd = process.cwd();
 
   // Normalize paths for comparison (handle trailing slashes)
-  const normalizedResolved = resolvedPath.replace(/\/$/, '');
+  const normalizedResolved = effectivePath.replace(/\/$/, '');
   const normalizedHome = homeDir.replace(/\/$/, '');
   const normalizedCwd = cwd.replace(/\/$/, '');
 
@@ -257,6 +278,17 @@ export interface ACTPClientConfig {
    * Used in 'testnet' and 'mainnet' modes.
    */
   easConfig?: EASConfig;
+
+  /**
+   * Optional: Require valid EAS attestation before escrow release (blockchain modes).
+   *
+   * If true, `releaseEscrow()` will require an `attestationUID` and verify it on-chain via EAS.
+   *
+   * Default:
+   * - true when `easConfig` is provided
+   * - false otherwise
+   */
+  requireAttestation?: boolean;
 
   /**
    * Optional: Custom runtime instance.
@@ -504,18 +536,25 @@ export class ACTPClient {
             );
           }
 
-          if (!config.rpcUrl) {
-            throw new Error(
-              `rpcUrl is required for ${config.mode} mode`
-            );
+          // Map mode to network config
+          const network = config.mode === 'testnet' ? 'base-sepolia' : 'base-mainnet';
+
+          // Default RPC URL from network config if not provided
+          // This makes Level0/Agent usable on testnet without forcing users to pass rpcUrl explicitly.
+          const rpcUrl = config.rpcUrl ?? getNetwork(network).rpcUrl;
+
+          // Optional persistent state directory can be used for:
+          // - mock mode state (mock-state.json)
+          // - blockchain mode safety state (e.g., used-attestation replay protection)
+          if (config.stateDirectory) {
+            validateStateDirectory(config.stateDirectory);
           }
 
           // Create ethers provider and signer
-          const provider = new ethers.JsonRpcProvider(config.rpcUrl);
+          const provider = new ethers.JsonRpcProvider(rpcUrl);
           const signer = new ethers.Wallet(config.privateKey, provider);
 
-          // Map mode to network config
-          const network = config.mode === 'testnet' ? 'base-sepolia' : 'base-mainnet';
+          const requireAttestation = config.requireAttestation ?? Boolean(config.easConfig);
 
           // Create BlockchainRuntime
           const blockchainRuntime = new BlockchainRuntime({
@@ -524,6 +563,9 @@ export class ACTPClient {
             provider,
             contracts: config.contracts,
             gasSettings: config.gasSettings,
+            easConfig: config.easConfig,
+            requireAttestation,
+            stateDirectory: config.stateDirectory,
           });
 
           // Initialize async components
@@ -531,9 +573,10 @@ export class ACTPClient {
 
           runtime = blockchainRuntime;
 
-          // SECURITY FIX (C-4): Create EASHelper if configuration provided
+          // SECURITY FIX (C-4): Use the runtime's initialized EASHelper so
+          // adapters and runtime share the same tracker + verification logic.
           if (config.easConfig) {
-            easHelper = new EASHelper(signer, config.easConfig);
+            easHelper = blockchainRuntime.getEASHelper();
           }
           break;
         }

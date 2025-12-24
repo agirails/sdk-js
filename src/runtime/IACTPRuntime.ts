@@ -99,8 +99,13 @@ export interface IACTPRuntime {
    *
    * Validates the transition against the ACTP 8-state machine.
    *
+   * SECURITY FIX (PROOF-PARAM): Added optional proof parameter for DELIVERED state.
+   * The kernel contract uses proof data for dispute window configuration and
+   * delivery verification. Without proof, default dispute window applies.
+   *
    * @param txId - Transaction ID
    * @param newState - Target state
+   * @param proof - Optional proof data (required for DELIVERED, used for DISPUTED/SETTLED)
    *
    * @throws {TransactionNotFoundError} If transaction doesn't exist
    * @throws {InvalidStateTransitionError} If transition is not valid
@@ -108,10 +113,14 @@ export interface IACTPRuntime {
    *
    * @example
    * ```typescript
+   * // Simple transition
    * await runtime.transitionState(txId, 'DELIVERED');
+   *
+   * // With delivery proof
+   * await runtime.transitionState(txId, 'DELIVERED', deliveryProofBytes);
    * ```
    */
-  transitionState(txId: string, newState: TransactionState): Promise<void>;
+  transitionState(txId: string, newState: TransactionState, proof?: string): Promise<void>;
 
   /**
    * Gets a transaction by ID.
@@ -162,7 +171,7 @@ export interface IACTPRuntime {
    * await runtime.releaseEscrow(escrowId);
    * ```
    */
-  releaseEscrow(escrowId: string): Promise<void>;
+  releaseEscrow(escrowId: string, attestationUID?: string): Promise<void>;
 
   /**
    * Gets the balance of an escrow.
