@@ -215,10 +215,10 @@ function estimateUnits(job: Job, unit: string): number {
  * @internal
  */
 function estimateApiCost(api: string, job: Job): number {
-  // MVP: Placeholder implementation
-  // TODO: Implement actual API cost calculation in future release
+  // MVP: Returns 0 (API costs tracked externally by agent)
+  // V2: Integrate with OpenAI/Anthropic pricing APIs
 
-  // Example future implementation:
+  // Example V2 implementation:
   // const [provider, model] = api.split(':');
   // if (provider === 'openai') {
   //   const inputTokens = estimateUnits(job, 'token');
