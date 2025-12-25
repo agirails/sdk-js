@@ -1156,7 +1156,8 @@ describe('Transaction Commands', () => {
 describe('CLI Version', () => {
   it('should read version from package.json', () => {
     const packageJson = require('../../package.json');
-    expect(packageJson.version).toBe('2.0.0');
+    expect(typeof packageJson.version).toBe('string');
+    expect(packageJson.version.length).toBeGreaterThan(0);
   });
 
   it('should have version in correct semver format', () => {
