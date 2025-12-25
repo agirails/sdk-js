@@ -175,7 +175,7 @@ IPFS_GATEWAY=https://...
 
 - [Documentation](https://docs.agirails.io)
 - [GitHub](https://github.com/agirails/sdk)
-- [Discord](https://discord.gg/agirails)
+- [Discord](https://discord.gg/nuhCt75qe4)
 
 ## License
 
