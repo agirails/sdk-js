@@ -543,10 +543,10 @@ export class BlockchainRuntime implements IACTPRuntime {
         escrowId: tx.escrowId,
         createdAt: Number(tx.createdAt),
         updatedAt: Number(tx.updatedAt),
-        completedAt: 0, // TODO: Track completion timestamp
-        serviceDescription: '', // TODO: Fetch from contract
-        deliveryProof: '', // TODO: Fetch from contract
-        events: [], // TODO: Fetch from event monitor
+        completedAt: 0, // V2: Track via DELIVERED event timestamp
+        serviceDescription: '', // V2: Decode from on-chain serviceHash
+        deliveryProof: '', // V2: Fetch from EAS attestation
+        events: [], // V2: Populate via EventMonitor.getTransactionEvents()
       };
     } catch (error) {
       // If contract call fails, return null
@@ -560,9 +560,8 @@ export class BlockchainRuntime implements IACTPRuntime {
    * @returns Promise resolving to array of all transactions
    */
   async getAllTransactions(): Promise<MockTransaction[]> {
-    // For blockchain runtime, we cannot easily get all transactions
-    // This would require event indexing. For now, return empty array.
-    // TODO: Implement event-based transaction indexing
+    // V2: Implement event-based transaction indexing via EventMonitor
+    // For now, return empty array as this requires off-chain indexer
     console.warn(
       'getAllTransactions() not fully implemented for BlockchainRuntime. Use EventMonitor for event-based queries.'
     );
@@ -902,10 +901,9 @@ export class BlockchainRuntime implements IACTPRuntime {
     const feeData = await this.provider.getFeeData();
     const gasPrice = feeData.gasPrice ?? 0n;
 
-    // Estimate using contract method
-    // For now, use a conservative estimate based on typical createTransaction costs
-    // TODO: Implement actual contract gas estimation when kernel supports it
-    const estimatedGasLimit = 150000n; // Conservative estimate
+    // V2: Use kernel.estimateGas.createTransaction() for precise estimation
+    // Current: Conservative estimate based on typical createTransaction costs
+    const estimatedGasLimit = 150000n;
 
     const gasCostWei = estimatedGasLimit * gasPrice;
     const gasCostGwei = (Number(gasCostWei) / 1e9).toFixed(4);

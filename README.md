@@ -109,8 +109,10 @@ const result = await client.beginner.pay({
 
 | Network | Chain ID | Status |
 |---------|----------|--------|
-| Base Sepolia | 84532 | Testnet |
-| Base Mainnet | 8453 | Coming Soon |
+| Base Sepolia | 84532 | ✅ Active (Testnet) |
+| Base Mainnet | 8453 | ⏳ Not Deployed |
+
+> **Note**: Mainnet contracts are not yet deployed. Using `network: 'base-mainnet'` will throw an error. Use `'base-sepolia'` for development and testing.
 
 ## Transaction States
 

@@ -71,6 +71,10 @@ export const BASE_SEPOLIA: NetworkConfig = {
 
 /**
  * Base Mainnet Configuration
+ *
+ * WARNING: Mainnet contracts are NOT YET DEPLOYED.
+ * Using 'base-mainnet' will throw an error until contracts are deployed.
+ * Use 'base-sepolia' for testnet development.
  */
 export const BASE_MAINNET: NetworkConfig = {
   name: 'Base Mainnet',
@@ -78,7 +82,7 @@ export const BASE_MAINNET: NetworkConfig = {
   rpcUrl: BASE_MAINNET_RPC_URL,
   blockExplorer: 'https://basescan.org',
   contracts: {
-    // TODO: Update after mainnet deployment
+    // NOT DEPLOYED: Will throw error via validateNetworkConfig()
     actpKernel: '0x0000000000000000000000000000000000000000',
     escrowVault: '0x0000000000000000000000000000000000000000',
     usdc: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', // Official USDC on Base
@@ -87,7 +91,7 @@ export const BASE_MAINNET: NetworkConfig = {
     easSchemaRegistry: '0x4200000000000000000000000000000000000020'
   },
   eas: {
-    // TODO: Deploy delivery schema to mainnet
+    // NOT DEPLOYED: Requires mainnet schema registration
     deliverySchemaUID: '0x0000000000000000000000000000000000000000000000000000000000000000'
   },
   gasSettings: {

@@ -19,9 +19,10 @@ import { AIP4DeliveryProofTypes, AIP4DeliveryProofData, EIP712Domain } from '../
 
 /**
  * AGIRAILS Delivery Schema UID (Base Sepolia)
- * TODO: Update after schema deployment
+ * Deployed 2025-11-23 - AIP-4 delivery proof schema
+ * Schema: bytes32 txId, string resultCID, bytes32 resultHash, uint256 deliveredAt
  */
-export const AGIRAILS_DELIVERY_SCHEMA_UID = '0x0000000000000000000000000000000000000000000000000000000000000000'; // PENDING
+export const AGIRAILS_DELIVERY_SCHEMA_UID = '0x1b0ebdf0bd20c28ec9d5362571ce8715a55f46e81c3de2f9b0d8e1b95fb5ffce';
 
 /**
  * Delivery proof build parameters
