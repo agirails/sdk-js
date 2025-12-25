@@ -465,7 +465,7 @@ const DEFAULT_RECOVERY: ErrorRecoveryInfo = {
  * @example
  * ```typescript
  * try {
- *   await client.beginner.pay({ to: provider, amount: '100' });
+ *   await client.basic.pay({ to: provider, amount: '100' });
  * } catch (error) {
  *   const recovery = ErrorRecoveryGuide.analyze(error);
  *   console.log('Category:', recovery.category);
@@ -622,7 +622,7 @@ ${recovery.securityNotes.map((n) => `  ! ${n}`).join('\n')}`;
  * @example
  * ```typescript
  * const result = await withRecoveryGuidance(
- *   () => client.beginner.pay({ to: provider, amount: '100' }),
+ *   () => client.basic.pay({ to: provider, amount: '100' }),
  *   { logGuidance: true, autoRetry: true }
  * );
  * ```

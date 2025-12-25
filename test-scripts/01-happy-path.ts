@@ -2,7 +2,7 @@
  * ACTP Happy Path Test
  * Tests full transaction lifecycle: Create → Link → Progress → Deliver → Settle
  *
- * Updated for SDK v2.0.0 API (uses intermediate adapter)
+ * Updated for SDK v2.0.0 API (uses standard adapter)
  */
 
 import * as dotenv from 'dotenv';
@@ -60,7 +60,7 @@ async function main() {
   console.log('✅ SDK clients initialized\n');
 
   // Transaction parameters
-  // Note: IntermediateAdapter.parseAmount() expects human-readable amounts
+  // Note: StandardAdapter.parseAmount() expects human-readable amounts
   // '100' = 100 USDC, NOT '100000000' (which would be 100M USDC!)
   const amount = '100'; // 100 USDC (human-readable)
   const amountWei = '100000000'; // 100 USDC in wei for balance checks (6 decimals)
@@ -94,7 +94,7 @@ async function main() {
     console.log('   Deadline: 24 hours');
     console.log('   Dispute window: 2 hours');
 
-    const txId = await clientSDK.intermediate.createTransaction({
+    const txId = await clientSDK.standard.createTransaction({
       provider: PROVIDER_ADDRESS,
       amount: amount,
       deadline: deadline,
@@ -113,7 +113,7 @@ async function main() {
     // STEP 2: Link escrow (transitions to COMMITTED)
     // Note: SDK's linkEscrow() handles USDC approval internally
     console.log('💰 STEP 2: Client links escrow (SDK handles USDC approval)');
-    const escrowId = await clientSDK.intermediate.linkEscrow(txId);
+    const escrowId = await clientSDK.standard.linkEscrow(txId);
     console.log('   ✅ Escrow linked! ID:', escrowId);
     await sleep(2000);
 
@@ -123,7 +123,7 @@ async function main() {
 
     // STEP 4: Provider signals work in progress
     console.log('🔨 STEP 3: Provider starts work');
-    await providerSDK.intermediate.transitionState(txId, 'IN_PROGRESS');
+    await providerSDK.standard.transitionState(txId, 'IN_PROGRESS');
     console.log('   ✅ State: IN_PROGRESS');
     await sleep(2000);
     console.log('');
@@ -149,7 +149,7 @@ async function main() {
 
     // In mock mode, we can advance time. In testnet, we settle immediately.
     // Note: On-chain settlement requires dispute window to expire
-    await clientSDK.intermediate.transitionState(txId, 'SETTLED');
+    await clientSDK.standard.transitionState(txId, 'SETTLED');
     console.log('   ✅ Transaction settled!');
     await sleep(2000);
 

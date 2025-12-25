@@ -1,7 +1,7 @@
 /**
- * BeginnerAdapter Integration Tests
+ * BasicAdapter Integration Tests
  *
- * Tests the high-level BeginnerAdapter API with MockRuntime:
+ * Tests the high-level BasicAdapter API with MockRuntime:
  * - pay() - Create and fund transactions
  * - checkStatus() - Query transaction state and action hints
  *
@@ -12,20 +12,20 @@
  * - Integration with MockRuntime
  */
 
-import { BeginnerAdapter } from './BeginnerAdapter';
+import { BasicAdapter } from './BasicAdapter';
 import { MockRuntime } from '../runtime/MockRuntime';
 import { ValidationError } from './BaseAdapter';
 
-describe('BeginnerAdapter', () => {
+describe('BasicAdapter', () => {
   let runtime: MockRuntime;
-  let adapter: BeginnerAdapter;
+  let adapter: BasicAdapter;
   const requesterAddress = '0x1111111111111111111111111111111111111111';
   const providerAddress = '0x2222222222222222222222222222222222222222';
 
   beforeEach(async () => {
     runtime = new MockRuntime();
     await runtime.reset(); // Clear any persisted state
-    adapter = new BeginnerAdapter(runtime, requesterAddress);
+    adapter = new BasicAdapter(runtime, requesterAddress);
 
     // Mint initial funds to requester
     await runtime.mintTokens(requesterAddress, '10000000000'); // 10,000 USDC
@@ -359,7 +359,7 @@ describe('BeginnerAdapter', () => {
   describe('edge cases', () => {
     test('handles zero USDC balance (insufficient funds)', async () => {
       const poorRequester = '0x3333333333333333333333333333333333333333';
-      const poorAdapter = new BeginnerAdapter(runtime, poorRequester);
+      const poorAdapter = new BasicAdapter(runtime, poorRequester);
 
       // No minting - balance is 0
 

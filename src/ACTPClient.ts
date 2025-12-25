@@ -3,8 +3,8 @@
  *
  * Provides the unified API for interacting with the ACTP protocol
  * through three different abstraction levels:
- * - `beginner`: High-level, opinionated API for simple use cases
- * - `intermediate`: Balanced API with more control
+ * - `basic`: High-level, opinionated API for simple use cases
+ * - `standard`: Balanced API with more control
  * - `advanced`: Direct protocol access for full control
  *
  * @module ACTPClient
@@ -17,18 +17,18 @@
  *   requesterAddress: '0x1234...',
  * });
  *
- * // Beginner API - simplest approach
- * const result = await client.beginner.pay({
+ * // Basic API - simplest approach
+ * const result = await client.basic.pay({
  *   to: '0xProvider...',
  *   amount: '100',
  * });
  *
- * // Intermediate API - more control
- * const txId = await client.intermediate.createTransaction({
+ * // Standard API - more control
+ * const txId = await client.standard.createTransaction({
  *   provider: '0xProvider...',
  *   amount: '100',
  * });
- * await client.intermediate.linkEscrow(txId);
+ * await client.standard.linkEscrow(txId);
  *
  * // Advanced API - direct protocol access
  * const tx = await client.advanced.getTransaction(txId);
@@ -43,8 +43,8 @@ import { MockRuntime } from './runtime/MockRuntime';
 import { MockStateManager } from './runtime/MockStateManager';
 import { BlockchainRuntime } from './runtime/BlockchainRuntime';
 import { IACTPRuntime, IMockRuntime } from './runtime/IACTPRuntime';
-import { BeginnerAdapter } from './adapters/BeginnerAdapter';
-import { IntermediateAdapter } from './adapters/IntermediateAdapter';
+import { BasicAdapter } from './adapters/BasicAdapter';
+import { StandardAdapter } from './adapters/StandardAdapter';
 import { EASHelper, EASConfig } from './protocol/EASHelper';
 import { getNetwork } from './config/networks';
 
@@ -324,13 +324,13 @@ export interface ACTPClientInfo {
  * This class provides a unified interface to the ACTP protocol through
  * three abstraction levels, catering to developers with different needs:
  *
- * **Beginner API** (`client.beginner`):
+ * **Basic API** (`client.basic`):
  * - Simplest possible interface
  * - Smart defaults (24h deadline, 2-day dispute window)
  * - User-friendly inputs (strings, no BigInt)
  * - Perfect for: Quick prototypes, simple integrations
  *
- * **Intermediate API** (`client.intermediate`):
+ * **Standard API** (`client.standard`):
  * - Explicit lifecycle methods
  * - More control over transaction flow
  * - Still with user-friendly input parsing
@@ -352,15 +352,15 @@ export interface ACTPClientInfo {
  *
  * // Three ways to create a transaction:
  *
- * // 1. Beginner: One call does everything
- * await client.beginner.pay({ to: '0xProvider', amount: '100' });
+ * // 1. Basic: One call does everything
+ * await client.basic.pay({ to: '0xProvider', amount: '100' });
  *
- * // 2. Intermediate: Explicit steps
- * const txId = await client.intermediate.createTransaction({
+ * // 2. Standard: Explicit steps
+ * const txId = await client.standard.createTransaction({
  *   provider: '0xProvider',
  *   amount: '100',
  * });
- * await client.intermediate.linkEscrow(txId);
+ * await client.standard.linkEscrow(txId);
  *
  * // 3. Advanced: Full control
  * const txId = await client.advanced.createTransaction({
@@ -374,7 +374,7 @@ export interface ACTPClientInfo {
  */
 export class ACTPClient {
   /**
-   * Beginner-level API.
+   * Basic-level API.
    *
    * Provides the simplest interface for creating and checking transactions.
    * Ideal for developers who want to "just make it work" without deep
@@ -382,7 +382,7 @@ export class ACTPClient {
    *
    * @example
    * ```typescript
-   * const result = await client.beginner.pay({
+   * const result = await client.basic.pay({
    *   to: '0xProvider...',
    *   amount: '100',
    * });
@@ -390,10 +390,10 @@ export class ACTPClient {
    * console.log('State:', result.state); // 'COMMITTED'
    * ```
    */
-  public readonly beginner: BeginnerAdapter;
+  public readonly basic: BasicAdapter;
 
   /**
-   * Intermediate-level API.
+   * Standard-level API.
    *
    * Provides explicit lifecycle methods for more control over
    * the transaction flow while still offering user-friendly inputs.
@@ -401,20 +401,20 @@ export class ACTPClient {
    * @example
    * ```typescript
    * // Create transaction (INITIATED state)
-   * const txId = await client.intermediate.createTransaction({
+   * const txId = await client.standard.createTransaction({
    *   provider: '0xProvider...',
    *   amount: '100',
    *   deadline: '+7d',
    * });
    *
    * // Link escrow (auto-transitions to COMMITTED)
-   * await client.intermediate.linkEscrow(txId);
+   * await client.standard.linkEscrow(txId);
    *
    * // Transition to DELIVERED
-   * await client.intermediate.transitionState(txId, 'DELIVERED');
+   * await client.standard.transitionState(txId, 'DELIVERED');
    * ```
    */
-  public readonly intermediate: IntermediateAdapter;
+  public readonly standard: StandardAdapter;
 
   /**
    * The underlying runtime implementation.
@@ -447,8 +447,8 @@ export class ACTPClient {
     this.runtime = runtime;
     this.info = info;
     this.easHelper = easHelper;
-    this.beginner = new BeginnerAdapter(runtime, requesterAddress, easHelper);
-    this.intermediate = new IntermediateAdapter(runtime, requesterAddress, easHelper);
+    this.basic = new BasicAdapter(runtime, requesterAddress, easHelper);
+    this.standard = new StandardAdapter(runtime, requesterAddress, easHelper);
   }
 
   // ==========================================================================

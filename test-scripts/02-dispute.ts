@@ -63,7 +63,7 @@ async function main() {
     console.log('📝 Creating transaction...');
     console.log('   Amount:', amount, 'USDC');
 
-    const txId = await clientSDK.intermediate.createTransaction({
+    const txId = await clientSDK.standard.createTransaction({
       provider: PROVIDER_ADDRESS,
       amount: amount,
       deadline: deadline,
@@ -75,7 +75,7 @@ async function main() {
 
     // Link escrow
     console.log('💰 Linking escrow (SDK handles USDC approval)...');
-    const escrowId = await clientSDK.intermediate.linkEscrow(txId);
+    const escrowId = await clientSDK.standard.linkEscrow(txId);
     console.log('   ✅ Escrow linked! ID:', escrowId);
     await sleep(2000);
 
@@ -85,7 +85,7 @@ async function main() {
 
     // Provider starts work (required before DELIVERED)
     console.log('🔨 Provider starts work...');
-    await providerSDK.intermediate.transitionState(txId, 'IN_PROGRESS');
+    await providerSDK.standard.transitionState(txId, 'IN_PROGRESS');
     console.log('   ✅ State: IN_PROGRESS');
     await sleep(2000);
 
@@ -99,7 +99,7 @@ async function main() {
     // Client disputes!
     console.log('⚠️  CLIENT RAISES DISPUTE!');
     console.log('   Reason: "Work quality does not meet requirements"');
-    await clientSDK.intermediate.transitionState(txId, 'DISPUTED');
+    await clientSDK.standard.transitionState(txId, 'DISPUTED');
     console.log('   ✅ Dispute raised');
     await sleep(2000);
 

@@ -1,7 +1,7 @@
 /**
- * IntermediateAdapter Integration Tests
+ * StandardAdapter Integration Tests
  *
- * Tests the intermediate-level API with MockRuntime:
+ * Tests the standard-level API with MockRuntime:
  * - createTransaction() - Create transaction without escrow
  * - linkEscrow() - Link escrow and transition to COMMITTED
  * - transitionState() - Manual state transitions
@@ -10,20 +10,20 @@
  * - getTransaction() - Get transaction details
  */
 
-import { IntermediateAdapter } from './IntermediateAdapter';
+import { StandardAdapter } from './StandardAdapter';
 import { MockRuntime } from '../runtime/MockRuntime';
 import { ValidationError } from './BaseAdapter';
 
-describe('IntermediateAdapter', () => {
+describe('StandardAdapter', () => {
   let runtime: MockRuntime;
-  let adapter: IntermediateAdapter;
+  let adapter: StandardAdapter;
   const requesterAddress = '0x1111111111111111111111111111111111111111';
   const providerAddress = '0x2222222222222222222222222222222222222222';
 
   beforeEach(async () => {
     runtime = new MockRuntime();
     await runtime.reset(); // Clear any persisted state
-    adapter = new IntermediateAdapter(runtime, requesterAddress);
+    adapter = new StandardAdapter(runtime, requesterAddress);
 
     // Mint initial funds to requester
     await runtime.mintTokens(requesterAddress, '10000000000'); // 10,000 USDC

@@ -20,7 +20,7 @@
  * await client.mintTokens(client.getAddress(), '10000000000');
  *
  * // Create a payment
- * const result = await client.beginner.pay({
+ * const result = await client.basic.pay({
  *   to: '0xProvider...',
  *   amount: '100',
  * });
@@ -54,15 +54,15 @@ export {
 } from './adapters/BaseAdapter';
 
 export {
-  BeginnerAdapter,
-  BeginnerPayParams,
-  BeginnerPayResult,
-} from './adapters/BeginnerAdapter';
+  BasicAdapter,
+  BasicPayParams,
+  BasicPayResult,
+} from './adapters/BasicAdapter';
 
 export {
-  IntermediateAdapter,
-  IntermediateTransactionParams,
-} from './adapters/IntermediateAdapter';
+  StandardAdapter,
+  StandardTransactionParams,
+} from './adapters/StandardAdapter';
 
 // =============================================================================
 // Runtime Layer - Protocol Implementation

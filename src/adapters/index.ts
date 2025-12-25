@@ -3,8 +3,8 @@
  *
  * This module exports all adapter classes and types for the Three-Level API:
  * - BaseAdapter: Abstract base with shared utilities
- * - BeginnerAdapter: High-level, opinionated API
- * - IntermediateAdapter: Balanced control API
+ * - BasicAdapter: High-level, opinionated API
+ * - StandardAdapter: Balanced control API
  *
  * @module adapters
  */
@@ -18,8 +18,8 @@ export {
   MAX_DEADLINE_HOURS,
   MAX_DEADLINE_DAYS,
 } from './BaseAdapter';
-export { BeginnerAdapter, BeginnerPayParams, BeginnerPayResult } from './BeginnerAdapter';
-export { IntermediateAdapter, IntermediateTransactionParams } from './IntermediateAdapter';
+export { BasicAdapter, BasicPayParams, BasicPayResult } from './BasicAdapter';
+export { StandardAdapter, StandardTransactionParams } from './StandardAdapter';
 
 // Re-export runtime interface for convenience
 export { IACTPRuntime, CreateTransactionParams } from '../runtime/IACTPRuntime';

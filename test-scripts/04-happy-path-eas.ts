@@ -72,7 +72,7 @@ async function main() {
     console.log('   Deadline: 24 hours');
     console.log('   Dispute window: 2 hours');
 
-    const txId = await clientSDK.intermediate.createTransaction({
+    const txId = await clientSDK.standard.createTransaction({
       provider: PROVIDER_ADDRESS,
       amount: amount,
       deadline: deadline,
@@ -89,7 +89,7 @@ async function main() {
 
     // STEP 2: Link escrow
     console.log('STEP 2: Client links escrow (SDK handles USDC approval)');
-    const escrowId = await clientSDK.intermediate.linkEscrow(txId);
+    const escrowId = await clientSDK.standard.linkEscrow(txId);
     console.log('   Escrow linked! ID:', escrowId);
     await sleep(2000);
 
@@ -99,7 +99,7 @@ async function main() {
 
     // STEP 3: Provider starts work
     console.log('STEP 3: Provider starts work');
-    await providerSDK.intermediate.transitionState(txId, 'IN_PROGRESS');
+    await providerSDK.standard.transitionState(txId, 'IN_PROGRESS');
     console.log('   State: IN_PROGRESS');
     await sleep(2000);
     console.log('');
@@ -174,7 +174,7 @@ async function main() {
     console.log('STEP 6: Client settles transaction');
     console.log('   (In production, this can happen after dispute window expires)');
 
-    await clientSDK.intermediate.transitionState(txId, 'SETTLED');
+    await clientSDK.standard.transitionState(txId, 'SETTLED');
     console.log('   Transaction settled! Payment released to provider.');
     await sleep(2000);
 

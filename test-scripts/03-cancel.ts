@@ -57,7 +57,7 @@ async function main() {
     console.log('   Creating transaction...');
     console.log('   Amount:', amount, 'USDC');
 
-    const txId1 = await clientSDK.intermediate.createTransaction({
+    const txId1 = await clientSDK.standard.createTransaction({
       provider: PROVIDER_ADDRESS,
       amount: amount,
       deadline: deadline,
@@ -73,7 +73,7 @@ async function main() {
     console.log('\n   Client changes mind...');
     console.log('   Cancelling transaction...');
 
-    await clientSDK.intermediate.transitionState(txId1, 'CANCELLED');
+    await clientSDK.standard.transitionState(txId1, 'CANCELLED');
     console.log('   ✅ Transaction cancelled (no funds involved)');
     await sleep(2000);
 
@@ -88,7 +88,7 @@ async function main() {
 
     const shortDeadline = Math.floor(Date.now() / 1000) + 30; // 30 seconds
 
-    const txId2 = await clientSDK.intermediate.createTransaction({
+    const txId2 = await clientSDK.standard.createTransaction({
       provider: PROVIDER_ADDRESS,
       amount: amount,
       deadline: shortDeadline,
@@ -99,7 +99,7 @@ async function main() {
     await sleep(2000);
 
     console.log('   Linking escrow (SDK handles USDC approval)...');
-    const escrowId = await clientSDK.intermediate.linkEscrow(txId2);
+    const escrowId = await clientSDK.standard.linkEscrow(txId2);
     console.log('   ✅ Escrow linked! ID:', escrowId);
     console.log('   💰 25 USDC locked in escrow');
     await sleep(2000);
@@ -113,7 +113,7 @@ async function main() {
     console.log('   Client requests cancellation (deadline expired)...');
     console.log('   Cancelling transaction...');
 
-    await clientSDK.intermediate.transitionState(txId2, 'CANCELLED');
+    await clientSDK.standard.transitionState(txId2, 'CANCELLED');
     console.log('   ✅ Transaction cancelled');
     console.log('   💰 25 USDC refunded to client');
     await sleep(2000);
