@@ -49,7 +49,7 @@ export interface CreateTransactionParams {
  * });
  *
  * // Adapters work with either implementation
- * const adapter = new BeginnerAdapter(runtime, requesterAddress);
+ * const adapter = new BasicAdapter(runtime, requesterAddress);
  * ```
  */
 export interface IACTPRuntime {

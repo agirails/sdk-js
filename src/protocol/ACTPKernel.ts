@@ -455,13 +455,13 @@ export class ACTPKernel {
    *
    * **REQUIRED: Use secure wrapper methods instead:**
    *
-   * 1. **BeginnerAdapter.completePayment()** (recommended for most users)
+   * 1. **BasicAdapter.completePayment()** (recommended for most users)
    *    - Automatically verifies attestation before release
    *    - Validates attestation belongs to this transaction
    *    - Checks attestation hasn't been used before
    *    - Handles all state transitions
    *
-   * 2. **IntermediateAdapter.releaseEscrow()** (for more control)
+   * 2. **StandardAdapter.releaseEscrow()** (for more control)
    *    - Explicitly requires attestation verification
    *    - Throws error if attestation invalid or missing
    *    - Allows custom verification logic
@@ -493,15 +493,15 @@ export class ACTPKernel {
    *
    * **For testnet/mainnet deployments:**
    * - MUST configure easConfig in ACTPClient
-   * - MUST use wrapper methods (Beginner/Intermediate adapters)
+   * - MUST use wrapper methods (Basic/Standard adapters)
    * - NEVER call this method directly unless attestation verified
    *
    * @param txId - Transaction ID to settle
    * @throws {ValidationError} If txId is invalid
    * @throws {TransactionRevertedError} If contract reverts
    *
-   * @see {@link BeginnerAdapter.completePayment} Recommended method with built-in verification
-   * @see {@link IntermediateAdapter.releaseEscrow} Explicit verification method
+   * @see {@link BasicAdapter.completePayment} Recommended method with built-in verification
+   * @see {@link StandardAdapter.releaseEscrow} Explicit verification method
    * @see {@link EASHelper.verifyDeliveryAttestation} Manual verification helper
    */
   async releaseEscrow(txId: string): Promise<void> {

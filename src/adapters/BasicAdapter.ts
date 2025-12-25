@@ -1,5 +1,5 @@
 /**
- * BeginnerAdapter - High-level, opinionated API for simple use cases
+ * BasicAdapter - High-level, opinionated API for simple use cases
  *
  * Provides the simplest possible interface for creating and checking transactions.
  * Designed for developers who want to "just make it work" without deep protocol knowledge.
@@ -10,7 +10,7 @@
  * - User-friendly input (strings, no BigInt)
  * - User-friendly output (formatted amounts, ISO dates)
  *
- * @module adapters/BeginnerAdapter
+ * @module adapters/BasicAdapter
  */
 
 import { BaseAdapter, ValidationError, DEFAULT_DISPUTE_WINDOW_SECONDS } from './BaseAdapter';
@@ -21,9 +21,9 @@ import { EASHelper } from '../protocol/EASHelper';
 /**
  * Parameters for creating a simple payment.
  *
- * This is the most beginner-friendly interface - minimal required fields.
+ * This is the most user-friendly interface - minimal required fields.
  */
-export interface BeginnerPayParams {
+export interface BasicPayParams {
   /** Recipient address (provider) */
   to: string;
 
@@ -42,7 +42,7 @@ export interface BeginnerPayParams {
  *
  * Provides user-friendly formatted data (not raw protocol types).
  */
-export interface BeginnerPayResult {
+export interface BasicPayResult {
   /** Transaction ID (bytes32 hex string) */
   txId: string;
 
@@ -63,7 +63,7 @@ export interface BeginnerPayResult {
 }
 
 /**
- * BeginnerAdapter - High-level API for simple payment flows.
+ * BasicAdapter - High-level API for simple payment flows.
  *
  * This adapter provides the simplest possible interface:
  * - `pay()` - Create and fund a transaction in one call
@@ -76,7 +76,7 @@ export interface BeginnerPayResult {
  * const client = await ACTPClient.create({ mode: 'mock' });
  *
  * // Simple payment (all defaults)
- * const result = await client.beginner.pay({
+ * const result = await client.basic.pay({
  *   to: '0xProvider123',
  *   amount: '100',
  * });
@@ -84,15 +84,15 @@ export interface BeginnerPayResult {
  * console.log('Amount:', result.amount); // "100.00 USDC"
  *
  * // Check status
- * const status = await client.beginner.checkStatus(result.txId);
+ * const status = await client.basic.checkStatus(result.txId);
  * if (status.canAccept) {
  *   console.log('Provider can accept this transaction');
  * }
  * ```
  */
-export class BeginnerAdapter extends BaseAdapter {
+export class BasicAdapter extends BaseAdapter {
   /**
-   * Creates a new BeginnerAdapter instance.
+   * Creates a new BasicAdapter instance.
    *
    * @param runtime - ACTP runtime implementation (MockRuntime or BlockchainRuntime)
    * @param requesterAddress - The requester's Ethereum address
@@ -136,7 +136,7 @@ export class BeginnerAdapter extends BaseAdapter {
    * });
    * ```
    */
-  async pay(params: BeginnerPayParams): Promise<BeginnerPayResult> {
+  async pay(params: BasicPayParams): Promise<BasicPayResult> {
     // Validate and parse inputs
     const provider = this.validateAddress(params.to, 'to');
     const amount = this.parseAmount(params.amount);

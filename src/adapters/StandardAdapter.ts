@@ -1,7 +1,7 @@
 /**
- * IntermediateAdapter - Balanced API for developers with some protocol knowledge
+ * StandardAdapter - Balanced API for developers with some protocol knowledge
  *
- * Provides more control than BeginnerAdapter while still offering convenience:
+ * Provides more control than BasicAdapter while still offering convenience:
  * - Explicit transaction lifecycle methods
  * - Direct escrow operations
  * - State transition control
@@ -9,7 +9,7 @@
  * Use this adapter when you need fine-grained control but still want
  * user-friendly input parsing and validation.
  *
- * @module adapters/IntermediateAdapter
+ * @module adapters/StandardAdapter
  */
 
 import { BaseAdapter, ValidationError, DEFAULT_DISPUTE_WINDOW_SECONDS } from './BaseAdapter';
@@ -18,11 +18,11 @@ import { MockTransaction, TransactionState } from '../runtime/types/MockState';
 import { EASHelper } from '../protocol/EASHelper';
 
 /**
- * Parameters for creating a transaction (intermediate level).
+ * Parameters for creating a transaction (standard level).
  *
- * More explicit than BeginnerPayParams but still with smart defaults.
+ * More explicit than BasicPayParams but still with smart defaults.
  */
-export interface IntermediateTransactionParams {
+export interface StandardTransactionParams {
   /** Provider's Ethereum address */
   provider: string;
 
@@ -40,7 +40,7 @@ export interface IntermediateTransactionParams {
 }
 
 /**
- * IntermediateAdapter - Balanced API for transaction lifecycle control.
+ * StandardAdapter - Balanced API for transaction lifecycle control.
  *
  * Provides explicit methods for each stage of the ACTP lifecycle:
  * - `createTransaction()` - Create transaction without escrow
@@ -55,25 +55,25 @@ export interface IntermediateTransactionParams {
  * const client = await ACTPClient.create({ mode: 'mock' });
  *
  * // Create transaction (INITIATED state)
- * const txId = await client.intermediate.createTransaction({
+ * const txId = await client.standard.createTransaction({
  *   provider: '0xProvider123',
  *   amount: '100',
  *   deadline: '+7d',
  * });
  *
  * // Link escrow (auto-transitions to COMMITTED)
- * await client.intermediate.linkEscrow(txId, '100');
+ * await client.standard.linkEscrow(txId, '100');
  *
  * // Provider delivers
- * await client.intermediate.transitionState(txId, 'DELIVERED');
+ * await client.standard.transitionState(txId, 'DELIVERED');
  *
  * // Release funds after dispute window
- * await client.intermediate.releaseEscrow(escrowId);
+ * await client.standard.releaseEscrow(escrowId);
  * ```
  */
-export class IntermediateAdapter extends BaseAdapter {
+export class StandardAdapter extends BaseAdapter {
   /**
-   * Creates a new IntermediateAdapter instance.
+   * Creates a new StandardAdapter instance.
    *
    * @param runtime - ACTP runtime implementation (MockRuntime or BlockchainRuntime)
    * @param requesterAddress - The requester's Ethereum address
@@ -90,7 +90,7 @@ export class IntermediateAdapter extends BaseAdapter {
   /**
    * Create a transaction (INITIATED state, no escrow yet).
    *
-   * Unlike `beginner.pay()`, this only creates the transaction
+   * Unlike `basic.pay()`, this only creates the transaction
    * without linking escrow. You must call `linkEscrow()` separately.
    *
    * @param params - Transaction parameters
@@ -106,7 +106,7 @@ export class IntermediateAdapter extends BaseAdapter {
    * });
    * ```
    */
-  async createTransaction(params: IntermediateTransactionParams): Promise<string> {
+  async createTransaction(params: StandardTransactionParams): Promise<string> {
     const provider = this.validateAddress(params.provider, 'provider');
     const amount = this.parseAmount(params.amount);
     const currentTime = this.runtime.time.now();

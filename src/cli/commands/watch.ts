@@ -85,7 +85,7 @@ async function runWatch(
   }
 
   // Get initial state
-  const tx = await client.intermediate.getTransaction(txId);
+  const tx = await client.standard.getTransaction(txId);
   if (!tx) {
     throw new Error(`Transaction not found: ${txId}`);
   }
@@ -123,7 +123,7 @@ async function runWatch(
     }
 
     try {
-      const updatedTx = await client.intermediate.getTransaction(txId);
+      const updatedTx = await client.standard.getTransaction(txId);
       if (!updatedTx) {
         output.warning('Transaction no longer exists');
         process.exit(ExitCode.ERROR);

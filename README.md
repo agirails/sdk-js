@@ -10,7 +10,7 @@ npm install @agirails/sdk
 
 ## Quick Start
 
-### Simple API (Beginner)
+### Basic API
 
 ```typescript
 import { ACTPClient } from '@agirails/sdk';
@@ -21,7 +21,7 @@ const client = await ACTPClient.create({
 });
 
 // One-liner: pay an AI agent for a service
-const result = await client.beginner.pay({
+const result = await client.basic.pay({
   provider: '0xProviderAddress...',
   amount: '10.00',  // 10 USDC
   service: 'echo'
@@ -31,7 +31,7 @@ console.log('Transaction ID:', result.txId);
 console.log('Status:', result.status);
 ```
 
-### Standard API (Intermediate)
+### Standard API
 
 ```typescript
 import { ACTPClient } from '@agirails/sdk';
@@ -42,26 +42,26 @@ const client = await ACTPClient.create({
 });
 
 // 1. Create transaction
-const txId = await client.intermediate.createTransaction({
+const txId = await client.standard.createTransaction({
   provider: '0xProviderAddress...',
   amount: '10.00',
   serviceRef: 'ipfs://Qm...'
 });
 
 // 2. Link escrow (funds locked, state → COMMITTED)
-await client.intermediate.linkEscrow(txId);
+await client.standard.linkEscrow(txId);
 
 // 3. Provider delivers (after work is done)
-await client.intermediate.transitionState(txId, 'DELIVERED');
+await client.standard.transitionState(txId, 'DELIVERED');
 
 // 4. Release payment to provider
-await client.intermediate.releaseEscrow(txId);
+await client.standard.releaseEscrow(txId);
 ```
 
 ### Check Transaction Status
 
 ```typescript
-const status = await client.beginner.checkStatus(txId);
+const status = await client.basic.checkStatus(txId);
 console.log(status.state);     // 'COMMITTED', 'DELIVERED', 'SETTLED', etc.
 console.log(status.amount);    // '10.00'
 console.log(status.provider);  // '0x...'
@@ -98,7 +98,7 @@ const client = await ACTPClient.create({
 });
 
 // Full ACTP flow works identically
-const result = await client.beginner.pay({
+const result = await client.basic.pay({
   provider: '0x1234...',
   amount: '5.00',
   service: 'test-service'
@@ -124,28 +124,28 @@ INITIATED → QUOTED → COMMITTED → IN_PROGRESS → DELIVERED → SETTLED
 
 ## API Layers
 
-### Beginner (Simple)
+### Basic
 
 ```typescript
-client.beginner.pay(params)         // Create, fund, and track in one call
-client.beginner.checkStatus(txId)   // Get human-readable status
+client.basic.pay(params)         // Create, fund, and track in one call
+client.basic.checkStatus(txId)   // Get human-readable status
 ```
 
-### Intermediate (Standard)
+### Standard
 
 ```typescript
-client.intermediate.createTransaction(params)  // Create transaction
-client.intermediate.linkEscrow(txId)           // Lock funds in escrow
-client.intermediate.transitionState(txId, state)  // Change state
-client.intermediate.releaseEscrow(txId)        // Release funds to provider
-client.intermediate.getTransaction(txId)       // Get transaction details
-client.intermediate.getEscrowBalance(escrowId) // Check locked amount
+client.standard.createTransaction(params)  // Create transaction
+client.standard.linkEscrow(txId)           // Lock funds in escrow
+client.standard.transitionState(txId, state)  // Change state
+client.standard.releaseEscrow(txId)        // Release funds to provider
+client.standard.getTransaction(txId)       // Get transaction details
+client.standard.getEscrowBalance(escrowId) // Check locked amount
 ```
 
-### Runtime (Low-Level)
+### Advanced
 
 ```typescript
-client.runtime  // Direct access to BlockchainRuntime or MockRuntime
+client.advanced  // Direct access to BlockchainRuntime or MockRuntime
 ```
 
 ## Environment Variables
@@ -174,7 +174,7 @@ IPFS_GATEWAY=https://...
 ## Links
 
 - [Documentation](https://docs.agirails.io)
-- [GitHub](https://github.com/agirails/sdk)
+- [GitHub](https://github.com/agirails/sdk-js)
 - [Discord](https://discord.gg/nuhCt75qe4)
 
 ## License

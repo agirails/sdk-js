@@ -3,8 +3,8 @@
  *
  * Tests the main SDK entry point and Three-Level API integration:
  * - Client creation (factory method)
- * - Beginner API access
- * - Intermediate API access
+ * - Basic API access
+ * - Standard API access
  * - Advanced API access
  * - Cross-API consistency
  */
@@ -118,14 +118,14 @@ describe('ACTPClient', () => {
       await client.mintTokens(requesterAddress, '10000000000'); // 10,000 USDC
     });
 
-    describe('beginner API', () => {
-      test('provides BeginnerAdapter instance', () => {
-        expect(client.beginner).toBeDefined();
-        expect(client.beginner.constructor.name).toBe('BeginnerAdapter');
+    describe('basic API', () => {
+      test('provides BasicAdapter instance', () => {
+        expect(client.basic).toBeDefined();
+        expect(client.basic.constructor.name).toBe('BasicAdapter');
       });
 
       test('pay() creates and funds transaction', async () => {
-        const result = await client.beginner.pay({
+        const result = await client.basic.pay({
           to: providerAddress,
           amount: '100',
         });
@@ -136,57 +136,57 @@ describe('ACTPClient', () => {
       });
 
       test('checkStatus() returns transaction status', async () => {
-        const result = await client.beginner.pay({
+        const result = await client.basic.pay({
           to: providerAddress,
           amount: '100',
         });
 
-        const status = await client.beginner.checkStatus(result.txId);
+        const status = await client.basic.checkStatus(result.txId);
 
         expect(status.state).toBe('COMMITTED');
         expect(status.canComplete).toBe(true);
       });
     });
 
-    describe('intermediate API', () => {
-      test('provides IntermediateAdapter instance', () => {
-        expect(client.intermediate).toBeDefined();
-        expect(client.intermediate.constructor.name).toBe('IntermediateAdapter');
+    describe('standard API', () => {
+      test('provides StandardAdapter instance', () => {
+        expect(client.standard).toBeDefined();
+        expect(client.standard.constructor.name).toBe('StandardAdapter');
       });
 
       test('createTransaction() creates transaction in INITIATED state', async () => {
-        const txId = await client.intermediate.createTransaction({
+        const txId = await client.standard.createTransaction({
           provider: providerAddress,
           amount: '100',
         });
 
-        const tx = await client.intermediate.getTransaction(txId);
+        const tx = await client.standard.getTransaction(txId);
         expect(tx).not.toBeNull();
         expect(tx!.state).toBe('INITIATED');
       });
 
       test('linkEscrow() transitions to COMMITTED', async () => {
-        const txId = await client.intermediate.createTransaction({
+        const txId = await client.standard.createTransaction({
           provider: providerAddress,
           amount: '100',
         });
 
-        await client.intermediate.linkEscrow(txId);
+        await client.standard.linkEscrow(txId);
 
-        const tx = await client.intermediate.getTransaction(txId);
+        const tx = await client.standard.getTransaction(txId);
         expect(tx!.state).toBe('COMMITTED');
       });
 
       test('transitionState() advances transaction state', async () => {
-        const txId = await client.intermediate.createTransaction({
+        const txId = await client.standard.createTransaction({
           provider: providerAddress,
           amount: '100',
         });
-        await client.intermediate.linkEscrow(txId);
+        await client.standard.linkEscrow(txId);
 
-        await client.intermediate.transitionState(txId, 'DELIVERED');
+        await client.standard.transitionState(txId, 'DELIVERED');
 
-        const tx = await client.intermediate.getTransaction(txId);
+        const tx = await client.standard.getTransaction(txId);
         expect(tx!.state).toBe('DELIVERED');
       });
     });
@@ -225,18 +225,18 @@ describe('ACTPClient', () => {
 
     describe('cross-API consistency', () => {
       test('all three APIs create equivalent transactions', async () => {
-        // Create via beginner API
-        const beginnerResult = await client.beginner.pay({
+        // Create via basic API
+        const basicResult = await client.basic.pay({
           to: providerAddress,
           amount: '100',
         });
 
-        // Create via intermediate API
-        const intermediateTxId = await client.intermediate.createTransaction({
+        // Create via standard API
+        const standardTxId = await client.standard.createTransaction({
           provider: providerAddress,
           amount: '100',
         });
-        await client.intermediate.linkEscrow(intermediateTxId);
+        await client.standard.linkEscrow(standardTxId);
 
         // Create via advanced API
         const advancedTxId = await client.advanced.createTransaction({
@@ -248,16 +248,16 @@ describe('ACTPClient', () => {
         await client.advanced.linkEscrow(advancedTxId, '100000000');
 
         // Verify all three transactions exist and have same state
-        const beginnerTx = await client.advanced.getTransaction(beginnerResult.txId);
-        const intermediateTx = await client.advanced.getTransaction(intermediateTxId);
+        const basicTx = await client.advanced.getTransaction(basicResult.txId);
+        const standardTx = await client.advanced.getTransaction(standardTxId);
         const advancedTx = await client.advanced.getTransaction(advancedTxId);
 
-        expect(beginnerTx!.state).toBe('COMMITTED');
-        expect(intermediateTx!.state).toBe('COMMITTED');
+        expect(basicTx!.state).toBe('COMMITTED');
+        expect(standardTx!.state).toBe('COMMITTED');
         expect(advancedTx!.state).toBe('COMMITTED');
 
-        expect(beginnerTx!.amount).toBe('100000000');
-        expect(intermediateTx!.amount).toBe('100000000');
+        expect(basicTx!.amount).toBe('100000000');
+        expect(standardTx!.amount).toBe('100000000');
         expect(advancedTx!.amount).toBe('100000000');
       });
     });
@@ -297,7 +297,7 @@ describe('ACTPClient', () => {
         // Verify adapters receive normalized address by creating a transaction
         // and checking the requester field is normalized
         await client.mintTokens(mixedCase, '1000000000');
-        const txId = await client.intermediate.createTransaction({
+        const txId = await client.standard.createTransaction({
           provider: providerAddress,
           amount: '100',
         });
@@ -318,7 +318,7 @@ describe('ACTPClient', () => {
         await client.mintTokens(requesterAddress, '1000000000');
 
         // Create a transaction
-        await client.beginner.pay({
+        await client.basic.pay({
           to: providerAddress,
           amount: '100',
         });
@@ -411,19 +411,19 @@ describe('ACTPClient', () => {
       // Setup
       await client.mintTokens(requesterAddress, '10000000000');
 
-      // 1. Create payment (beginner API)
+      // 1. Create payment (basic API)
       // Note: disputeWindow minimum is 1 hour (3600 seconds) per L-1 security fix
-      const result = await client.beginner.pay({
+      const result = await client.basic.pay({
         to: providerAddress,
         amount: '100',
         disputeWindow: 3600, // 1 hour (minimum allowed)
       });
       expect(result.state).toBe('COMMITTED');
 
-      // 2. Provider delivers (intermediate API)
-      await client.intermediate.transitionState(result.txId, 'DELIVERED');
+      // 2. Provider delivers (standard API)
+      await client.standard.transitionState(result.txId, 'DELIVERED');
 
-      let status = await client.beginner.checkStatus(result.txId);
+      let status = await client.basic.checkStatus(result.txId);
       expect(status.state).toBe('DELIVERED');
       expect(status.canDispute).toBe(true);
 
@@ -432,7 +432,7 @@ describe('ACTPClient', () => {
       const mockRuntime = client.runtime as MockRuntime;
       await mockRuntime.time.advanceTime(3601); // 1 hour + 1 second
 
-      status = await client.beginner.checkStatus(result.txId);
+      status = await client.basic.checkStatus(result.txId);
       expect(status.canDispute).toBe(false);
 
       // 4. Release escrow
@@ -461,17 +461,17 @@ describe('ACTPClient', () => {
       await client.mintTokens(requesterAddress, '10000000000');
 
       // 1. Create payment
-      const result = await client.beginner.pay({
+      const result = await client.basic.pay({
         to: providerAddress,
         amount: '100',
         disputeWindow: 3600, // 1 hour
       });
 
       // 2. Provider delivers
-      await client.intermediate.transitionState(result.txId, 'DELIVERED');
+      await client.standard.transitionState(result.txId, 'DELIVERED');
 
       // 3. Requester disputes (within window)
-      await client.intermediate.transitionState(result.txId, 'DISPUTED');
+      await client.standard.transitionState(result.txId, 'DISPUTED');
 
       const tx = await client.advanced.getTransaction(result.txId);
       expect(tx!.state).toBe('DISPUTED');
@@ -491,13 +491,13 @@ describe('ACTPClient', () => {
       const initialBalance = await client.getBalance(requesterAddress);
 
       // 1. Create payment
-      const result = await client.beginner.pay({
+      const result = await client.basic.pay({
         to: providerAddress,
         amount: '100',
       });
 
       // 2. Cancel before delivery
-      await client.intermediate.transitionState(result.txId, 'CANCELLED');
+      await client.standard.transitionState(result.txId, 'CANCELLED');
 
       const tx = await client.advanced.getTransaction(result.txId);
       expect(tx!.state).toBe('CANCELLED');

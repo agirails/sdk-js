@@ -407,7 +407,7 @@ describe('Security Tests', () => {
 
     test('rejects dispute window below minimum (1 hour)', async () => {
       await expect(
-        client.beginner.pay({
+        client.basic.pay({
           to: providerAddress,
           amount: '100',
           disputeWindow: 60, // 1 minute - too short
@@ -417,7 +417,7 @@ describe('Security Tests', () => {
 
     test('rejects dispute window above maximum (30 days)', async () => {
       await expect(
-        client.beginner.pay({
+        client.basic.pay({
           to: providerAddress,
           amount: '100',
           disputeWindow: 31 * 24 * 3600, // 31 days - too long
@@ -426,7 +426,7 @@ describe('Security Tests', () => {
     });
 
     test('accepts dispute window at minimum boundary', async () => {
-      const result = await client.beginner.pay({
+      const result = await client.basic.pay({
         to: providerAddress,
         amount: '100',
         disputeWindow: 3600, // Exactly 1 hour
@@ -438,7 +438,7 @@ describe('Security Tests', () => {
     });
 
     test('accepts dispute window at maximum boundary', async () => {
-      const result = await client.beginner.pay({
+      const result = await client.basic.pay({
         to: providerAddress,
         amount: '100',
         disputeWindow: 30 * 24 * 3600, // Exactly 30 days
@@ -574,7 +574,7 @@ describe('Security Tests', () => {
 
     test('rejects invalid Ethereum addresses', async () => {
       await expect(
-        client.beginner.pay({
+        client.basic.pay({
           to: 'not-an-address',
           amount: '100',
         })
@@ -583,7 +583,7 @@ describe('Security Tests', () => {
 
     test('rejects negative amounts', async () => {
       await expect(
-        client.beginner.pay({
+        client.basic.pay({
           to: providerAddress,
           amount: '-100',
         })
@@ -592,7 +592,7 @@ describe('Security Tests', () => {
 
     test('rejects self-payment (potential exploit)', async () => {
       await expect(
-        client.beginner.pay({
+        client.basic.pay({
           to: requesterAddress, // Same as requester
           amount: '100',
         })
@@ -601,7 +601,7 @@ describe('Security Tests', () => {
 
     test('rejects deadline in the past', async () => {
       await expect(
-        client.beginner.pay({
+        client.basic.pay({
           to: providerAddress,
           amount: '100',
           deadline: Math.floor(Date.now() / 1000) - 1000, // In the past
@@ -611,7 +611,7 @@ describe('Security Tests', () => {
 
     test('enforces minimum transaction amount ($0.05)', async () => {
       await expect(
-        client.beginner.pay({
+        client.basic.pay({
           to: providerAddress,
           amount: '0.04', // Below $0.05 minimum
         })

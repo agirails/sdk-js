@@ -84,7 +84,7 @@ export interface BlockchainRuntimeConfig {
  * });
  *
  * // Now use with adapters
- * const adapter = new BeginnerAdapter(runtime, requesterAddress);
+ * const adapter = new BasicAdapter(runtime, requesterAddress);
  * await adapter.createJob({...});
  * ```
  */

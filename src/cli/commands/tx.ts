@@ -2,7 +2,7 @@
  * Transaction Commands - tx subcommand group
  *
  * Commands for managing ACTP transactions:
- * - tx create: Create a new transaction (intermediate API)
+ * - tx create: Create a new transaction (standard API)
  * - tx status: Check transaction status
  * - tx list: List all transactions
  * - tx deliver: Mark transaction as delivered
@@ -66,7 +66,7 @@ function createTxCreateCommand(): Command {
         const disputeWindow = parseInt(options.disputeWindow, 10);
 
         // Create transaction
-        const txId = await client.intermediate.createTransaction({
+        const txId = await client.standard.createTransaction({
           provider,
           amount,
           deadline,
@@ -77,10 +77,10 @@ function createTxCreateCommand(): Command {
         // Optionally fund
         let escrowId: string | undefined;
         if (options.fund) {
-          escrowId = await client.intermediate.linkEscrow(txId);
+          escrowId = await client.standard.linkEscrow(txId);
         }
 
-        const tx = await client.intermediate.getTransaction(txId);
+        const tx = await client.standard.getTransaction(txId);
         if (!tx) throw new Error('Transaction not found after creation');
 
         output.result(
@@ -134,13 +134,13 @@ function createTxStatusCommand(): Command {
         }
 
         const client = await createClient();
-        const tx = await client.intermediate.getTransaction(txId);
+        const tx = await client.standard.getTransaction(txId);
 
         if (!tx) {
           throw new Error(`Transaction not found: ${txId}`);
         }
 
-        const status = await client.beginner.checkStatus(txId);
+        const status = await client.basic.checkStatus(txId);
 
         if (options.quiet) {
           output.raw(tx.state);
@@ -289,9 +289,9 @@ function createTxDeliverCommand(): Command {
         const client = await createClient();
 
         // Transition to DELIVERED
-        await client.intermediate.transitionState(txId, 'DELIVERED' as TransactionState);
+        await client.standard.transitionState(txId, 'DELIVERED' as TransactionState);
 
-        const tx = await client.intermediate.getTransaction(txId);
+        const tx = await client.standard.getTransaction(txId);
         if (!tx) throw new Error('Transaction not found');
 
         output.result(
@@ -345,15 +345,15 @@ function createTxSettleCommand(): Command {
         const client = await createClient();
 
         // Get transaction to find escrow
-        const tx = await client.intermediate.getTransaction(txId);
+        const tx = await client.standard.getTransaction(txId);
         if (!tx) throw new Error(`Transaction not found: ${txId}`);
         if (!tx.escrowId) throw new Error('Transaction has no linked escrow');
 
         // Release escrow
-        await client.intermediate.releaseEscrow(tx.escrowId);
+        await client.standard.releaseEscrow(tx.escrowId);
 
         // Get updated transaction
-        const updatedTx = await client.intermediate.getTransaction(txId);
+        const updatedTx = await client.standard.getTransaction(txId);
         if (!updatedTx) throw new Error('Transaction not found');
 
         output.result(
@@ -402,9 +402,9 @@ function createTxCancelCommand(): Command {
         const client = await createClient();
 
         // Transition to CANCELLED
-        await client.intermediate.transitionState(txId, 'CANCELLED' as TransactionState);
+        await client.standard.transitionState(txId, 'CANCELLED' as TransactionState);
 
-        const tx = await client.intermediate.getTransaction(txId);
+        const tx = await client.standard.getTransaction(txId);
         if (!tx) throw new Error('Transaction not found');
 
         output.result(

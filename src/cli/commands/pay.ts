@@ -1,5 +1,5 @@
 /**
- * Pay Command - One-liner payment command (beginner API)
+ * Pay Command - One-liner payment command (basic API)
  *
  * The simplest way to create a payment transaction.
  * Creates transaction, links escrow, and returns immediately.
@@ -76,7 +76,7 @@ async function runPay(
     const disputeWindow = parseInt(options.disputeWindow, 10);
 
     // Create payment
-    const result = await client.beginner.pay({
+    const result = await client.basic.pay({
       to,
       amount,
       deadline,
