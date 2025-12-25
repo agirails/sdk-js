@@ -447,6 +447,11 @@ describe('QuoteBuilder', () => {
     });
 
     it('should reject expired quote', async () => {
+      // Use a short expiry window and wait for it to pass
+      // Note: expiresAt is in seconds (Unix timestamp)
+      const now = Math.floor(Date.now() / 1000);
+      const expiresAt = now + 2; // Expires in 2 seconds
+
       const params: QuoteParams = {
         txId: TX_ID,
         provider: providerDID,
@@ -454,18 +459,19 @@ describe('QuoteBuilder', () => {
         quotedAmount: '100000',
         originalAmount: '50000',
         maxPrice: '1000000',
-        expiresAt: Math.floor(Date.now() / 1000) + 2, // Expires in 2 seconds
+        expiresAt,
         chainId: 84532,
         kernelAddress: KERNEL_ADDRESS
       };
 
       const quote = await providerBuilder.build(params);
 
-      // Wait for expiry
-      await new Promise(resolve => setTimeout(resolve, 2500));
+      // Wait for quote to definitely expire (3 seconds, with buffer for timing variance)
+      await new Promise(resolve => setTimeout(resolve, 3000));
 
+      // Verify should reject the expired quote
       await expect(providerBuilder.verify(quote, KERNEL_ADDRESS)).rejects.toThrow('Quote expired');
-    }, 10000); // 10 second timeout for this test
+    }, 10000);
 
     it('should reject quote with invalid message type', async () => {
       const params: QuoteParams = {
