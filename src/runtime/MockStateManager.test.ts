@@ -646,7 +646,7 @@ describe('MockStateManager', () => {
     });
 
     it('should handle unicode in service descriptions', async () => {
-      const unicodeDesc = 'AI服务 🤖🚀 - Ümläuts: äöü - Special chars: <>\'\"&';
+      const unicodeDesc = 'AI服务 🤖🚀 - Ümläuts: äöü - Special chars: <>\'"&';
 
       await manager.withLock((state) => {
         state.transactions['0xunicode'] = {

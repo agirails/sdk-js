@@ -12,7 +12,7 @@
  * @module adapters/StandardAdapter
  */
 
-import { BaseAdapter, ValidationError, DEFAULT_DISPUTE_WINDOW_SECONDS } from './BaseAdapter';
+import { BaseAdapter, ValidationError } from './BaseAdapter';
 import { IACTPRuntime } from '../runtime/IACTPRuntime';
 import { MockTransaction, TransactionState } from '../runtime/types/MockState';
 import { EASHelper } from '../protocol/EASHelper';

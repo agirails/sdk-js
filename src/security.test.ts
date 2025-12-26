@@ -492,7 +492,7 @@ describe('Security Tests', () => {
 
     test('events survive runtime reload', async () => {
       // Create transaction
-      const txId = await runtime.createTransaction({
+      await runtime.createTransaction({
         provider: providerAddress,
         requester: requesterAddress,
         amount: '100000000',

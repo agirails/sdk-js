@@ -233,7 +233,7 @@ export class QuoteBuilder {
    */
   computeHash(quote: QuoteMessage): string {
     // Remove signature field for hashing
-    const { signature, ...quoteWithoutSig } = quote;
+    const { signature: _signature, ...quoteWithoutSig } = quote;
     return keccak256(toUtf8Bytes(canonicalJsonStringify(quoteWithoutSig)));
   }
 

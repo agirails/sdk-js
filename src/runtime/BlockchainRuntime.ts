@@ -892,7 +892,7 @@ export class BlockchainRuntime implements IACTPRuntime {
    * @param params - Transaction parameters
    * @returns Estimated gas limit and cost in wei
    */
-  async estimateCreateTransactionGas(params: CreateTransactionParams): Promise<{
+  async estimateCreateTransactionGas(_params: CreateTransactionParams): Promise<{
     gasLimit: bigint;
     gasCostWei: bigint;
     gasCostGwei: string;
@@ -921,7 +921,7 @@ export class BlockchainRuntime implements IACTPRuntime {
    * @param txId - Transaction ID
    * @returns Estimated gas limit and cost
    */
-  async estimateLinkEscrowGas(txId: string): Promise<{
+  async estimateLinkEscrowGas(_txId: string): Promise<{
     gasLimit: bigint;
     gasCostWei: bigint;
     gasCostGwei: string;
@@ -949,7 +949,7 @@ export class BlockchainRuntime implements IACTPRuntime {
    * @param newState - Target state
    * @returns Estimated gas limit and cost
    */
-  async estimateTransitionGas(txId: string, newState: string): Promise<{
+  async estimateTransitionGas(_txId: string, _newState: string): Promise<{
     gasLimit: bigint;
     gasCostWei: bigint;
     gasCostGwei: string;

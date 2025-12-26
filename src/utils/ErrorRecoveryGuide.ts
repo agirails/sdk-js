@@ -637,14 +637,12 @@ export async function withRecoveryGuidance<T>(
 ): Promise<T> {
   const { logGuidance = false, autoRetry = false, onError } = options;
 
-  let lastError: unknown;
   let attempts = 0;
 
   do {
     try {
       return await operation();
     } catch (error) {
-      lastError = error;
       const recovery = ErrorRecoveryGuide.analyze(error);
 
       if (onError) {
@@ -671,5 +669,6 @@ export async function withRecoveryGuidance<T>(
 
       throw error;
     }
+    // eslint-disable-next-line no-constant-condition
   } while (true);
 }

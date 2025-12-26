@@ -5,8 +5,8 @@
  * Focus on validation, signature, and verification logic.
  */
 
-import { QuoteBuilder, QuoteParams, QuoteMessage, AIP2QuoteTypes } from './QuoteBuilder';
-import { ethers, Wallet, HDNodeWallet } from 'ethers';
+import { QuoteBuilder, QuoteParams, AIP2QuoteTypes } from './QuoteBuilder';
+import { Wallet, HDNodeWallet } from 'ethers';
 import { InMemoryNonceManager } from '../utils/NonceManager';
 
 describe('QuoteBuilder', () => {

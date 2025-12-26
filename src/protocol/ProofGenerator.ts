@@ -230,6 +230,7 @@ export class ProofGenerator {
           throw new Error('Response body is not readable');
         }
 
+        // eslint-disable-next-line no-constant-condition
         while (true) {
           const { done, value } = await reader.read();
 

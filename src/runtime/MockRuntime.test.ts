@@ -28,7 +28,6 @@ import {
 } from './MockRuntime';
 import { CreateTransactionParams } from './IACTPRuntime';
 import { MockStateManager } from './MockStateManager';
-import { TransactionState } from './types/MockState';
 
 describe('MockRuntime', () => {
   let testDir: string;
