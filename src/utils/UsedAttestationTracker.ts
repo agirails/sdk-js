@@ -202,7 +202,7 @@ export class InMemoryUsedAttestationTracker implements IUsedAttestationTracker {
    *
    * @param maxAgeHours - Remove entries older than this many hours
    */
-  cleanupOldEntries(maxAgeHours: number): number {
+  cleanupOldEntries(_maxAgeHours: number): number {
     // In-memory tracker doesn't track timestamps
     // This is a placeholder for future enhancement
     console.warn(

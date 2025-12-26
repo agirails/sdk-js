@@ -482,22 +482,29 @@ describe('Nonce deadlock prevention', () => {
   });
 
   it('should not deadlock on concurrent access', async () => {
+    let timerId: ReturnType<typeof setTimeout> | undefined;
+
     const timeout = (ms: number) =>
-      new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('Timeout')), ms)
-      );
+      new Promise<never>((_, reject) => {
+        timerId = setTimeout(() => reject(new Error('Timeout')), ms);
+      });
 
     const operations = Array(100).fill(null).map(() =>
       nonceManager.getAndIncrementNonce('deadlock-test')
     );
 
-    // Should complete within 5 seconds, not deadlock
-    await expect(
-      Promise.race([
-        Promise.all(operations),
-        timeout(5000)
-      ])
-    ).resolves.toBeDefined();
+    try {
+      // Should complete within 5 seconds, not deadlock
+      await expect(
+        Promise.race([
+          Promise.all(operations),
+          timeout(5000)
+        ])
+      ).resolves.toBeDefined();
+    } finally {
+      // Always clear the timeout to prevent Jest open handle warning
+      if (timerId) clearTimeout(timerId);
+    }
   });
 
   it('should release lock after error', async () => {

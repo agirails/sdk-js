@@ -4,7 +4,7 @@
  * @packageDocumentation
  */
 
-import { JobHandler, Job } from './Job';
+import { Job } from './Job';
 
 /**
  * Wallet configuration options

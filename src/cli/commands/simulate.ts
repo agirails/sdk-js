@@ -14,7 +14,7 @@ import { Command } from 'commander';
 import { Output, ExitCode, fmt } from '../utils/output';
 import { loadConfig } from '../utils/config';
 import { mapError } from '../utils/client';
-import { BaseAdapter, ValidationError, MIN_AMOUNT_WEI } from '../../adapters/BaseAdapter';
+import { BaseAdapter } from '../../adapters/BaseAdapter';
 
 // ============================================================================
 // Command Definition

@@ -133,7 +133,7 @@ export abstract class BaseAdapter {
     // Converts all Unicode whitespace to regular spaces, then strip currency symbols
     let normalized = String(amount)
       .replace(/[\s\u00A0\u2000-\u200B\uFEFF]/g, ' ') // Replace all Unicode whitespace with regular space
-      .replace(/^[\$]/, '') // Strip leading $
+      .replace(/^[$]/, '') // Strip leading $
       .replace(/\s*(USDC|usdc)$/, '') // Strip trailing USDC
       .replace(/,/g, '') // Strip thousands separators
       .replace(/\s+/g, '') // Remove ALL whitespace (including normalized Unicode spaces)
@@ -417,7 +417,7 @@ export abstract class BaseAdapter {
 
     // Check it's not in the past (with 1 minute buffer)
     const now = Math.floor(Date.now() / 1000);
-    const oneMinuteAgo = now - 60;
+    const _oneMinuteAgo = now - 60; // Reserved for future validation
 
     // Only apply this check if it looks like a deadline/future timestamp
     // (e.g., createdAt can be in the past)

@@ -17,7 +17,6 @@ import {
   ExitCode,
   formatState,
   fmt,
-  OutputMode,
 } from './utils/output';
 import {
   saveConfig,
@@ -699,7 +698,7 @@ describe('Client Utils (Additional)', () => {
 
 describe('Init Command', () => {
   const { runInit } = require('./commands/init');
-  const { MockStateManager } = require('../runtime/MockStateManager');
+  require('../runtime/MockStateManager'); // Ensure module is loaded
 
   // Create a mock output that captures calls
   function createMockOutput() {

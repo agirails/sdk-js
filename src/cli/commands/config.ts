@@ -156,7 +156,7 @@ function createConfigSetCommand(): Command {
           updates.address = value.toLowerCase();
         }
 
-        const newConfig = updateConfig(updates);
+        updateConfig(updates);
 
         output.result({
           [key]: key === 'privateKey' ? '****' + value.slice(-4) : value,

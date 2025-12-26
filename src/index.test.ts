@@ -69,4 +69,28 @@ describe('SDK exports', () => {
     expect(lock).toBeInstanceOf(Error);
     expect(lock.statePath).toBe('/test/path');
   });
+
+  it('should export state types', () => {
+    // Verify type exports are defined (they're TypeScript interfaces/types)
+    // These are used as type annotations, not runtime values
+    const mockState: MockState = {} as MockState;
+    const mockTx: MockTransaction = {} as MockTransaction;
+    const mockEscrow: MockEscrow = {} as MockEscrow;
+    const mockAccount: MockAccount = {} as MockAccount;
+    const mockBlockchain: MockBlockchain = {} as MockBlockchain;
+    const mockEvent: MockEvent = {} as MockEvent;
+
+    // Just verify they're usable as types
+    expect(mockState).toBeDefined();
+    expect(mockTx).toBeDefined();
+    expect(mockEscrow).toBeDefined();
+    expect(mockAccount).toBeDefined();
+    expect(mockBlockchain).toBeDefined();
+    expect(mockEvent).toBeDefined();
+  });
+
+  it('should export TransactionState type', () => {
+    const state: TransactionState = 'INITIATED';
+    expect(state).toBe('INITIATED');
+  });
 });

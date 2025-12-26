@@ -157,7 +157,7 @@ export class MessageSigner {
       );
     }
 
-    const { type, version, from, to, timestamp, nonce, signature, ...payload } = message;
+    const { type, version, from, to, timestamp, nonce, signature: _sig, ...payload } = message;
 
     // SECURITY FIX (H-3): Validate nonce format (must be bytes32)
     if (!nonce || !/^0x[a-fA-F0-9]{64}$/.test(nonce)) {

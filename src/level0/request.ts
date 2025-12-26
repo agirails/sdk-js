@@ -164,7 +164,6 @@ export async function request(
 
     let tx = await client.runtime.getTransaction(txId);
     let attempts = 0;
-    let timedOut = false;
 
     while (tx && tx.state !== 'DELIVERED' && tx.state !== 'SETTLED' && attempts < maxAttempts) {
       // Check for terminal states that indicate failure
@@ -190,7 +189,7 @@ export async function request(
 
     // Check if we got a result
     if (!tx || (tx.state !== 'DELIVERED' && tx.state !== 'SETTLED')) {
-      timedOut = true;
+      const _timedOut = true; // Flag for potential future use
 
       // SECURITY FIX (H-3): Auto-cancel transaction on timeout if still in early state
       // This prevents funds from being locked indefinitely if provider never responds

@@ -6,7 +6,7 @@
  */
 
 import { ACTPKernel } from './ACTPKernel';
-import { ethers, Signer } from 'ethers';
+import { ethers } from 'ethers';
 import { State } from '../types';
 import {
   TransactionNotFoundError,
@@ -449,7 +449,7 @@ describe('ACTPKernel', () => {
 
   describe('getEconomicParams()', () => {
     it('should call individual view functions', async () => {
-      const params = await kernel.getEconomicParams();
+      await kernel.getEconomicParams();
 
       expect(mockContract.platformFeeBps).toHaveBeenCalled();
       expect(mockContract.requesterPenaltyBps).toHaveBeenCalled();
@@ -619,7 +619,7 @@ describe('ACTPKernel', () => {
         anchorAttestation: 80000n
       };
 
-      for (const [op, floor] of Object.entries(minFloors)) {
+      for (const [_op, floor] of Object.entries(minFloors)) {
         expect(floor).toBeGreaterThan(0n);
       }
     });
@@ -635,7 +635,7 @@ describe('ACTPKernel', () => {
         anchorAttestation: 1.15
       };
 
-      for (const [op, buffer] of Object.entries(buffers)) {
+      for (const [_op, buffer] of Object.entries(buffers)) {
         expect(buffer).toBeGreaterThanOrEqual(1.0);
         expect(buffer).toBeLessThanOrEqual(1.5);
       }

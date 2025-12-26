@@ -25,8 +25,6 @@ import {
   MockEscrow,
   MockEvent,
   TransactionState,
-  TransactionStateValue,
-  MOCK_STATE_DEFAULTS,
 } from './types/MockState';
 import { IACTPRuntime, CreateTransactionParams } from './IACTPRuntime';
 

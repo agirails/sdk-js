@@ -214,7 +214,7 @@ function estimateUnits(job: Job, unit: string): number {
  *
  * @internal
  */
-function estimateApiCost(api: string, job: Job): number {
+function estimateApiCost(_api: string, _job: Job): number {
   // MVP: Returns 0 (API costs tracked externally by agent)
   // V2: Integrate with OpenAI/Anthropic pricing APIs
 

@@ -10,10 +10,9 @@
  */
 
 import { Command } from 'commander';
-import { Output, ExitCode, fmt } from '../utils/output';
+import { Output, ExitCode } from '../utils/output';
 import { loadConfig } from '../utils/config';
 import { createClient, mapError } from '../utils/client';
-import { MockRuntime } from '../../runtime/MockRuntime';
 import { IMockRuntime } from '../../runtime/IACTPRuntime';
 
 // ============================================================================

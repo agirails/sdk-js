@@ -6,9 +6,8 @@
  */
 
 import { BlockchainRuntime, BlockchainRuntimeConfig } from './BlockchainRuntime';
-import { ethers, JsonRpcProvider, Wallet, Network } from 'ethers';
+import { JsonRpcProvider, Wallet, Network } from 'ethers';
 import { TransactionState } from './types/MockState';
-import { ValidationError } from '../errors';
 
 // Mock ethers modules
 jest.mock('ethers', () => {
@@ -340,7 +339,7 @@ describe('BlockchainRuntime', () => {
         CANCELLED: 7
       };
 
-      for (const [state, expected] of Object.entries(stateMap)) {
+      for (const [_state, expected] of Object.entries(stateMap)) {
         // Verify mapping exists
         expect(expected).toBeDefined();
       }

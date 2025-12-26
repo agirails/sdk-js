@@ -6,7 +6,7 @@
  */
 
 import { MessageSigner } from './MessageSigner';
-import { ethers, Wallet, HDNodeWallet } from 'ethers';
+import { Wallet, HDNodeWallet } from 'ethers';
 import { ACTPMessage } from '../types';
 import { SignatureVerificationError } from '../errors';
 import { IReceivedNonceTracker } from '../utils/ReceivedNonceTracker';
