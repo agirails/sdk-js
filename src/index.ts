@@ -218,6 +218,46 @@ export type {
 } from './level1';
 
 // =============================================================================
+// Storage Layer (AIP-7 §4) - Hybrid IPFS + Arweave
+// =============================================================================
+
+// Storage clients
+export { FilebaseClient } from './storage/FilebaseClient';
+export { ArweaveClient } from './storage/ArweaveClient';
+
+// Archive bundle builder
+export {
+  ArchiveBundleBuilder,
+  computeContentHash,
+  validateArchiveBundle,
+} from './storage/ArchiveBundleBuilder';
+
+// Storage types
+export type {
+  FilebaseConfig,
+  ArweaveConfig,
+  IrysCurrency,
+  IrysNetwork,
+  ArchiveBundle,
+  ArchiveChainId,
+  ArchiveFinalState,
+  ArchiveParticipants,
+  ArchiveReferences,
+  ArchiveHashes,
+  ArchiveSignatures,
+  ArchiveAttestation,
+  ArchiveSettlement,
+  EscrowRelease,
+  ArchiveTags,
+  IPFSUploadResult,
+  ArweaveUploadResult,
+  DownloadResult,
+} from './storage/types';
+
+// Storage constants
+export { ARCHIVE_BUNDLE_TYPE } from './storage/types';
+
+// =============================================================================
 // Enhanced Error Exports
 // =============================================================================
 
@@ -241,4 +281,18 @@ export {
   DisputeRaisedError,
   ServiceConfigError,
   AgentLifecycleError,
+  // Storage errors (AIP-7)
+  StorageError,
+  StorageAuthenticationError,
+  StorageRateLimitError,
+  UploadTimeoutError,
+  DownloadTimeoutError,
+  ContentNotFoundError,
+  FileSizeLimitExceededError,
+  InvalidCIDError,
+  ArweaveUploadError,
+  ArweaveDownloadError,
+  ArweaveTimeoutError,
+  InvalidArweaveTxIdError,
+  InsufficientBalanceError as StorageInsufficientBalanceError,
 } from './errors';

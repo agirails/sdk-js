@@ -2,12 +2,71 @@ import { isAddress, getAddress } from 'ethers';
 import {
   InvalidAddressError,
   InvalidAmountError,
-  ValidationError
+  ValidationError,
+  InvalidCIDError,
+  InvalidArweaveTxIdError
 } from '../errors';
 
 /**
  * Input validation utilities
  */
+
+// ============================================================================
+// Shared Validation Patterns (AIP-7 Storage)
+// ============================================================================
+
+/** Ethereum address validation pattern */
+export const ADDRESS_PATTERN = /^0x[a-fA-F0-9]{40}$/;
+
+/** Transaction ID (bytes32) validation pattern */
+export const TX_ID_PATTERN = /^0x[a-fA-F0-9]{64}$/;
+
+/** Hash (bytes32) validation pattern */
+export const HASH_PATTERN = /^0x[a-fA-F0-9]{64}$/;
+
+/** Signature (65 bytes = 130 hex chars) validation pattern */
+export const SIGNATURE_PATTERN = /^0x[a-fA-F0-9]{130}$/;
+
+/** CID validation pattern (CIDv0 or CIDv1) */
+export const CID_PATTERN = /^(Qm[1-9A-HJ-NP-Za-km-z]{44}|b[a-z2-7]{58,})$/;
+
+/** Arweave TX ID pattern (43 characters, base64url) */
+export const ARWEAVE_TX_ID_PATTERN = /^[a-zA-Z0-9_-]{43}$/;
+
+/** Semver pattern for version validation */
+export const SEMVER_PATTERN = /^\d+\.\d+\.\d+$/;
+
+// ============================================================================
+// Gateway URL Whitelist (SSRF Protection - P0-1)
+// ============================================================================
+
+/**
+ * Allowed IPFS gateway domains
+ * Only whitelisted gateways are allowed for downloads
+ */
+export const ALLOWED_IPFS_GATEWAYS = [
+  'ipfs.filebase.io',
+  'gateway.pinata.cloud',
+  'cloudflare-ipfs.com',
+  'ipfs.io',
+  'dweb.link',
+  'w3s.link',
+  'nftstorage.link'
+] as const;
+
+/**
+ * Allowed Arweave gateway domains
+ * Only whitelisted gateways are allowed for downloads
+ */
+export const ALLOWED_ARWEAVE_GATEWAYS = [
+  'arweave.net',
+  'gateway.irys.xyz',
+  'arweave.dev'
+] as const;
+
+// ============================================================================
+// Validation Functions
+// ============================================================================
 
 /**
  * Validate Ethereum address
@@ -113,13 +172,19 @@ function isPrivateIP(ip: string): boolean {
   }
 
   // IPv6 patterns (without brackets)
+  // Includes both standard ::ffff: and alternative ::ffff:0: notation (NEW-2 fix)
   const ipv6PrivatePatterns = [
     /^::1$/,                       // IPv6 loopback
     /^::ffff:127\./,               // IPv4-mapped localhost
+    /^::ffff:0:127\./,             // Alternative IPv4-mapped localhost
     /^::ffff:10\./,                // IPv4-mapped private 10.x
+    /^::ffff:0:10\./,              // Alternative IPv4-mapped private 10.x
     /^::ffff:192\.168\./,          // IPv4-mapped private 192.168.x
+    /^::ffff:0:192\.168\./,        // Alternative IPv4-mapped private 192.168.x
     /^::ffff:172\.(1[6-9]|2\d|3[01])\./,  // IPv4-mapped private 172.16-31.x
+    /^::ffff:0:172\.(1[6-9]|2\d|3[01])\./,// Alternative IPv4-mapped private 172.16-31.x
     /^::ffff:169\.254\./,          // IPv4-mapped link-local (CRITICAL: AWS metadata)
+    /^::ffff:0:169\.254\./,        // Alternative IPv4-mapped link-local
     /^fc00:/i,                     // IPv6 ULA fc00::/7
     /^fd/i,                        // IPv6 ULA fd00::/8
     /^fe80:/i                      // IPv6 link-local fe80::/10
@@ -242,5 +307,235 @@ export async function validateEndpointURL(endpoint: string, fieldName: string = 
   }
 
   // IPFS endpoints skip DNS check (no DNS resolution for IPFS CIDs)
+}
+
+// ============================================================================
+// Storage Validation Functions (AIP-7)
+// ============================================================================
+
+/**
+ * Validate IPFS CID format
+ *
+ * @param cid - IPFS CID to validate
+ * @param fieldName - Field name for error messages
+ * @throws {InvalidCIDError} If CID is invalid
+ */
+export function validateCID(cid: string, fieldName: string = 'cid'): void {
+  if (!cid || typeof cid !== 'string') {
+    throw new InvalidCIDError(String(cid), 'CID is required');
+  }
+
+  if (!CID_PATTERN.test(cid)) {
+    throw new InvalidCIDError(cid, 'Invalid CID format (expected CIDv0 Qm... or CIDv1 bafy...)');
+  }
+}
+
+/**
+ * Validate Arweave transaction ID format
+ *
+ * @param txId - Arweave TX ID to validate
+ * @param fieldName - Field name for error messages
+ * @throws {InvalidArweaveTxIdError} If TX ID is invalid
+ */
+export function validateArweaveTxId(txId: string, fieldName: string = 'txId'): void {
+  if (!txId || typeof txId !== 'string') {
+    throw new InvalidArweaveTxIdError(String(txId), 'TX ID is required');
+  }
+
+  if (!ARWEAVE_TX_ID_PATTERN.test(txId)) {
+    throw new InvalidArweaveTxIdError(
+      txId,
+      'Invalid format (expected 43 character base64url string)'
+    );
+  }
+}
+
+/**
+ * Validate gateway URL against whitelist (SSRF Protection - P0-1)
+ *
+ * SECURITY FIX: Only allow downloads from whitelisted gateway domains.
+ * This prevents SSRF attacks where attacker controls the gateway URL.
+ *
+ * @param url - Full gateway URL to validate
+ * @param allowedGateways - List of allowed gateway domains
+ * @param fieldName - Field name for error messages
+ * @throws {ValidationError} If gateway is not whitelisted
+ */
+export function validateGatewayURL(
+  url: string,
+  allowedGateways: readonly string[],
+  fieldName: string = 'gatewayUrl'
+): void {
+  if (!url || typeof url !== 'string') {
+    throw new ValidationError(fieldName, 'Gateway URL is required');
+  }
+
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(url);
+  } catch {
+    throw new ValidationError(fieldName, 'Invalid URL format');
+  }
+
+  // Must be HTTPS
+  if (parsedUrl.protocol !== 'https:') {
+    throw new ValidationError(fieldName, 'Gateway URL must use HTTPS');
+  }
+
+  // NEW-3: Validate port (must be 443 or default, prevents port bypass attacks)
+  const port = parsedUrl.port;
+  if (port && !['443', ''].includes(port)) {
+    throw new ValidationError(
+      fieldName,
+      `Gateway URL must use standard HTTPS port (443). Found port: ${port}. ` +
+      `Non-standard ports may bypass whitelist intent.`
+    );
+  }
+
+  // Check hostname against whitelist
+  const hostname = parsedUrl.hostname.toLowerCase();
+  const isAllowed = allowedGateways.some(gateway =>
+    hostname === gateway.toLowerCase() ||
+    hostname.endsWith('.' + gateway.toLowerCase())
+  );
+
+  if (!isAllowed) {
+    throw new ValidationError(
+      fieldName,
+      `Gateway "${hostname}" is not in the allowed list. ` +
+      `Allowed gateways: ${allowedGateways.join(', ')}. ` +
+      `This restriction prevents SSRF attacks.`
+    );
+  }
+}
+
+/**
+ * Validate semver version string
+ *
+ * @param version - Version string to validate
+ * @param fieldName - Field name for error messages
+ * @throws {ValidationError} If version is invalid
+ */
+export function validateSemver(version: string, fieldName: string = 'version'): void {
+  if (!version || typeof version !== 'string') {
+    throw new ValidationError(fieldName, 'Version is required');
+  }
+
+  if (!SEMVER_PATTERN.test(version)) {
+    throw new ValidationError(fieldName, 'Must be semver format (e.g., 1.0.0)');
+  }
+}
+
+/**
+ * Validate hash (bytes32) format
+ *
+ * @param hash - Hash to validate
+ * @param fieldName - Field name for error messages
+ * @throws {ValidationError} If hash is invalid
+ */
+export function validateHash(hash: string, fieldName: string = 'hash'): void {
+  if (!hash || typeof hash !== 'string') {
+    throw new ValidationError(fieldName, 'Hash is required');
+  }
+
+  if (!HASH_PATTERN.test(hash)) {
+    throw new ValidationError(fieldName, 'Invalid hash format (expected bytes32 hex string)');
+  }
+}
+
+/**
+ * Validate signature format (65 bytes)
+ *
+ * @param signature - Signature to validate
+ * @param fieldName - Field name for error messages
+ * @throws {ValidationError} If signature is invalid
+ */
+export function validateSignature(signature: string, fieldName: string = 'signature'): void {
+  if (!signature || typeof signature !== 'string') {
+    throw new ValidationError(fieldName, 'Signature is required');
+  }
+
+  if (!SIGNATURE_PATTERN.test(signature)) {
+    throw new ValidationError(
+      fieldName,
+      'Invalid signature format (expected 65 bytes = 0x + 130 hex chars)'
+    );
+  }
+}
+
+// ============================================================================
+// Error Sanitization (P0-2)
+// ============================================================================
+
+/**
+ * Sanitize error messages to remove sensitive data
+ *
+ * SECURITY FIX (P0-2): Removes credentials, private keys, and other
+ * sensitive data from error messages before logging/returning.
+ *
+ * @param error - Error to sanitize
+ * @returns Sanitized error message
+ */
+export function sanitizeErrorMessage(error: unknown): string {
+  if (!error) return 'Unknown error';
+
+  let message = '';
+  if (error instanceof Error) {
+    message = error.message;
+  } else if (typeof error === 'string') {
+    message = error;
+  } else {
+    message = String(error);
+  }
+
+  // Patterns to redact
+  const sensitivePatterns = [
+    // Private keys (hex)
+    /0x[a-fA-F0-9]{64}/g,
+    // AWS access key IDs
+    /AKIA[0-9A-Z]{16}/g,
+    // AWS secret keys (40 chars)
+    /[a-zA-Z0-9/+=]{40}/g,
+    // Bearer tokens
+    /Bearer\s+[a-zA-Z0-9._-]+/gi,
+    // API keys (generic pattern)
+    /api[_-]?key[=:]\s*["']?[a-zA-Z0-9_-]+["']?/gi,
+    // Secret in URL query params
+    /secret[=][^&\s]+/gi,
+    // Password in URL
+    /password[=][^&\s]+/gi,
+    // Authorization headers
+    /authorization[=:]\s*["']?[^"'\s]+["']?/gi
+  ];
+
+  let sanitized = message;
+  for (const pattern of sensitivePatterns) {
+    sanitized = sanitized.replace(pattern, '[REDACTED]');
+  }
+
+  return sanitized;
+}
+
+/**
+ * Create a safe error object for external consumption
+ *
+ * SECURITY FIX (P0-2): Returns error without stack trace or sensitive details
+ *
+ * @param error - Original error
+ * @param operation - What operation failed
+ * @returns Safe error object
+ */
+export function createSafeError(
+  error: unknown,
+  operation: string
+): { message: string; code: string; operation: string } {
+  const sanitizedMessage = sanitizeErrorMessage(error);
+
+  // Don't expose internal details - generic message with operation context
+  return {
+    message: `Operation failed: ${operation}. ${sanitizedMessage}`,
+    code: (error as any)?.code || 'UNKNOWN_ERROR',
+    operation
+  };
 }
 

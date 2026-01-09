@@ -30,6 +30,8 @@ export interface NetworkConfig {
     eas: string; // EAS contract address
     easSchemaRegistry: string; // EAS SchemaRegistry contract
     agentRegistry?: string; // AIP-7 Agent Registry (optional until deployed)
+    identityRegistry?: string; // AIP-7 ERC-1056 DID Registry (optional until deployed)
+    archiveTreasury?: string; // AIP-7 Archive Treasury for Arweave funding (optional until deployed)
   };
   eas: {
     deliverySchemaUID: string; // AIP-4 delivery proof schema
@@ -57,7 +59,11 @@ export const BASE_SEPOLIA: NetworkConfig = {
     eas: '0x4200000000000000000000000000000000000021',
     easSchemaRegistry: '0x4200000000000000000000000000000000000020',
     // AIP-7 Agent Registry (deployed 2025-12-11)
-    agentRegistry: '0xFed6914Aa70c0a53E9c7Cc4d2Ae159e4748fb09D'
+    agentRegistry: '0xFed6914Aa70c0a53E9c7Cc4d2Ae159e4748fb09D',
+    // AIP-7 Identity Registry - ERC-1056 DID Registry (deployed 2026-01-09)
+    identityRegistry: '0xF64F748C7802a68Cb936a9213881fE74e83FDA97',
+    // AIP-7 Archive Treasury - Arweave funding (deployed 2026-01-09)
+    archiveTreasury: '0xeB75DE7cF5ce77ab15BB0fFa3a2A79e6aaa554B0'
   },
   eas: {
     // Deployed 2025-11-23 - AIP-4 delivery proof schema
@@ -134,7 +140,9 @@ export function getNetwork(network: string): NetworkConfig {
       usdc: config.contracts.usdc,
       eas: config.contracts.eas,
       easSchemaRegistry: config.contracts.easSchemaRegistry,
-      agentRegistry: config.contracts.agentRegistry
+      agentRegistry: config.contracts.agentRegistry,
+      identityRegistry: config.contracts.identityRegistry,
+      archiveTreasury: config.contracts.archiveTreasury
     },
     eas: {
       deliverySchemaUID: config.eas.deliverySchemaUID
