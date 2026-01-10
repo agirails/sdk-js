@@ -115,7 +115,7 @@ export class DIDResolver {
         network: config.network,
         chainId: config.chainId || networkConfig.chainId,
         rpcUrl: config.rpcUrl || networkConfig.rpcUrl,
-        registryAddress: config.registryAddress || networkConfig.contracts.agentRegistry || ''
+        registryAddress: config.registryAddress || networkConfig.contracts.identityRegistry || ''
       };
     }
 
