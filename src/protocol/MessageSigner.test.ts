@@ -150,7 +150,8 @@ describe('MessageSigner', () => {
       await messageSigner.signMessage(message);
 
       expect(warnSpy).toHaveBeenCalledWith(
-        expect.stringContaining('sequential')
+        expect.stringContaining('sequential'),
+        expect.anything()
       );
 
       warnSpy.mockRestore();
@@ -165,7 +166,8 @@ describe('MessageSigner', () => {
       await messageSigner.signMessage(message);
 
       expect(warnSpy).toHaveBeenCalledWith(
-        expect.stringContaining('low entropy')
+        expect.stringContaining('low entropy'),
+        expect.anything()
       );
 
       warnSpy.mockRestore();
@@ -510,7 +512,8 @@ describe('MessageSigner', () => {
       await messageSigner.verifySignature(message, signature);
 
       expect(warnSpy).toHaveBeenCalledWith(
-        expect.stringContaining('chainId')
+        expect.stringContaining('chainId'),
+        expect.anything()
       );
 
       warnSpy.mockRestore();
