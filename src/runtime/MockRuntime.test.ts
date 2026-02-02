@@ -379,11 +379,19 @@ describe('MockRuntime', () => {
         expect(tx!.state).toBe('IN_PROGRESS');
       });
 
-      it('should transition COMMITTED -> DELIVERED', async () => {
+      it('should NOT transition COMMITTED -> DELIVERED directly (must go through IN_PROGRESS)', async () => {
+        // AUDIT FIX (2026-02): Contract requires IN_PROGRESS step before DELIVERED
         await runtime.mintTokens('0xRequester', '10000000');
         const txId = await runtime.createTransaction(createTxParams());
         await runtime.linkEscrow(txId, '1000000');
 
+        // Direct COMMITTED -> DELIVERED should fail
+        await expect(runtime.transitionState(txId, 'DELIVERED')).rejects.toThrow(
+          InvalidStateTransitionError
+        );
+
+        // Must go through IN_PROGRESS first
+        await runtime.transitionState(txId, 'IN_PROGRESS');
         await runtime.transitionState(txId, 'DELIVERED');
 
         const tx = await runtime.getTransaction(txId);
@@ -429,6 +437,7 @@ describe('MockRuntime', () => {
         await runtime.mintTokens('0xRequester', '10000000');
         const txId = await runtime.createTransaction(createTxParams());
         await runtime.linkEscrow(txId, '1000000');
+        await runtime.transitionState(txId, 'IN_PROGRESS'); // Required step
         await runtime.transitionState(txId, 'DELIVERED');
 
         await runtime.transitionState(txId, 'SETTLED');
@@ -441,6 +450,7 @@ describe('MockRuntime', () => {
         await runtime.mintTokens('0xRequester', '10000000');
         const txId = await runtime.createTransaction(createTxParams());
         await runtime.linkEscrow(txId, '1000000');
+        await runtime.transitionState(txId, 'IN_PROGRESS'); // Required step
         await runtime.transitionState(txId, 'DELIVERED');
 
         await runtime.transitionState(txId, 'DISPUTED');
@@ -453,6 +463,7 @@ describe('MockRuntime', () => {
         await runtime.mintTokens('0xRequester', '10000000');
         const txId = await runtime.createTransaction(createTxParams());
         await runtime.linkEscrow(txId, '1000000');
+        await runtime.transitionState(txId, 'IN_PROGRESS'); // Required step
         await runtime.transitionState(txId, 'DELIVERED');
         await runtime.transitionState(txId, 'DISPUTED');
 
@@ -462,10 +473,26 @@ describe('MockRuntime', () => {
         expect(tx!.state).toBe('SETTLED');
       });
 
+      it('should transition DISPUTED -> CANCELLED (admin/pauser emergency)', async () => {
+        // AUDIT FIX (2026-02): DISPUTED can also be CANCELLED by admin/pauser
+        await runtime.mintTokens('0xRequester', '10000000');
+        const txId = await runtime.createTransaction(createTxParams());
+        await runtime.linkEscrow(txId, '1000000');
+        await runtime.transitionState(txId, 'IN_PROGRESS');
+        await runtime.transitionState(txId, 'DELIVERED');
+        await runtime.transitionState(txId, 'DISPUTED');
+
+        await runtime.transitionState(txId, 'CANCELLED');
+
+        const tx = await runtime.getTransaction(txId);
+        expect(tx!.state).toBe('CANCELLED');
+      });
+
       it('should set completedAt when transitioning to DELIVERED', async () => {
         await runtime.mintTokens('0xRequester', '10000000');
         const txId = await runtime.createTransaction(createTxParams());
         await runtime.linkEscrow(txId, '1000000');
+        await runtime.transitionState(txId, 'IN_PROGRESS'); // Required step
 
         const deliveryTime = runtime.time.now();
         await runtime.transitionState(txId, 'DELIVERED');
@@ -522,6 +549,7 @@ describe('MockRuntime', () => {
         await runtime.mintTokens('0xRequester', '10000000');
         const txId = await runtime.createTransaction(createTxParams());
         await runtime.linkEscrow(txId, '1000000');
+        await runtime.transitionState(txId, 'IN_PROGRESS'); // Required step
         await runtime.transitionState(txId, 'DELIVERED');
 
         await expect(runtime.transitionState(txId, 'COMMITTED')).rejects.toThrow(
@@ -533,6 +561,7 @@ describe('MockRuntime', () => {
         await runtime.mintTokens('0xRequester', '10000000');
         const txId = await runtime.createTransaction(createTxParams());
         await runtime.linkEscrow(txId, '1000000');
+        await runtime.transitionState(txId, 'IN_PROGRESS'); // Required step
         await runtime.transitionState(txId, 'DELIVERED');
         await runtime.transitionState(txId, 'SETTLED');
 
@@ -741,6 +770,7 @@ describe('MockRuntime', () => {
         await runtime.mintTokens('0xRequester', '10000000');
         txId = await runtime.createTransaction(createTxParams());
         escrowId = await runtime.linkEscrow(txId, '1000000');
+        await runtime.transitionState(txId, 'IN_PROGRESS'); // Required step per audit fix
         await runtime.transitionState(txId, 'DELIVERED');
         // Advance time past dispute window (default 2 days = 172800 seconds)
         await runtime.time.advanceTime(172801);
@@ -989,13 +1019,14 @@ describe('MockRuntime', () => {
         const txId2 = await runtime.createTransaction(createTxParams());
 
         await runtime.linkEscrow(txId1, '1000000');
+        await runtime.transitionState(txId1, 'IN_PROGRESS'); // Required step
         await runtime.transitionState(txId1, 'DELIVERED');
 
         const tx1Events = runtime.events.getByTransaction(txId1);
         const tx2Events = runtime.events.getByTransaction(txId2);
 
-        // txId1 should have: TransactionCreated, EscrowLinked, StateTransitioned (to COMMITTED), StateTransitioned (to DELIVERED)
-        expect(tx1Events.length).toBeGreaterThanOrEqual(4);
+        // txId1 should have: TransactionCreated, EscrowLinked, StateTransitioned (COMMITTED), StateTransitioned (IN_PROGRESS), StateTransitioned (DELIVERED)
+        expect(tx1Events.length).toBeGreaterThanOrEqual(5);
         // txId2 should only have TransactionCreated
         expect(tx2Events).toHaveLength(1);
       });
@@ -1093,7 +1124,7 @@ describe('MockRuntime', () => {
   // ============================================================================
 
   describe('Complete Transaction Flow', () => {
-    it('should complete happy path: INITIATED -> COMMITTED -> DELIVERED -> SETTLED', async () => {
+    it('should complete happy path: INITIATED -> COMMITTED -> IN_PROGRESS -> DELIVERED -> SETTLED', async () => {
       // Setup
       const requester = '0xRequester';
       const provider = '0xProvider';
@@ -1116,6 +1147,11 @@ describe('MockRuntime', () => {
       const escrowId = await runtime.linkEscrow(txId, amount);
       tx = await runtime.getTransaction(txId);
       expect(tx!.state).toBe('COMMITTED');
+
+      // AUDIT FIX: Must go through IN_PROGRESS before DELIVERED
+      await runtime.transitionState(txId, 'IN_PROGRESS');
+      tx = await runtime.getTransaction(txId);
+      expect(tx!.state).toBe('IN_PROGRESS');
 
       // Provider delivers
       await runtime.transitionState(txId, 'DELIVERED');
@@ -1197,6 +1233,9 @@ describe('MockRuntime', () => {
         deadline: runtime.time.now() + 86400,
       });
       await runtime.linkEscrow(txId, amount);
+
+      // Must go through IN_PROGRESS before DELIVERED
+      await runtime.transitionState(txId, 'IN_PROGRESS');
 
       // Deliver
       await runtime.transitionState(txId, 'DELIVERED');
@@ -1521,7 +1560,8 @@ describe('MockRuntime', () => {
       );
       const escrowId = await runtime.linkEscrow(txId, '1000000');
 
-      // Transition to DELIVERED
+      // Transition through IN_PROGRESS to DELIVERED
+      await runtime.transitionState(txId, 'IN_PROGRESS');
       await runtime.transitionState(txId, 'DELIVERED');
 
       // Immediately try to release - should fail
@@ -1536,6 +1576,7 @@ describe('MockRuntime', () => {
         createTxParams({ disputeWindow: 3600 })
       );
       const escrowId = await runtime.linkEscrow(txId, '1000000');
+      await runtime.transitionState(txId, 'IN_PROGRESS');
       await runtime.transitionState(txId, 'DELIVERED');
 
       const tx = await runtime.getTransaction(txId);
@@ -1560,6 +1601,7 @@ describe('MockRuntime', () => {
         createTxParams({ disputeWindow: 3600 }) // 1 hour
       );
       const escrowId = await runtime.linkEscrow(txId, '1000000');
+      await runtime.transitionState(txId, 'IN_PROGRESS');
       await runtime.transitionState(txId, 'DELIVERED');
 
       // Advance time past dispute window
@@ -1581,6 +1623,7 @@ describe('MockRuntime', () => {
         createTxParams({ disputeWindow: 3600 })
       );
       const escrowId = await runtime.linkEscrow(txId, '1000000');
+      await runtime.transitionState(txId, 'IN_PROGRESS');
       await runtime.transitionState(txId, 'DELIVERED');
 
       // Advance time to exactly the dispute window end
@@ -1599,6 +1642,7 @@ describe('MockRuntime', () => {
         createTxParams({ disputeWindow: 100 }) // Short window for test
       );
       const escrowId = await runtime.linkEscrow(txId, '1000000');
+      await runtime.transitionState(txId, 'IN_PROGRESS');
       await runtime.transitionState(txId, 'DELIVERED');
 
       // Advance time 1 second past window
@@ -1614,6 +1658,7 @@ describe('MockRuntime', () => {
       await runtime.mintTokens('0xRequester', '10000000');
       const txId = await runtime.createTransaction(createTxParams()); // Default 2 days
       const escrowId = await runtime.linkEscrow(txId, '1000000');
+      await runtime.transitionState(txId, 'IN_PROGRESS');
       await runtime.transitionState(txId, 'DELIVERED');
 
       // Try to release immediately
@@ -1641,6 +1686,7 @@ describe('MockRuntime', () => {
         createTxParams({ disputeWindow: 1 })
       );
       const escrowId = await runtime.linkEscrow(txId, '1000000');
+      await runtime.transitionState(txId, 'IN_PROGRESS');
       await runtime.transitionState(txId, 'DELIVERED');
 
       // Immediately should fail

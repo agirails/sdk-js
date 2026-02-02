@@ -681,16 +681,18 @@ export class ACTPKernel {
       validateAddress(mediator, 'mediator');
     }
 
-    // Encode resolution proof (128 bytes: 3x uint256 + address)
-    // Kernel contract will decode this in _decodeResolutionProof and disburse funds
+    // Encode resolution proof (128 bytes: 2x uint256 + address + uint256)
+    // AUDIT FIX (2026-02): Contract expects: (uint256, uint256, address, uint256)
+    // = [requesterAmount, providerAmount, mediator, mediatorAmount]
+    // See ACTPKernel.sol _decodeResolutionProof() line 654-655
     const abiCoder = AbiCoder.defaultAbiCoder();
     const proofData = abiCoder.encode(
-      ['uint256', 'uint256', 'uint256', 'address'],
+      ['uint256', 'uint256', 'address', 'uint256'],
       [
         requesterAmount,
         providerAmount,
-        mediatorAmount,
-        mediator || ethers.getAddress('0x0000000000000000000000000000000000000000')
+        mediator || ethers.getAddress('0x0000000000000000000000000000000000000000'),
+        mediatorAmount
       ]
     );
 

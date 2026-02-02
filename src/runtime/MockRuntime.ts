@@ -199,23 +199,27 @@ export class DisputeWindowActiveError extends Error {
 /**
  * Valid state transitions for the ACTP 8-state machine.
  *
+ * AUDIT FIX (2026-02): Synced with on-chain ACTPKernel contract.
+ *
  * State machine:
  * - INITIATED -> QUOTED (optional), COMMITTED, CANCELLED
  * - QUOTED -> COMMITTED, CANCELLED
- * - COMMITTED -> IN_PROGRESS (optional), DELIVERED, CANCELLED
+ * - COMMITTED -> IN_PROGRESS, CANCELLED (cannot skip to DELIVERED)
  * - IN_PROGRESS -> DELIVERED, CANCELLED
  * - DELIVERED -> SETTLED, DISPUTED
- * - DISPUTED -> SETTLED
+ * - DISPUTED -> SETTLED, CANCELLED (admin/pauser emergency)
  * - SETTLED (terminal)
  * - CANCELLED (terminal)
  */
 const VALID_TRANSITIONS: Record<TransactionState, TransactionState[]> = {
   INITIATED: ['QUOTED', 'COMMITTED', 'CANCELLED'],
   QUOTED: ['COMMITTED', 'CANCELLED'],
-  COMMITTED: ['IN_PROGRESS', 'DELIVERED', 'CANCELLED'],
+  // AUDIT FIX: Cannot skip IN_PROGRESS - must transition through it
+  COMMITTED: ['IN_PROGRESS', 'CANCELLED'],
   IN_PROGRESS: ['DELIVERED', 'CANCELLED'],
   DELIVERED: ['SETTLED', 'DISPUTED'],
-  DISPUTED: ['SETTLED'],
+  // AUDIT FIX: DISPUTED can also be CANCELLED by admin/pauser
+  DISPUTED: ['SETTLED', 'CANCELLED'],
   SETTLED: [], // Terminal state
   CANCELLED: [], // Terminal state
 };

@@ -18,22 +18,23 @@ export class StateMachine {
   /**
    * Valid state transitions per Yellow Paper §3.2.2
    *
-   * SECURITY FIX (CRITICAL-1): State machine must match ACTPKernel contract exactly
-   * Per CLAUDE.md §Architecture Overview - ACTP Protocol State Machine:
-   * - COMMITTED can transition to IN_PROGRESS, DELIVERED, or CANCELLED
+   * SECURITY FIX (AUDIT-2026-02): State machine must match ACTPKernel contract exactly
+   *
+   * Per on-chain ACTPKernel contract:
+   * - COMMITTED must go through IN_PROGRESS before DELIVERED (cannot skip)
+   * - DISPUTED can transition to SETTLED or CANCELLED (admin/pauser can cancel disputes)
    * - IN_PROGRESS can transition to DELIVERED or CANCELLED (not DISPUTED)
-   * - DISPUTED can only transition to SETTLED (not CANCELLED)
    */
   private static readonly TRANSITIONS: Record<State, State[]> = {
     [State.INITIATED]: [State.QUOTED, State.COMMITTED, State.CANCELLED], // Allow direct INITIATED → COMMITTED (AIP-3)
     [State.QUOTED]: [State.COMMITTED, State.CANCELLED],
-    // SECURITY FIX (CRITICAL-1): Add DELIVERED (can skip IN_PROGRESS)
-    [State.COMMITTED]: [State.IN_PROGRESS, State.DELIVERED, State.CANCELLED],
-    // SECURITY FIX (CRITICAL-1): Remove DISPUTED, add CANCELLED
+    // AUDIT FIX: COMMITTED cannot skip to DELIVERED - must go through IN_PROGRESS first
+    [State.COMMITTED]: [State.IN_PROGRESS, State.CANCELLED],
+    // IN_PROGRESS can transition to DELIVERED or CANCELLED
     [State.IN_PROGRESS]: [State.DELIVERED, State.CANCELLED],
     [State.DELIVERED]: [State.SETTLED, State.DISPUTED],
-    // SECURITY FIX (CRITICAL-1): Remove CANCELLED (disputes resolve to SETTLED only)
-    [State.DISPUTED]: [State.SETTLED],
+    // AUDIT FIX: DISPUTED can also transition to CANCELLED (admin/pauser emergency cancellation)
+    [State.DISPUTED]: [State.SETTLED, State.CANCELLED],
     [State.SETTLED]: [], // Terminal state
     [State.CANCELLED]: [] // Terminal state
   };

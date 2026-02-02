@@ -543,7 +543,11 @@ export class BlockchainRuntime implements IACTPRuntime {
         escrowId: tx.escrowId,
         createdAt: Number(tx.createdAt),
         updatedAt: Number(tx.updatedAt),
-        completedAt: 0, // V2: Track via DELIVERED event timestamp
+        // LIMITATION (V2): completedAt requires event indexing to fetch DELIVERED event timestamp.
+        // Currently 0, which means SDK-side dispute window check in releaseEscrow() is bypassed.
+        // On-chain contract still enforces dispute window correctly via _validateSettlementConditions().
+        // V2 will implement EventMonitor to track this properly.
+        completedAt: 0,
         serviceDescription: '', // V2: Decode from on-chain serviceHash
         deliveryProof: '', // V2: Fetch from EAS attestation
         events: [], // V2: Populate via EventMonitor.getTransactionEvents()

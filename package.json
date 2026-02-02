@@ -4,6 +4,16 @@
   "description": "AGIRAILS SDK for the ACTP (Agent Commerce Transaction Protocol) - Unified mock + blockchain support",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./storage": {
+      "types": "./dist/storage/index.d.ts",
+      "default": "./dist/storage/index.js"
+    }
+  },
   "bin": {
     "actp": "./bin/actp"
   },
@@ -31,7 +41,9 @@
     "test:cancel": "ts-node test-scripts/03-cancel.ts",
     "test:happy-path-eas": "ts-node test-scripts/04-happy-path-eas.ts",
     "test:status": "ts-node test-scripts/status.ts",
-    "test:all": "npm run test:setup && npm run test:happy-path && npm run test:dispute && npm run test:cancel"
+    "test:all": "npm run test:setup && npm run test:happy-path && npm run test:dispute && npm run test:cancel",
+    "eas:register": "ts-node scripts/register-eas-schema.ts",
+    "eas:register:mainnet": "ts-node scripts/register-eas-schema.ts base-mainnet"
   },
   "keywords": [
     "agirails",

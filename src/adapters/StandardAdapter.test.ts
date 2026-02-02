@@ -185,13 +185,20 @@ describe('StandardAdapter', () => {
       expect(tx!.completedAt).not.toBeNull();
     });
 
-    test('transitions COMMITTED directly to DELIVERED (skip IN_PROGRESS)', async () => {
+    test('COMMITTED cannot go directly to DELIVERED (must go through IN_PROGRESS)', async () => {
+      // AUDIT FIX (2026-02): Contract requires IN_PROGRESS step before DELIVERED
       const txId = await adapter.createTransaction({
         provider: providerAddress,
         amount: '100',
       });
 
       await adapter.linkEscrow(txId);
+
+      // Direct COMMITTED -> DELIVERED should fail
+      await expect(adapter.transitionState(txId, 'DELIVERED')).rejects.toThrow('Invalid state transition');
+
+      // Must go through IN_PROGRESS first
+      await adapter.transitionState(txId, 'IN_PROGRESS');
       await adapter.transitionState(txId, 'DELIVERED');
 
       const tx = await runtime.getTransaction(txId);
@@ -206,6 +213,7 @@ describe('StandardAdapter', () => {
       });
 
       await adapter.linkEscrow(txId);
+      await adapter.transitionState(txId, 'IN_PROGRESS'); // Required step
       await adapter.transitionState(txId, 'DELIVERED');
       // Advance time past dispute window
       await runtime.time.advanceTime(3601);
@@ -269,7 +277,8 @@ describe('StandardAdapter', () => {
 
       const escrowId = await adapter.linkEscrow(txId);
 
-      // Deliver
+      // Must go through IN_PROGRESS before DELIVERED
+      await adapter.transitionState(txId, 'IN_PROGRESS');
       await adapter.transitionState(txId, 'DELIVERED');
 
       // Advance time past dispute window
@@ -300,6 +309,8 @@ describe('StandardAdapter', () => {
 
       const escrowId = await adapter.linkEscrow(txId);
 
+      // Must go through IN_PROGRESS before DELIVERED
+      await adapter.transitionState(txId, 'IN_PROGRESS');
       await adapter.transitionState(txId, 'DELIVERED');
 
       // Try to release immediately (dispute window active)
@@ -345,6 +356,8 @@ describe('StandardAdapter', () => {
 
       const escrowId = await adapter.linkEscrow(txId);
 
+      // Must go through IN_PROGRESS before DELIVERED
+      await adapter.transitionState(txId, 'IN_PROGRESS');
       await adapter.transitionState(txId, 'DELIVERED');
       // Advance time past dispute window
       await runtime.time.advanceTime(3601);
