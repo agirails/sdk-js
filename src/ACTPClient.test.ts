@@ -184,6 +184,8 @@ describe('ACTPClient', () => {
         });
         await client.standard.linkEscrow(txId);
 
+        // AUDIT FIX: Must go through IN_PROGRESS before DELIVERED
+        await client.standard.transitionState(txId, 'IN_PROGRESS');
         await client.standard.transitionState(txId, 'DELIVERED');
 
         const tx = await client.standard.getTransaction(txId);
@@ -420,7 +422,8 @@ describe('ACTPClient', () => {
       });
       expect(result.state).toBe('COMMITTED');
 
-      // 2. Provider delivers (standard API)
+      // 2. Provider delivers (standard API) - must go through IN_PROGRESS first
+      await client.standard.transitionState(result.txId, 'IN_PROGRESS');
       await client.standard.transitionState(result.txId, 'DELIVERED');
 
       let status = await client.basic.checkStatus(result.txId);
@@ -467,7 +470,8 @@ describe('ACTPClient', () => {
         disputeWindow: 3600, // 1 hour
       });
 
-      // 2. Provider delivers
+      // 2. Provider delivers - must go through IN_PROGRESS first
+      await client.standard.transitionState(result.txId, 'IN_PROGRESS');
       await client.standard.transitionState(result.txId, 'DELIVERED');
 
       // 3. Requester disputes (within window)

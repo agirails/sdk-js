@@ -303,7 +303,8 @@ describe('BasicAdapter', () => {
         amount: '100',
       });
 
-      // Transition to DELIVERED
+      // AUDIT FIX: Must go through IN_PROGRESS before DELIVERED
+      await runtime.transitionState(result.txId, 'IN_PROGRESS');
       await runtime.transitionState(result.txId, 'DELIVERED');
 
       const status = await adapter.checkStatus(result.txId);
@@ -321,7 +322,8 @@ describe('BasicAdapter', () => {
         disputeWindow: 3600, // 1 hour
       });
 
-      // Transition to DELIVERED
+      // AUDIT FIX: Must go through IN_PROGRESS before DELIVERED
+      await runtime.transitionState(result.txId, 'IN_PROGRESS');
       await runtime.transitionState(result.txId, 'DELIVERED');
 
       // Advance time past dispute window
