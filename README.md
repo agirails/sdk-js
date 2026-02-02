@@ -487,6 +487,120 @@ This TypeScript SDK maintains **full parity** with the Python SDK:
 - **EAS Integration**: Ethereum Attestation Service for delivery proofs
 - **Input Validation**: All user inputs validated before processing
 
+## Decentralized Identifiers (DIDs)
+
+AGIRAILS uses **did:ethr** DIDs based on the [ERC-1056](https://eips.ethereum.org/EIPS/eip-1056) standard for identity management.
+
+### DID Format
+
+Every Ethereum address automatically IS a DID - no registration required:
+
+```
+did:ethr:84532:0x742d35cc6634c0532925a3b844bc9e7595f0beb
+       ↑      ↑
+   chainId  address
+```
+
+### Basic Usage
+
+```typescript
+import { DIDResolver } from '@agirails/sdk';
+
+// Build DID from address (no registration needed!)
+const did = DIDResolver.buildDID('0x742d35cc6634c0532925a3b844bc9e7595f0beb', 84532);
+// → 'did:ethr:84532:0x742d35cc6634c0532925a3b844bc9e7595f0beb'
+
+// Parse DID components
+const parsed = DIDResolver.parseDID(did);
+console.log(parsed.method);   // 'ethr'
+console.log(parsed.chainId);  // 84532
+console.log(parsed.address);  // '0x742d35cc6634c0532925a3b844bc9e7595f0beb'
+
+// Validate DID format
+const isValid = DIDResolver.isValidDID(did);  // true
+```
+
+### Resolve DID to DID Document
+
+```typescript
+import { DIDResolver } from '@agirails/sdk';
+
+// Create resolver for Base Sepolia
+const resolver = await DIDResolver.create({ network: 'base-sepolia' });
+
+// Resolve DID to W3C DID Document
+const result = await resolver.resolve('did:ethr:84532:0x742d35cc...');
+
+if (result.didDocument) {
+  console.log('Controller:', result.didDocument.controller);
+  console.log('Verification Methods:', result.didDocument.verificationMethod);
+  console.log('Service Endpoints:', result.didDocument.service);
+}
+```
+
+### Verify Signatures
+
+```typescript
+import { DIDResolver } from '@agirails/sdk';
+
+const resolver = await DIDResolver.create({ network: 'base-sepolia' });
+
+// Verify a signature was made by a DID's controller (or authorized delegate)
+const result = await resolver.verifySignature(
+  'did:ethr:84532:0x742d35cc...',  // DID
+  'Hello AGIRAILS',                 // Original message
+  '0x1234...',                      // Signature
+  { chainId: 84532 }                // Verification options
+);
+
+if (result.valid) {
+  console.log('Signature valid!');
+  console.log('Signer:', result.signer);
+  console.log('Is delegate:', result.isDelegate);
+}
+```
+
+### Advanced: Manage Identity (Optional)
+
+For advanced use cases, use `DIDManager` to manage delegates and attributes:
+
+```typescript
+import { DIDManager } from '@agirails/sdk';
+
+// Create manager with signer
+const manager = new DIDManager(signer, { network: 'base-sepolia' });
+
+// Add a signing delegate (valid for 24 hours)
+await manager.addDelegate(
+  'did:ethr:84532:0x742d35cc...',  // Your DID
+  '0xDelegateAddress...',          // Delegate address
+  'sigAuth',                        // Delegate type
+  86400                             // Validity in seconds
+);
+
+// Rotate key ownership
+await manager.changeOwner(
+  'did:ethr:84532:0x742d35cc...',
+  '0xNewOwnerAddress...'
+);
+
+// Add service endpoint attribute
+await manager.setAttribute(
+  'did:ethr:84532:0x742d35cc...',
+  'did/svc/AgentService',
+  'https://my-agent.example.com/api',
+  86400
+);
+```
+
+### DID in ACTP Transactions
+
+DIDs are used internally for:
+- **Provider/Consumer Identity**: Transaction parties identified by DIDs
+- **Message Signing**: EIP-712 messages reference DIDs
+- **Delivery Proofs**: Attestations link to provider DIDs
+- **Reputation**: Future reputation system will be DID-based
+
 ## Environment Variables
 
 ```bash
