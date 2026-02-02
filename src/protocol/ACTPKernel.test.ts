@@ -200,6 +200,23 @@ describe('ACTPKernel', () => {
     });
 
     it('should pass proof data to contract', async () => {
+      // AUDIT FIX (2026-02): COMMITTED cannot go directly to DELIVERED
+      // Must go through IN_PROGRESS first, so mock returns IN_PROGRESS state
+      mockContract.getTransaction.mockResolvedValue({
+        transactionId: TX_ID,
+        requester: REQUESTER,
+        provider: PROVIDER,
+        amount: 100000000n,
+        state: 3n, // IN_PROGRESS - can transition to DELIVERED
+        createdAt: BigInt(Math.floor(Date.now() / 1000) - 3600),
+        updatedAt: BigInt(Math.floor(Date.now() / 1000) - 3600),
+        deadline: BigInt(Math.floor(Date.now() / 1000) + 86400),
+        disputeWindow: 172800n,
+        escrowContract: ethers.ZeroAddress,
+        escrowId: ethers.ZeroHash,
+        platformFeeBpsLocked: 100n
+      });
+
       const proof = '0xdeadbeef';
       const mockTxFunction = mockContract.getFunction();
 

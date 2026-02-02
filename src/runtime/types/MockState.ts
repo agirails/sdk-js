@@ -14,10 +14,13 @@
  * ACTP Transaction State enum matching the smart contract states.
  *
  * State machine:
- * - INITIATED (0) -> QUOTED (1, optional) -> COMMITTED (2) -> IN_PROGRESS (3, optional)
+ * - INITIATED (0) -> QUOTED (1, optional) -> COMMITTED (2) -> IN_PROGRESS (3, mandatory)
  *                 -> DELIVERED (4) -> SETTLED (5)
- * - Dispute path: DELIVERED -> DISPUTED (6) -> SETTLED
+ * - Dispute path: DELIVERED -> DISPUTED (6) -> SETTLED or CANCELLED (admin)
  * - Cancel path: Any pre-DELIVERED state -> CANCELLED (7)
+ *
+ * AUDIT FIX (2026-02): IN_PROGRESS is now mandatory per contract. Direct
+ * COMMITTED -> DELIVERED transitions are rejected on-chain.
  */
 export type TransactionState =
   | 'INITIATED'

@@ -1232,7 +1232,7 @@ export class Agent extends EventEmitter {
         result, // Include original result for convenience
       });
 
-      // Transition transaction to DELIVERED state
+      // Transition transaction through IN_PROGRESS → DELIVERED states
       if (this._client) {
         // Store delivery proof by directly accessing MockRuntime's state
         // This is a workaround - in production, we'd use a proper method
@@ -1246,8 +1246,18 @@ export class Agent extends EventEmitter {
           });
         }
 
-        // Transition to DELIVERED (escrow was already linked in pollForJobs)
-        await this._client.runtime.transitionState(job.id, 'DELIVERED');
+        // AUDIT FIX (2026-02): Must transition through IN_PROGRESS before DELIVERED
+        // Contract rejects COMMITTED → DELIVERED direct transition
+        await this._client.runtime.transitionState(job.id, 'IN_PROGRESS');
+
+        // Encode dispute window proof for DELIVERED transition
+        // Use transaction's disputeWindow from metadata, fallback to 2 days (172800s) per Options.ts default
+        const disputeWindowSeconds = job.metadata?.disputeWindow || 172800;
+        const abiCoder = ethers.AbiCoder.defaultAbiCoder();
+        const disputeWindowProof = abiCoder.encode(['uint256'], [disputeWindowSeconds]);
+
+        // Transition to DELIVERED with dispute window proof
+        await this._client.runtime.transitionState(job.id, 'DELIVERED', disputeWindowProof);
       }
 
       // SECURITY FIX (C-2): Remove from active jobs on SUCCESS

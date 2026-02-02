@@ -169,23 +169,32 @@ export class StandardAdapter extends BaseAdapter {
    * Valid transitions:
    * - INITIATED → QUOTED, COMMITTED, CANCELLED
    * - QUOTED → COMMITTED, CANCELLED
-   * - COMMITTED → IN_PROGRESS, DELIVERED, CANCELLED
+   * - COMMITTED → IN_PROGRESS, CANCELLED
    * - IN_PROGRESS → DELIVERED, CANCELLED
    * - DELIVERED → SETTLED, DISPUTED
-   * - DISPUTED → SETTLED
+   * - DISPUTED → SETTLED, CANCELLED (admin/pauser)
    *
    * @param txId - Transaction ID
    * @param newState - Target state
+   * @param proof - Optional proof data (required for DELIVERED transition with dispute window)
    * @throws {Error} If transition is invalid
    *
    * @example
    * ```typescript
-   * // Provider marks work as delivered
-   * await adapter.transitionState(txId, 'DELIVERED');
+   * // Provider starts work
+   * await adapter.transitionState(txId, 'IN_PROGRESS');
+   *
+   * // Provider marks work as delivered (with dispute window proof)
+   * const disputeWindowProof = ethers.AbiCoder.defaultAbiCoder().encode(['uint256'], [7200]);
+   * await adapter.transitionState(txId, 'DELIVERED', disputeWindowProof);
    * ```
    */
-  async transitionState(txId: string, newState: TransactionState): Promise<void> {
-    return this.runtime.transitionState(txId, newState);
+  async transitionState(
+    txId: string,
+    newState: TransactionState,
+    proof?: string
+  ): Promise<void> {
+    return this.runtime.transitionState(txId, newState, proof);
   }
 
   /**
