@@ -675,7 +675,8 @@ describe('Security Tests', () => {
         runtime.releaseEscrow(escrowId)
       ).rejects.toThrow();
 
-      // Transition to DELIVERED
+      // AUDIT FIX: Must go through IN_PROGRESS before DELIVERED
+      await runtime.transitionState(txId, 'IN_PROGRESS');
       await runtime.transitionState(txId, 'DELIVERED');
 
       // Cannot release while dispute window active
