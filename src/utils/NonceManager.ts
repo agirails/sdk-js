@@ -10,6 +10,7 @@
  */
 
 import { assertSafeFileForRead, ensureSafeDir, ensureSafeFile } from './fsSafe';
+import { sdkLogger } from './Logger';
 
 /**
  * Maximum allowed nonce value.
@@ -525,7 +526,7 @@ export class FileBasedNonceManager implements NonceManager {
     this.inMemory.recordNonce(messageType, nonce);
     // Fire-and-forget to maintain sync interface
     this.saveToFile().catch((err) => {
-      console.error('Failed to save nonce manager state:', err);
+      sdkLogger.error('Failed to save nonce manager state', { error: err instanceof Error ? err.message : String(err) });
     });
   }
 
@@ -537,7 +538,7 @@ export class FileBasedNonceManager implements NonceManager {
     this.inMemory.resetNonce(messageType);
     // Fire-and-forget to maintain sync interface
     this.saveToFile().catch((err) => {
-      console.error('Failed to save nonce manager state:', err);
+      sdkLogger.error('Failed to save nonce manager state', { error: err instanceof Error ? err.message : String(err) });
     });
   }
 

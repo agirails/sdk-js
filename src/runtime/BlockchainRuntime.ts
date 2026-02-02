@@ -28,6 +28,7 @@ import { ValidationError } from '../errors';
 import { ServiceHash, DisputeWindow } from '../utils/Helpers';
 import { IUsedAttestationTracker, createUsedAttestationTracker } from '../utils/UsedAttestationTracker';
 import { IReceivedNonceTracker, createReceivedNonceTracker } from '../utils/ReceivedNonceTracker';
+import { sdkLogger } from '../utils/Logger';
 
 /**
  * Configuration for BlockchainRuntime
@@ -217,20 +218,17 @@ export class BlockchainRuntime implements IACTPRuntime {
         );
       }
 
-      console.info(
-        `BlockchainRuntime: Connected to ${this.networkConfig.name} (chainId: ${connectedChainId})`
-      );
+      sdkLogger.info(`Connected to ${this.networkConfig.name}`, { chainId: connectedChainId });
     } catch (error) {
       if (error instanceof Error && error.message.includes('Network mismatch')) {
         throw error; // Re-throw our validation error
       }
       // For other errors (e.g., network issues), log warning but continue
       // This allows initialization to proceed even if network check fails temporarily
-      console.warn(
-        `BlockchainRuntime: Could not verify network chainId. ` +
-        `Error: ${error instanceof Error ? error.message : String(error)}. ` +
-        `Proceeding with expected chainId ${this.networkConfig.chainId}.`
-      );
+      sdkLogger.warn('Could not verify network chainId, proceeding with expected value', {
+        error: error instanceof Error ? error.message : String(error),
+        expectedChainId: this.networkConfig.chainId,
+      });
     }
 
     // SECURITY FIX (H-4): Use factory pattern to guarantee domain initialization
@@ -254,10 +252,7 @@ export class BlockchainRuntime implements IACTPRuntime {
         this.attestationTracker
       );
     } else if (this.requireAttestation) {
-      console.warn(
-        '[SECURITY WARNING] BlockchainRuntime: requireAttestation is true but no EAS config provided. ' +
-        'Attestation verification will fail. Please provide easConfig in BlockchainRuntimeConfig.'
-      );
+      sdkLogger.warn('requireAttestation is true but no EAS config provided - attestation verification will fail');
     }
   }
 
@@ -319,11 +314,12 @@ export class BlockchainRuntime implements IACTPRuntime {
           this.reconnectAttempts = attempt + 1;
           const delay = this.baseReconnectDelay * Math.pow(2, attempt);
 
-          console.warn(
-            `Provider connection lost. Attempting reconnection ${attempt + 1}/${this.maxReconnectAttempts} ` +
-            `after ${delay}ms delay... ` +
-            `(Error: ${error instanceof Error ? error.message : String(error)})`
-          );
+          sdkLogger.warn('Provider connection lost, attempting reconnection', {
+            attempt: attempt + 1,
+            maxAttempts: this.maxReconnectAttempts,
+            delayMs: delay,
+            error: error instanceof Error ? error.message : String(error),
+          });
 
           // Wait before next attempt
           await new Promise(resolve => setTimeout(resolve, delay));
@@ -566,9 +562,7 @@ export class BlockchainRuntime implements IACTPRuntime {
   async getAllTransactions(): Promise<MockTransaction[]> {
     // V2: Implement event-based transaction indexing via EventMonitor
     // For now, return empty array as this requires off-chain indexer
-    console.warn(
-      'getAllTransactions() not fully implemented for BlockchainRuntime. Use EventMonitor for event-based queries.'
-    );
+    sdkLogger.warn('getAllTransactions() not implemented - use EventMonitor for event-based queries');
     return [];
   }
 
@@ -608,10 +602,7 @@ export class BlockchainRuntime implements IACTPRuntime {
     if (legacyMatch) {
       // Legacy SDK format - extract txId
       txId = legacyMatch[1];
-      console.warn(
-        `BlockchainRuntime.releaseEscrow: Using legacy escrowId format. ` +
-        `Please update to use txId directly as escrowId.`
-      );
+      sdkLogger.warn('Using legacy escrowId format - please update to use txId directly as escrowId');
     } else {
       // Standard: escrowId = txId
       txId = escrowId;
@@ -662,9 +653,7 @@ export class BlockchainRuntime implements IACTPRuntime {
       // Verify attestation is valid for this transaction
       try {
         await this.easHelper.verifyAndRecordForRelease(txId, attestationUID);
-        console.info(
-          `BlockchainRuntime.releaseEscrow: Attestation ${attestationUID} verified for transaction ${txId}.`
-        );
+        sdkLogger.info('Attestation verified for release', { txId, attestationUID });
       } catch (error) {
         throw new Error(
           `Cannot release escrow: attestation verification failed for transaction ${txId}. ` +
@@ -675,21 +664,16 @@ export class BlockchainRuntime implements IACTPRuntime {
       // Even if not required, verify attestation if provided (best effort)
       try {
         await this.easHelper.verifyAndRecordForRelease(txId, attestationUID);
-        console.info(
-          `BlockchainRuntime.releaseEscrow: Attestation ${attestationUID} verified (optional) for transaction ${txId}.`
-        );
+        sdkLogger.info('Attestation verified (optional)', { txId, attestationUID });
       } catch (error) {
-        console.warn(
-          `BlockchainRuntime.releaseEscrow: Attestation verification failed but not required. ` +
-          `Proceeding with release. Error: ${error instanceof Error ? error.message : String(error)}`
-        );
+        sdkLogger.warn('Attestation verification failed but not required, proceeding', {
+          txId,
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
     } else {
       // No attestation verification
-      console.info(
-        `BlockchainRuntime.releaseEscrow: Settling transaction ${txId}. ` +
-        `Note: Set requireAttestation=true and provide easConfig for additional security.`
-      );
+      sdkLogger.info('Settling transaction without attestation verification', { txId });
     }
 
     // SECURITY FIX (SETTLEMENT-FLOW): Use transitionState(SETTLED) instead of releaseEscrow()
@@ -735,7 +719,7 @@ export class BlockchainRuntime implements IACTPRuntime {
       return '0';
     } catch (error) {
       // If query fails, return 0
-      console.warn('BlockchainRuntime.getEscrowBalance: Query failed', error);
+      sdkLogger.warn('getEscrowBalance query failed', { error: error instanceof Error ? error.message : String(error) });
       return '0';
     }
   }
@@ -873,11 +857,7 @@ export class BlockchainRuntime implements IACTPRuntime {
 
     // SECURITY FIX (CRITICAL): If it's a raw string (legacy format), hash it
     // This ensures on-chain compatibility with the contract's bytes32 expectation
-    console.warn(
-      'BlockchainRuntime: serviceDescription is not a valid bytes32 hash. ' +
-      'Hashing it now. For best practice, use ServiceHash.hash() before calling createTransaction.'
-    );
-
+    sdkLogger.warn('serviceDescription is not a valid bytes32 hash - hashing now (use ServiceHash.hash() for best practice)');
     return keccak256(toUtf8Bytes(serviceDescription));
   }
 

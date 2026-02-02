@@ -51,7 +51,7 @@ export const BASE_SEPOLIA: NetworkConfig = {
   rpcUrl: BASE_SEPOLIA_RPC_URL,
   blockExplorer: 'https://sepolia.basescan.org',
   contracts: {
-    // Redeployed 2025-12-10 by Arha (new deployer wallet 0x42a2f11555b9363fb7ebdcdc76d7cb26e01dcb00)
+    // Redeployed 2025-12-10
     actpKernel: '0xD199070F8e9FB9a127F6Fe730Bc13300B4b3d962',
     escrowVault: '0x948b9Ea081C4Cec1E112Af2e539224c531d4d585',
     usdc: '0x444b4e1A65949AB2ac75979D5d0166Eb7A248Ccb', // MockUSDC

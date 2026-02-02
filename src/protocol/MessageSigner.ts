@@ -10,6 +10,7 @@ import {
   deliveryProofDataFromProof
 } from '../types/eip712';
 import { IReceivedNonceTracker } from '../utils/ReceivedNonceTracker';
+import { sdkLogger } from '../utils/Logger';
 
 // Legacy generic ACTP message types moved to types/eip712.ts
 
@@ -175,22 +176,14 @@ export class MessageSigner {
     const nonceValue = BigInt(nonce);
     if (nonceValue < 0xFFFFFFFFn) {
       // Nonce is suspiciously small (< 4 billion = likely sequential)
-      console.warn(
-        `[SECURITY WARNING] Nonce ${nonce} appears to be sequential (value < 2^32). ` +
-        `This makes replay attacks easier. ` +
-        `Use SecureNonce.generateSecureNonce() for cryptographically secure random nonces.`
-      );
+      sdkLogger.warn('Nonce appears sequential - use SecureNonce.generateSecureNonce()', { nonce });
     }
 
     // Check if nonce has all same digits (e.g., 0x111...111 or 0x000...000)
     const hexDigits = nonce.slice(2); // Remove '0x'
     const firstDigit = hexDigits[0];
     if (hexDigits.split('').every(d => d === firstDigit)) {
-      console.warn(
-        `[SECURITY WARNING] Nonce ${nonce} has low entropy (all digits are '${firstDigit}'). ` +
-        `This is NOT cryptographically secure. ` +
-        `Use SecureNonce.generateSecureNonce() instead.`
-      );
+      sdkLogger.warn('Nonce has low entropy - use SecureNonce.generateSecureNonce()', { nonce, repeatedDigit: firstDigit });
     }
 
     // Generic ACTPMessage with payload encoding (backward compatible)
@@ -463,10 +456,11 @@ export class MessageSigner {
         // This prevents cross-chain replay attacks where a message signed for one chain
         // is replayed on another. For now, we just extract the address but log a warning.
         if (this.domain && this.domain.chainId !== chainId) {
-          console.warn(
-            `[SECURITY WARNING] DID chainId (${chainId}) does not match domain chainId (${this.domain.chainId}). ` +
-            `This could indicate a cross-chain replay attempt. DID: ${did}`
-          );
+          sdkLogger.warn('DID chainId mismatch - potential cross-chain replay attempt', {
+            didChainId: chainId,
+            domainChainId: this.domain.chainId,
+            did,
+          });
         }
 
         return address;

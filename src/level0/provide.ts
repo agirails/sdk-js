@@ -12,6 +12,7 @@ import { JobHandler } from '../level1/types/Job';
 import { ProvideOptions } from '../level1/types/Options';
 import { Provider } from './Provider';
 import { serviceDirectory } from './ServiceDirectory';
+import { sdkLogger } from '../utils/Logger';
 
 /**
  * Provide a service
@@ -83,7 +84,7 @@ export function provide(
     // Register in service directory after agent has started and has an address
     serviceDirectory.register(service, agent.address);
   }).catch((error) => {
-    console.error(`Failed to start provider for ${service}:`, error);
+    sdkLogger.error(`Failed to start provider for ${service}`, { error: error instanceof Error ? error.message : String(error) });
   });
 
   // Return Provider interface (adapter over Agent)

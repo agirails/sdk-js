@@ -6,6 +6,7 @@ import {
   IUsedAttestationTracker,
   InMemoryUsedAttestationTracker
 } from '../utils/UsedAttestationTracker';
+import { sdkLogger } from '../utils/Logger';
 
 export interface EASConfig {
   contractAddress: string;
@@ -65,11 +66,7 @@ export class EASHelper {
       //
       // Without persistence, attestation replay protection is lost on process restart,
       // allowing potential double-spend attacks.
-      console.warn(
-        '[SECURITY WARNING] EASHelper: Using in-memory attestation tracker. ' +
-        'Replay protection will be lost on process restart. ' +
-        'For production, provide FileBasedUsedAttestationTracker for persistence.'
-      );
+      sdkLogger.warn('Using in-memory attestation tracker - replay protection lost on restart (use FileBasedUsedAttestationTracker for production)');
     }
     this.attestationTracker = attestationTracker || new InMemoryUsedAttestationTracker();
   }

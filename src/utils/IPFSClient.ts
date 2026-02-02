@@ -4,6 +4,7 @@
  */
 
 import { create, IPFSHTTPClient, Options } from 'kubo-rpc-client';
+import { sdkLogger } from './Logger';
 
 /**
  * IPFS Client Interface (from DeliveryProofBuilder)
@@ -202,10 +203,10 @@ export class IPFSHTTPClientImpl implements IPFSClient {
 
     // For remote hosts, require HTTPS
     if (!isLocalhost && parsed.protocol !== 'https:') {
-      console.warn(
-        `[SECURITY WARNING] Using non-HTTPS protocol "${parsed.protocol}" for remote IPFS endpoint "${hostname}". ` +
-        `This may expose data in transit. Consider using HTTPS.`
-      );
+      sdkLogger.warn('Using non-HTTPS protocol for remote IPFS endpoint - data may be exposed in transit', {
+        protocol: parsed.protocol,
+        hostname,
+      });
     }
   }
 

@@ -12,6 +12,7 @@
  */
 
 import { assertSafeFileForRead, ensureSafeDir, ensureSafeFile } from './fsSafe';
+import { sdkLogger } from './Logger';
 
 /**
  * Interface for tracking used attestations
@@ -205,10 +206,7 @@ export class InMemoryUsedAttestationTracker implements IUsedAttestationTracker {
   cleanupOldEntries(_maxAgeHours: number): number {
     // In-memory tracker doesn't track timestamps
     // This is a placeholder for future enhancement
-    console.warn(
-      'cleanupOldEntries not implemented for InMemoryUsedAttestationTracker. ' +
-      'Consider using FileBasedUsedAttestationTracker for time-based cleanup.'
-    );
+    sdkLogger.warn('cleanupOldEntries not implemented for InMemoryUsedAttestationTracker - use FileBasedUsedAttestationTracker');
     return 0;
   }
 }
@@ -350,7 +348,7 @@ export class FileBasedUsedAttestationTracker implements IUsedAttestationTracker 
     const result = this.inMemory.recordUsageSync(attestationUID, txId);
     if (result) {
       this.saveToFile().catch((err) => {
-        console.error('Failed to save attestation tracker state:', err);
+        sdkLogger.error('Failed to save attestation tracker state', { error: err instanceof Error ? err.message : String(err) });
       });
     }
     return result;
