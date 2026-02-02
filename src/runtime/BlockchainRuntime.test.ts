@@ -480,7 +480,8 @@ describe('BlockchainRuntime', () => {
       }
 
       expect(warnSpy).toHaveBeenCalledWith(
-        expect.stringContaining('legacy escrowId format')
+        expect.stringContaining('legacy escrowId format'),
+        expect.anything()
       );
       warnSpy.mockRestore();
     });
@@ -721,7 +722,8 @@ describe('BlockchainRuntime edge cases', () => {
     await runtime.initialize();
 
     expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining('requireAttestation is true but no EAS config provided')
+      expect.stringContaining('requireAttestation is true but no EAS config provided'),
+      expect.anything()
     );
 
     warnSpy.mockRestore();
