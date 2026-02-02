@@ -44,8 +44,9 @@ actp init --network base-sepolia
 # Set your private key (or use PRIVATE_KEY env var)
 actp config set private-key YOUR_PRIVATE_KEY
 
-# Get testnet USDC (faucet)
-actp mint --amount 1000  # Mint 1000 test USDC
+# Note: mint is mock mode only. For testnet/mainnet, bridge real USDC via bridge.base.org
+# In mock mode:
+actp mint --amount 1000  # Mint 1000 test USDC (mock mode only)
 
 # Check your balance
 actp balance
@@ -67,19 +68,18 @@ import { ACTPClient } from '@agirails/sdk';
 async function main() {
   // Create client in mock mode (no blockchain needed)
   const client = await ACTPClient.create({
-    mode: 'mock'
+    mode: 'mock',
+    requesterAddress: '0x1111111111111111111111111111111111111111',
   });
 
   // Pay a provider
   const result = await client.basic.pay({
-    provider: '0xabcdefABCDEFabcdefABCDEFabcdefABCDEFabcd',
+    to: '0xabcdefABCDEFabcdefABCDEFabcdefABCDEFabcd',
     amount: '100.00',  // $100 USDC
     deadline: '24h',   // Optional: expires in 24 hours
-    service: 'AI text generation'
   });
 
   console.log('Transaction ID:', result.txId);
-  console.log('Escrow ID:', result.escrowId);
   console.log('State:', result.state);
 }
 
@@ -92,11 +92,13 @@ For applications that need explicit control over each transaction step:
 
 ```typescript
 import { ACTPClient } from '@agirails/sdk';
+import { ethers } from 'ethers';
 
 async function main() {
   const client = await ACTPClient.create({
-    network: 'base-sepolia',
-    privateKey: process.env.PRIVATE_KEY
+    mode: 'testnet',  // or 'mainnet' for production
+    requesterAddress: '0x1111111111111111111111111111111111111111',
+    privateKey: process.env.PRIVATE_KEY,
   });
 
   // Step 1: Create transaction (no funds locked yet)
@@ -105,7 +107,6 @@ async function main() {
     amount: '100.50',
     deadline: '7d',
     disputeWindow: 172800,  // 2 days in seconds
-    serviceRef: 'ipfs://QmServiceDescription'
   });
   console.log('Created transaction:', txId);
 
@@ -113,10 +114,15 @@ async function main() {
   const escrowId = await client.standard.linkEscrow(txId);
   console.log('Escrow linked:', escrowId);
 
-  // Step 3: Provider delivers work...
-  await client.standard.transitionState(txId, 'DELIVERED');
+  // Step 3: Provider starts work (REQUIRED before DELIVERED!)
+  await client.standard.transitionState(txId, 'IN_PROGRESS');
 
-  // Step 4: Release funds to provider
+  // Step 4: Provider delivers with dispute window proof
+  const abiCoder = ethers.AbiCoder.defaultAbiCoder();
+  const disputeWindowProof = abiCoder.encode(['uint256'], [172800]); // 2 days
+  await client.standard.transitionState(txId, 'DELIVERED', disputeWindowProof);
+
+  // Step 5: Release funds to provider (after dispute window)
   await client.standard.releaseEscrow(txId);
   console.log('Payment complete!');
 }
@@ -132,7 +138,10 @@ For custom workflows and maximum flexibility:
 import { ACTPClient } from '@agirails/sdk';
 
 async function main() {
-  const client = await ACTPClient.create({ mode: 'mock' });
+  const client = await ACTPClient.create({
+    mode: 'mock',
+    requesterAddress: '0x1111111111111111111111111111111111111111',
+  });
 
   // Direct runtime access
   const runtime = client.advanced;
@@ -184,19 +193,22 @@ INITIATED → QUOTED → COMMITTED → IN_PROGRESS → DELIVERED → SETTLED
 // Mock mode - local testing, no blockchain
 const client = await ACTPClient.create({
   mode: 'mock',
+  requesterAddress: '0x1111111111111111111111111111111111111111',
   stateDirectory: '.actp'  // Optional: persist state to disk
 });
 
 // Testnet mode - Base Sepolia
 const client = await ACTPClient.create({
-  network: 'base-sepolia',
+  mode: 'testnet',
+  requesterAddress: '0x1111111111111111111111111111111111111111',
   privateKey: '0x...',
   rpcUrl: 'https://sepolia.base.org'  // Optional: custom RPC
 });
 
-// Mainnet mode - Base (when deployed)
+// Mainnet mode - Base
 const client = await ACTPClient.create({
-  network: 'base-mainnet',
+  mode: 'mainnet',
+  requesterAddress: '0x1111111111111111111111111111111111111111',
   privateKey: '0x...'
 });
 ```
@@ -290,7 +302,7 @@ The SDK includes a full-featured CLI for interacting with ACTP:
 # Payment operations
 actp pay <provider> <amount> [--deadline TIME] [--service TEXT]
 actp balance [ADDRESS]
-actp mint --amount AMOUNT  # Testnet only
+actp mint --amount AMOUNT  # Mock mode only
 
 # Transaction management
 actp list [--state STATE] [--limit N]
@@ -394,7 +406,7 @@ npm run test:coverage
 |--------|-------------|
 | `createTransaction(params)` | Create transaction |
 | `linkEscrow(txId)` | Link escrow and lock funds |
-| `transitionState(txId, state)` | Transition to new state |
+| `transitionState(txId, state, proof?)` | Transition to new state |
 | `releaseEscrow(txId)` | Release funds |
 | `getTransaction(txId)` | Get transaction details |
 | `getAllTransactions()` | List all transactions |
