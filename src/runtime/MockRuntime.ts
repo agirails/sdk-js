@@ -342,6 +342,14 @@ export class MockRuntime implements IACTPRuntime {
   }
 
   /**
+   * Maximum transaction amount - no limit in mock mode.
+   *
+   * Mock mode is for testing, so we don't enforce limits.
+   * Real blockchain runtimes may have limits for security.
+   */
+  readonly maxTransactionAmount: number | undefined = undefined;
+
+  /**
    * Load events from persisted state file.
    *
    * SECURITY FIX (L-4): Events survive across CLI invocations.

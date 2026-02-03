@@ -40,6 +40,13 @@ export interface NetworkConfig {
     maxFeePerGas: bigint;
     maxPriorityFeePerGas: bigint;
   };
+  /**
+   * Maximum transaction amount in USDC (human-readable, e.g., 100 = $100)
+   *
+   * SECURITY: Limits exposure on unaudited mainnet contracts.
+   * Set to undefined for no limit (testnet only).
+   */
+  maxTransactionAmount?: number;
 }
 
 /**
@@ -88,22 +95,31 @@ export const BASE_MAINNET: NetworkConfig = {
   rpcUrl: BASE_MAINNET_RPC_URL,
   blockExplorer: 'https://basescan.org',
   contracts: {
-    // NOT DEPLOYED: Will throw error via validateNetworkConfig()
-    actpKernel: '0x0000000000000000000000000000000000000000',
-    escrowVault: '0x0000000000000000000000000000000000000000',
+    // Deployed 2026-02-03
+    actpKernel: '0xeaE4D6925510284dbC45C8C64bb8104a079D4c60',
+    escrowVault: '0xb7bCadF7F26f0761995d95105DFb2346F81AF02D',
     usdc: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', // Official USDC on Base
     // EAS contracts (Base native deployment)
     eas: '0x4200000000000000000000000000000000000021',
-    easSchemaRegistry: '0x4200000000000000000000000000000000000020'
+    easSchemaRegistry: '0x4200000000000000000000000000000000000020',
+    // AIP-7 contracts
+    agentRegistry: '0xbf9Aa0FC291A06A4dFA943c3E0Ad41E7aE20DF02',
+    archiveTreasury: '0x64B8f93fef2D2E749F5E88586753343F73246012'
   },
   eas: {
-    // NOT DEPLOYED: Requires mainnet schema registration
-    deliverySchemaUID: '0x0000000000000000000000000000000000000000000000000000000000000000'
+    // Registered 2026-02-03
+    deliverySchemaUID: '0x166501e7476e2fcf9214c4c5144533c2957d56fe59d639effc1719a0658d9c9a'
   },
   gasSettings: {
     maxFeePerGas: ethers.parseUnits('0.5', 'gwei'),
     maxPriorityFeePerGas: ethers.parseUnits('0.1', 'gwei')
-  }
+  },
+  /**
+   * SECURITY: $1,000 max transaction limit until contracts are audited.
+   * This limits exposure in case of undiscovered vulnerabilities.
+   * Will be removed/increased after formal security audit.
+   */
+  maxTransactionAmount: 1000
 };
 
 /**
