@@ -37,4 +37,7 @@ Thumbs.db
 
 # TypeScript cache
 *.tsbuildinfo
+
+# Local files (not for public repo)
 test-scripts/
+CLAUDE.md
