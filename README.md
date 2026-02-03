@@ -219,10 +219,10 @@ The SDK accepts amounts in multiple formats:
 
 ```typescript
 // All equivalent to $100.50 USDC
-await client.basic.pay({ provider: '0x...', amount: 100.50 });
-await client.basic.pay({ provider: '0x...', amount: '100.50' });
-await client.basic.pay({ provider: '0x...', amount: '$100.50' });
-await client.basic.pay({ provider: '0x...', amount: '100500000' });  // Wei
+await client.basic.pay({ to: '0x...', amount: 100.50 });
+await client.basic.pay({ to: '0x...', amount: '100.50' });
+await client.basic.pay({ to: '0x...', amount: '$100.50' });
+await client.basic.pay({ to: '0x...', amount: '100500000' });  // Wei
 ```
 
 ### Deadline Formats
@@ -254,7 +254,7 @@ import {
 } from '@agirails/sdk';
 
 try {
-  await client.basic.pay({ provider: 'invalid', amount: 100 });
+  await client.basic.pay({ to: 'invalid', amount: 100 });
 } catch (error) {
   if (error instanceof ValidationError) {
     console.log('Validation failed:', error.message);
