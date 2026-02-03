@@ -199,6 +199,22 @@ export interface IACTPRuntime {
     /** Get current timestamp in seconds */
     now(): number;
   };
+
+  /**
+   * Maximum transaction amount in USDC (human-readable, e.g., 100 = $100).
+   *
+   * SECURITY: Limits exposure on unaudited contracts.
+   * Returns undefined if no limit is enforced (testnet/mock mode).
+   *
+   * @example
+   * ```typescript
+   * const limit = runtime.maxTransactionAmount;
+   * if (limit && amount > limit) {
+   *   throw new Error(`Amount exceeds limit of $${limit}`);
+   * }
+   * ```
+   */
+  maxTransactionAmount?: number;
 }
 
 /**

@@ -155,6 +155,17 @@ export class BasicAdapter extends BaseAdapter {
       throw new ValidationError('Deadline must be in the future');
     }
 
+    // SECURITY: Enforce transaction amount limit on unaudited mainnet contracts
+    const maxAmount = this.runtime.maxTransactionAmount;
+    const amountInUsdc = Number(amount) / 1_000_000; // Convert from wei to USDC
+    if (maxAmount !== undefined && amountInUsdc > maxAmount) {
+      throw new ValidationError(
+        `Transaction amount $${amountInUsdc.toFixed(2)} exceeds maximum allowed $${maxAmount}. ` +
+        `This limit exists because contracts have not been formally audited. ` +
+        `For larger amounts, please contact support@agirails.io.`
+      );
+    }
+
     // Create transaction
     const txId = await this.runtime.createTransaction({
       provider,

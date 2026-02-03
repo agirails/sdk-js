@@ -762,6 +762,16 @@ export class BlockchainRuntime implements IACTPRuntime {
   }
 
   /**
+   * Maximum transaction amount in USDC (human-readable).
+   *
+   * SECURITY: Limits exposure on unaudited mainnet contracts.
+   * Returns undefined if no limit (testnet).
+   */
+  get maxTransactionAmount(): number | undefined {
+    return this.networkConfig.maxTransactionAmount;
+  }
+
+  /**
    * Get ACTPKernel instance (for advanced usage)
    */
   getKernel(): ACTPKernel {
