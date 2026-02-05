@@ -47,8 +47,9 @@ export interface AdapterMetadata {
    * Settlement mode:
    * - 'explicit': caller must call releaseEscrow (REQUIRED for ACTP compliance)
    * - 'timed': auto-release after dispute window (future, not Phase 1)
+   * - 'atomic': instant settlement, no escrow (x402 protocol)
    */
-  settlementMode: 'explicit' | 'timed';
+  settlementMode: 'explicit' | 'timed' | 'atomic';
 
   /** Priority for auto-selection (higher = preferred) */
   priority: number;
@@ -64,7 +65,7 @@ export const AdapterMetadataSchema = z.object({
   supportsDisputes: z.boolean(),
   requiresIdentity: z.boolean(),
   supportedIdentityTypes: z.array(z.string()).optional(),
-  settlementMode: z.enum(['explicit', 'timed']),
+  settlementMode: z.enum(['explicit', 'timed', 'atomic']),
   priority: z.number().int().min(0).max(100),
 });
 

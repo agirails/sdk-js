@@ -128,7 +128,10 @@ export class AdapterRouter {
     }
 
     // 3. HTTP endpoint -> x402 (when registered)
-    if (this.isHttpEndpoint(params.to) && !metadata.requiresEscrow) {
+    // NOTE: X402Adapter is ATOMIC (usesEscrow: false) - instant payment, no escrow.
+    // Route HTTPS endpoints to x402 for fire-and-forget API payments.
+    // If caller needs escrow protection, they should use ACTP with address, not URL.
+    if (this.isHttpEndpoint(params.to)) {
       const x402 = this.registry.get('x402');
       if (x402 && x402.canHandle(params)) {
         return x402;

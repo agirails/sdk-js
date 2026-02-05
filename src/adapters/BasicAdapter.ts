@@ -107,7 +107,7 @@ export class BasicAdapter extends BaseAdapter implements IAdapter {
     usesEscrow: true,
     supportsDisputes: true,
     requiresIdentity: false,
-    settlementMode: 'explicit',
+    settlementMode: 'timed', // Auto-release after dispute window
     priority: 50, // Default priority
   };
   /**
@@ -296,7 +296,7 @@ export class BasicAdapter extends BaseAdapter implements IAdapter {
       state: 'COMMITTED',
       success: true,
       amount: result.amount,
-      releaseRequired: true,
+      releaseRequired: false, // Auto-release after dispute window
       provider: result.provider,
       requester: result.requester,
       deadline: result.deadline,

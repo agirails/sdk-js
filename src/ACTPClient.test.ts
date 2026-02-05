@@ -401,7 +401,7 @@ describe('ACTPClient', () => {
   });
 
   describe('full transaction lifecycle', () => {
-    test('happy path: create → deliver → settle', async () => {
+    test('happy path: create → deliver → settle (auto-release)', async () => {
       const runtime = new MockRuntime();
       await runtime.reset();
       const client = await ACTPClient.create({
@@ -421,6 +421,7 @@ describe('ACTPClient', () => {
         disputeWindow: 3600, // 1 hour (minimum allowed)
       });
       expect(result.state).toBe('COMMITTED');
+      expect(result.releaseRequired).toBe(false); // Auto-release enabled
 
       // 2. Provider delivers (standard API) - must go through IN_PROGRESS first
       await client.standard.transitionState(result.txId, 'IN_PROGRESS');
@@ -435,14 +436,11 @@ describe('ACTPClient', () => {
       const mockRuntime = client.runtime as MockRuntime;
       await mockRuntime.time.advanceTime(3601); // 1 hour + 1 second
 
+      // 4. Auto-release: checking status triggers lazy settlement
       status = await client.basic.checkStatus(result.txId);
       expect(status.canDispute).toBe(false);
 
-      // 4. Release escrow
-      const tx = await client.advanced.getTransaction(result.txId);
-      await client.advanced.releaseEscrow(tx!.escrowId!);
-
-      // 5. Verify settled
+      // 5. Verify auto-settled (no manual release needed!)
       const finalTx = await client.advanced.getTransaction(result.txId);
       expect(finalTx!.state).toBe('SETTLED');
 
