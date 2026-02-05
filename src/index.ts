@@ -258,6 +258,35 @@ export type {
 export { ARCHIVE_BUNDLE_TYPE } from './storage/types';
 
 // =============================================================================
+// ERC-8004 Integration
+// =============================================================================
+
+export {
+  ERC8004Bridge,
+  ReputationReporter,
+  ERC8004Error,
+  ERC8004ErrorCode,
+  ERC8004_IDENTITY_REGISTRY,
+  ERC8004_REPUTATION_REGISTRY,
+  ERC8004_DEFAULT_RPC,
+  ACTP_FEEDBACK_TAGS,
+} from './erc8004';
+
+export type {
+  ERC8004BridgeConfig,
+  ReputationReporterConfig,
+  ReportSettlementParams,
+  ReportDisputeParams,
+  ReportResult,
+  ERC8004Network,
+  ERC8004Agent,
+  ERC8004AgentMetadata,
+  ReputationFeedback,
+  ReputationSummary,
+  ACTPFeedbackTag,
+} from './erc8004';
+
+// =============================================================================
 // Enhanced Error Exports
 // =============================================================================
 
