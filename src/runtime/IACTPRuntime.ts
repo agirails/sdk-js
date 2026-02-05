@@ -29,6 +29,12 @@ export interface CreateTransactionParams {
   disputeWindow?: number;
   /** Service description or metadata hash */
   serviceDescription?: string;
+  /**
+   * ERC-8004 agent ID (optional).
+   * If set, enables reputation reporting after settlement.
+   * Stored in transaction for later use by ReputationReporter.
+   */
+  agentId?: string;
 }
 
 /**

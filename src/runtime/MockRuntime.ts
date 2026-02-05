@@ -451,6 +451,7 @@ export class MockRuntime implements IACTPRuntime {
         serviceDescription: params.serviceDescription ?? '',
         deliveryProof: null,
         events: [],
+        agentId: params.agentId,
       };
 
       // Record event
@@ -464,6 +465,7 @@ export class MockRuntime implements IACTPRuntime {
           provider: params.provider,
           amount: params.amount,
           deadline: params.deadline,
+          agentId: params.agentId,
         },
       };
 

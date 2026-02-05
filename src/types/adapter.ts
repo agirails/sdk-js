@@ -128,7 +128,7 @@ export const PaymentMetadataSchema = z.object({
  * Unified payment parameters accepted by all adapters.
  */
 export interface UnifiedPayParams {
-  /** Recipient - address OR HTTP endpoint */
+  /** Recipient - address, HTTP endpoint, or ERC-8004 agent ID */
   to: string;
 
   /** Amount in human-readable format */
@@ -145,6 +145,13 @@ export interface UnifiedPayParams {
 
   /** Adapter selection metadata */
   metadata?: PaymentMetadata;
+
+  /**
+   * ERC-8004 agent ID (populated when 'to' was resolved from agentId).
+   * Set by AdapterRouter when resolving agent ID to wallet address.
+   * Used for reputation reporting after settlement.
+   */
+  erc8004AgentId?: string;
 }
 
 /**
@@ -174,6 +181,7 @@ export const UnifiedPayParamsSchema = z.object({
     .optional(),
   description: z.string().optional(),
   metadata: PaymentMetadataSchema.optional(),
+  erc8004AgentId: z.string().optional(),
 });
 
 // ============================================================================
@@ -235,6 +243,12 @@ export interface UnifiedPayResult {
 
   /** Deadline as ISO 8601 timestamp */
   deadline: string;
+
+  /**
+   * ERC-8004 agent ID (if transaction involved ERC-8004 agent).
+   * Use with ReputationReporter.reportSettlement() after release.
+   */
+  erc8004AgentId?: string;
 }
 
 /**
@@ -253,6 +267,7 @@ export const UnifiedPayResultSchema = z.object({
   provider: z.string().min(1),
   requester: z.string().min(1),
   deadline: z.string().min(1),
+  erc8004AgentId: z.string().optional(),
 });
 
 // ============================================================================

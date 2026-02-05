@@ -11,6 +11,7 @@ export * from './agent';
 export * from './did';
 export * from './adapter';
 export * from './x402';
+export * from './erc8004';
 // Note: storage and archive types are not yet implemented in this version
 // export * from './storage';
 // export * from './archive';

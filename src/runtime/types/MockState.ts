@@ -114,6 +114,13 @@ export interface MockTransaction {
 
   /** List of events emitted during transaction lifecycle */
   events: MockEvent[];
+
+  /**
+   * ERC-8004 agent ID (optional).
+   * If set, can be used for reputation reporting after settlement.
+   * Stored as string representation of uint256.
+   */
+  agentId?: string;
 }
 
 /**
