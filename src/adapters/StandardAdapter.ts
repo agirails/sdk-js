@@ -87,7 +87,7 @@ export class StandardAdapter extends BaseAdapter implements IAdapter {
     usesEscrow: true,
     supportsDisputes: true,
     requiresIdentity: false,
-    settlementMode: 'explicit',
+    settlementMode: 'timed', // Auto-release after dispute window
     priority: 60, // Higher priority than basic (preferred when escrow required)
   };
 
@@ -400,7 +400,7 @@ export class StandardAdapter extends BaseAdapter implements IAdapter {
       state: 'COMMITTED',
       success: true,
       amount: this.formatAmount(tx.amount),
-      releaseRequired: true,
+      releaseRequired: false, // Auto-release after dispute window
       provider,
       requester: this.requesterAddress,
       deadline: new Date(deadline * 1000).toISOString(),

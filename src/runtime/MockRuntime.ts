@@ -480,12 +480,52 @@ export class MockRuntime implements IACTPRuntime {
   /**
    * Gets a transaction by ID.
    *
+   * AUTO-RELEASE: If transaction is DELIVERED and dispute window has passed,
+   * automatically settles the transaction (lazy auto-release).
+   *
    * @param txId - Transaction ID
    * @returns Promise resolving to the transaction or null if not found
    */
   async getTransaction(txId: string): Promise<MockTransaction | null> {
+    // First, check if auto-settle is needed
+    await this.autoSettleIfReady(txId);
+    
+    // Then return the (possibly updated) transaction
     const state = this.stateManager.loadState();
     return state.transactions[txId] ?? null;
+  }
+
+  /**
+   * Auto-settle a transaction if dispute window has passed.
+   *
+   * This implements "lazy auto-release" - when anyone checks a transaction
+   * that is DELIVERED with expired dispute window, it automatically settles.
+   *
+   * @param txId - Transaction ID to check
+   */
+  private async autoSettleIfReady(txId: string): Promise<void> {
+    const state = this.stateManager.loadState();
+    const tx = state.transactions[txId];
+    
+    if (!tx) return;
+    if (tx.state !== 'DELIVERED') return;
+    if (tx.completedAt === null) return;
+    
+    const currentTime = state.blockchain.currentTime;
+    const disputeWindowEnd = tx.completedAt + tx.disputeWindow;
+    
+    // Dispute window still active - don't auto-settle
+    if (currentTime < disputeWindowEnd) return;
+    
+    // Dispute window passed - auto-settle!
+    // Find the escrow and release it
+    if (tx.escrowId) {
+      try {
+        await this.releaseEscrow(tx.escrowId);
+      } catch {
+        // Already settled or other issue - ignore
+      }
+    }
   }
 
   /**

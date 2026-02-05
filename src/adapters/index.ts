@@ -23,6 +23,7 @@ export {
 } from './BaseAdapter';
 export { BasicAdapter, BasicPayParams, BasicPayResult } from './BasicAdapter';
 export { StandardAdapter, StandardTransactionParams } from './StandardAdapter';
+export { X402Adapter, X402AdapterConfig, FetchFunction } from './X402Adapter';
 export { AdapterRegistry } from './AdapterRegistry';
 export { AdapterRouter } from './AdapterRouter';
 export {
