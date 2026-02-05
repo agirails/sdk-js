@@ -470,4 +470,29 @@ export abstract class BaseAdapter {
     const formattedDecimal = roundedCents.toString().padStart(2, '0');
     return `${wholePart}.${formattedDecimal} USDC`;
   }
+
+  /**
+   * Encode dispute window as ABI-encoded proof for DELIVERED transition.
+   *
+   * This helper centralizes proof encoding to prevent drift between
+   * adapters and ensures consistency with on-chain expectations.
+   *
+   * @param disputeWindowSeconds - Dispute window in seconds
+   * @returns ABI-encoded bytes32 proof
+   *
+   * @example
+   * ```typescript
+   * // Encode 2-hour dispute window
+   * const proof = this.encodeDisputeWindowProof(7200);
+   * await runtime.transitionState(txId, 'DELIVERED', proof);
+   * ```
+   */
+  protected encodeDisputeWindowProof(disputeWindowSeconds: number): string {
+    // Lazy import to avoid circular dependency issues
+    const { ethers } = require('ethers');
+    return ethers.AbiCoder.defaultAbiCoder().encode(
+      ['uint256'],
+      [disputeWindowSeconds]
+    );
+  }
 }

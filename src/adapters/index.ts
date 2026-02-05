@@ -5,6 +5,9 @@
  * - BaseAdapter: Abstract base with shared utilities
  * - BasicAdapter: High-level, opinionated API
  * - StandardAdapter: Balanced control API
+ * - AdapterRegistry: Central registry for adapter management
+ * - AdapterRouter: Intelligent adapter selection with guard-rails
+ * - IAdapter: Common interface for all adapters
  *
  * @module adapters
  */
@@ -20,6 +23,29 @@ export {
 } from './BaseAdapter';
 export { BasicAdapter, BasicPayParams, BasicPayResult } from './BasicAdapter';
 export { StandardAdapter, StandardTransactionParams } from './StandardAdapter';
+export { AdapterRegistry } from './AdapterRegistry';
+export { AdapterRouter } from './AdapterRouter';
+export {
+  IAdapter,
+  TransactionStatus,
+  AdapterTransactionState,
+  isAdapter,
+} from './IAdapter';
 
 // Re-export runtime interface for convenience
 export { IACTPRuntime, CreateTransactionParams } from '../runtime/IACTPRuntime';
+
+// Re-export adapter types for convenience
+export {
+  AdapterMetadata,
+  PaymentMetadata,
+  PaymentIdentity,
+  UnifiedPayParams,
+  UnifiedPayResult,
+  InitialTransactionState,
+  AdapterMetadataSchema,
+  PaymentMetadataSchema,
+  UnifiedPayParamsSchema,
+  validatePayParams,
+  safeValidatePayParams,
+} from '../types/adapter';
