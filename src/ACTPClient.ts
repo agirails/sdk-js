@@ -45,6 +45,10 @@ import { BlockchainRuntime } from './runtime/BlockchainRuntime';
 import { IACTPRuntime, IMockRuntime } from './runtime/IACTPRuntime';
 import { BasicAdapter } from './adapters/BasicAdapter';
 import { StandardAdapter } from './adapters/StandardAdapter';
+import { AdapterRegistry } from './adapters/AdapterRegistry';
+import { AdapterRouter } from './adapters/AdapterRouter';
+import { IAdapter, TransactionStatus } from './adapters/IAdapter';
+import { UnifiedPayParams, UnifiedPayResult } from './types/adapter';
 import { EASHelper, EASConfig } from './protocol/EASHelper';
 import { getNetwork } from './config/networks';
 
@@ -436,6 +440,20 @@ export class ACTPClient {
   public readonly easHelper?: EASHelper;
 
   /**
+   * Adapter registry for managing available adapters.
+   *
+   * Used internally by the router but exposed for custom adapter registration.
+   */
+  private readonly registry: AdapterRegistry;
+
+  /**
+   * Adapter router for intelligent adapter selection.
+   *
+   * Selects the best adapter based on payment parameters and metadata.
+   */
+  private readonly router: AdapterRouter;
+
+  /**
    * Private constructor - use ACTPClient.create() factory method.
    */
   private constructor(
@@ -449,6 +467,12 @@ export class ACTPClient {
     this.easHelper = easHelper;
     this.basic = new BasicAdapter(runtime, requesterAddress, easHelper);
     this.standard = new StandardAdapter(runtime, requesterAddress, easHelper);
+
+    // Initialize registry and router
+    this.registry = new AdapterRegistry();
+    this.registry.register(this.basic);
+    this.registry.register(this.standard);
+    this.router = new AdapterRouter(this.registry);
   }
 
   // ==========================================================================
@@ -786,5 +810,204 @@ export class ACTPClient {
     }
 
     return this.runtime.getBalance(address);
+  }
+
+  // ==========================================================================
+  // Unified Payment API (Router-based)
+  // ==========================================================================
+
+  /**
+   * Unified pay method - auto-selects the best adapter.
+   *
+   * This is the recommended way to initiate payments. The router
+   * intelligently selects the appropriate adapter based on:
+   * - Explicit adapter preference (metadata.preferredAdapter)
+   * - Required capabilities (escrow, disputes)
+   * - Recipient type (address vs HTTP endpoint)
+   *
+   * IMPORTANT: Returns with state=COMMITTED, NOT settled.
+   * You MUST call the lifecycle methods to complete:
+   *
+   * ```typescript
+   * const result = await client.pay({ to, amount });
+   * // ... provider does work ...
+   * await client.startWork(result.txId);
+   * await client.deliver(result.txId);
+   * // ... after dispute window ...
+   * await client.release(result.escrowId!);  // EXPLICIT release
+   * ```
+   *
+   * @param params - Unified payment parameters
+   * @returns Promise resolving to unified payment result
+   * @throws {ValidationError} If params are invalid
+   * @throws {Error} If no suitable adapter found
+   *
+   * @example
+   * ```typescript
+   * // Simple payment (uses basic adapter by default)
+   * const result = await client.pay({
+   *   to: '0xProvider...',
+   *   amount: '100',
+   * });
+   *
+   * // Require escrow (prefers standard adapter)
+   * const result = await client.pay({
+   *   to: '0xProvider...',
+   *   amount: '100',
+   *   metadata: { requiresEscrow: true }
+   * });
+   *
+   * // Explicit adapter selection
+   * const result = await client.pay({
+   *   to: '0xProvider...',
+   *   amount: '100',
+   *   metadata: { preferredAdapter: 'standard' }
+   * });
+   * ```
+   */
+  async pay(params: UnifiedPayParams): Promise<UnifiedPayResult> {
+    const adapter = this.router.select(params);
+    return adapter.pay(params);
+  }
+
+  /**
+   * Get transaction status by ID.
+   *
+   * Returns current state plus action hints indicating
+   * what operations are available.
+   *
+   * @param txId - Transaction ID
+   * @returns Promise resolving to transaction status
+   * @throws {Error} If transaction not found
+   *
+   * @example
+   * ```typescript
+   * const status = await client.getStatus(txId);
+   * if (status.canRelease) {
+   *   await client.release(txId);
+   * }
+   * ```
+   */
+  async getStatus(txId: string): Promise<TransactionStatus> {
+    // Use standard adapter for status - it has access to all tx details
+    return this.standard.getStatus(txId);
+  }
+
+  /**
+   * Transition to IN_PROGRESS state (provider starts work).
+   *
+   * Must be called by provider after accepting the transaction.
+   * ACTP requires this explicit transition before delivery.
+   *
+   * @param txId - Transaction ID
+   * @throws {Error} If transaction not found or wrong state
+   *
+   * @example
+   * ```typescript
+   * // Provider acknowledges and starts work
+   * await client.startWork(txId);
+   * ```
+   */
+  async startWork(txId: string): Promise<void> {
+    await this.runtime.transitionState(txId, 'IN_PROGRESS');
+  }
+
+  /**
+   * Transition to DELIVERED state (provider completes work).
+   *
+   * When no disputeWindowSeconds is provided, uses the transaction's actual
+   * disputeWindow from creation time. This ensures consistency and prevents
+   * mismatches between transaction creation and delivery.
+   *
+   * @param txId - Transaction ID
+   * @param disputeWindowSeconds - Optional dispute window override in seconds.
+   *                               If not provided, uses transaction's disputeWindow.
+   * @throws {Error} If transaction not found or wrong state
+   *
+   * @example
+   * ```typescript
+   * // Use transaction's disputeWindow (recommended)
+   * await client.deliver(txId);
+   *
+   * // Override with custom dispute window (use with caution)
+   * await client.deliver(txId, 7200);
+   * ```
+   */
+  async deliver(txId: string, disputeWindowSeconds?: number): Promise<void> {
+    // Fetch transaction
+    const tx = await this.runtime.getTransaction(txId);
+    if (!tx) {
+      throw new Error(`Transaction ${txId} not found`);
+    }
+
+    // First ensure we're in IN_PROGRESS state
+    if (tx.state === 'COMMITTED') {
+      await this.runtime.transitionState(txId, 'IN_PROGRESS');
+    }
+
+    // Use provided disputeWindow or fall back to transaction's disputeWindow
+    const effectiveDisputeWindow = disputeWindowSeconds ?? tx.disputeWindow;
+
+    // Encode dispute window as proof
+    const proof = ethers.AbiCoder.defaultAbiCoder().encode(
+      ['uint256'],
+      [effectiveDisputeWindow]
+    );
+
+    await this.runtime.transitionState(txId, 'DELIVERED', proof);
+  }
+
+  /**
+   * Release escrow funds (EXPLICIT settlement).
+   *
+   * MUST be called after dispute window expires or requester approves.
+   * This is the ONLY way to settle - NO auto-settle.
+   *
+   * @param escrowId - Escrow ID (usually same as txId)
+   * @param attestationUID - Optional attestation UID for verification
+   * @throws {Error} If escrow not found or dispute window active
+   *
+   * @example
+   * ```typescript
+   * // After dispute window expires
+   * await client.release(result.escrowId!);
+   * // Transaction is now SETTLED
+   * ```
+   */
+  async release(escrowId: string, attestationUID?: string): Promise<void> {
+    await this.runtime.releaseEscrow(escrowId, attestationUID);
+  }
+
+  /**
+   * Register a custom adapter.
+   *
+   * Allows adding custom payment adapters (e.g., x402, ERC-8004)
+   * that will be considered during router selection.
+   *
+   * @param adapter - Adapter to register
+   *
+   * @example
+   * ```typescript
+   * // Register a custom x402 adapter
+   * client.registerAdapter(new X402Adapter(client.runtime, requesterAddress));
+   * ```
+   */
+  registerAdapter(adapter: IAdapter): void {
+    this.registry.register(adapter);
+  }
+
+  /**
+   * Get all registered adapter IDs.
+   *
+   * @returns Array of adapter IDs
+   *
+   * @example
+   * ```typescript
+   * const adapters = client.getRegisteredAdapters();
+   * console.log(adapters); // ['basic', 'standard', 'x402']
+   * ```
+   */
+  getRegisteredAdapters(): string[] {
+    return this.registry.getIds();
   }
 }

@@ -16,6 +16,12 @@ import { BaseAdapter, ValidationError } from './BaseAdapter';
 import { IACTPRuntime } from '../runtime/IACTPRuntime';
 import { MockTransaction, TransactionState } from '../runtime/types/MockState';
 import { EASHelper } from '../protocol/EASHelper';
+import { IAdapter, TransactionStatus } from './IAdapter';
+import {
+  AdapterMetadata,
+  UnifiedPayParams,
+  UnifiedPayResult,
+} from '../types/adapter';
 
 /**
  * Parameters for creating a transaction (standard level).
@@ -71,7 +77,20 @@ export interface StandardTransactionParams {
  * await client.standard.releaseEscrow(escrowId);
  * ```
  */
-export class StandardAdapter extends BaseAdapter {
+export class StandardAdapter extends BaseAdapter implements IAdapter {
+  /**
+   * Adapter metadata for router selection.
+   */
+  public readonly metadata: AdapterMetadata = {
+    id: 'standard',
+    name: 'Standard Adapter',
+    usesEscrow: true,
+    supportsDisputes: true,
+    requiresIdentity: false,
+    settlementMode: 'explicit',
+    priority: 60, // Higher priority than basic (preferred when escrow required)
+  };
+
   /**
    * Creates a new StandardAdapter instance.
    *
@@ -332,5 +351,199 @@ export class StandardAdapter extends BaseAdapter {
    */
   async getTransaction(txId: string): Promise<MockTransaction | null> {
     return this.runtime.getTransaction(txId);
+  }
+
+  // ==========================================================================
+  // IAdapter Implementation
+  // ==========================================================================
+
+  /**
+   * Unified pay method for IAdapter interface.
+   *
+   * Creates transaction AND links escrow in one call.
+   *
+   * @param params - Unified payment parameters
+   * @returns Promise resolving to unified payment result
+   */
+  async pay(params: UnifiedPayParams): Promise<UnifiedPayResult> {
+    // Validate using IAdapter validate()
+    this.validate(params);
+
+    // Map to StandardTransactionParams
+    const standardParams: StandardTransactionParams = {
+      provider: params.to,
+      amount: params.amount,
+      deadline: params.deadline,
+      disputeWindow: params.disputeWindow,
+      serviceDescription: params.description,
+    };
+
+    // Create transaction
+    const txId = await this.createTransaction(standardParams);
+
+    // Link escrow (auto-transitions to COMMITTED)
+    await this.linkEscrow(txId);
+
+    // Fetch transaction for response
+    const tx = await this.runtime.getTransaction(txId);
+    if (!tx) {
+      throw new Error(`Transaction ${txId} not found after creation`);
+    }
+
+    const provider = this.validateAddress(params.to, 'to');
+    const deadline = tx.deadline;
+
+    return {
+      txId,
+      escrowId: txId,
+      adapter: this.metadata.id,
+      state: 'COMMITTED',
+      success: true,
+      amount: this.formatAmount(tx.amount),
+      releaseRequired: true,
+      provider,
+      requester: this.requesterAddress,
+      deadline: new Date(deadline * 1000).toISOString(),
+    };
+  }
+
+  /**
+   * Check if this adapter can handle the given parameters.
+   *
+   * StandardAdapter can handle any Ethereum address recipient.
+   *
+   * @param params - Payment parameters to check
+   * @returns True if params have a valid Ethereum address
+   */
+  canHandle(params: UnifiedPayParams): boolean {
+    // StandardAdapter handles Ethereum addresses only
+    if (typeof params.to !== 'string') {
+      return false;
+    }
+
+    // Check if it's an Ethereum address (0x-prefixed hex)
+    return /^0x[a-fA-F0-9]{40}$/.test(params.to);
+  }
+
+  /**
+   * Validate parameters before execution.
+   *
+   * @param params - Parameters to validate
+   * @throws {ValidationError} If params are invalid
+   */
+  validate(params: UnifiedPayParams): void {
+    // Validate address
+    this.validateAddress(params.to, 'to');
+
+    // Validate amount (will throw if invalid)
+    this.parseAmount(params.amount);
+
+    // Validate deadline if provided
+    if (params.deadline !== undefined) {
+      this.parseDeadline(params.deadline);
+    }
+
+    // Validate dispute window if provided
+    if (params.disputeWindow !== undefined) {
+      this.validateDisputeWindow(params.disputeWindow);
+    }
+  }
+
+  /**
+   * Get transaction status by ID.
+   *
+   * Returns TransactionStatus with action hints.
+   *
+   * @param txId - Transaction ID
+   * @returns Promise resolving to transaction status
+   */
+  async getStatus(txId: string): Promise<TransactionStatus> {
+    const tx = await this.runtime.getTransaction(txId);
+
+    if (!tx) {
+      throw new Error(`Transaction ${txId} not found`);
+    }
+
+    const now = this.runtime.time.now();
+    const disputeWindowEnds = tx.completedAt
+      ? tx.completedAt + tx.disputeWindow
+      : undefined;
+
+    return {
+      state: tx.state as TransactionStatus['state'],
+      canStartWork: tx.state === 'COMMITTED',
+      canDeliver: tx.state === 'IN_PROGRESS',
+      canRelease:
+        tx.state === 'DELIVERED' &&
+        disputeWindowEnds !== undefined &&
+        now >= disputeWindowEnds,
+      canDispute:
+        tx.state === 'DELIVERED' &&
+        disputeWindowEnds !== undefined &&
+        now < disputeWindowEnds,
+      amount: this.formatAmount(tx.amount),
+      deadline: new Date(tx.deadline * 1000).toISOString(),
+      disputeWindowEnds: disputeWindowEnds
+        ? new Date(disputeWindowEnds * 1000).toISOString()
+        : undefined,
+      provider: tx.provider,
+      requester: tx.requester,
+    };
+  }
+
+  /**
+   * Transition to IN_PROGRESS state (provider starts work).
+   *
+   * @param txId - Transaction ID
+   */
+  async startWork(txId: string): Promise<void> {
+    await this.runtime.transitionState(txId, 'IN_PROGRESS');
+  }
+
+  /**
+   * Transition to DELIVERED state (provider completes work).
+   *
+   * When no proof is provided, fetches the transaction's actual disputeWindow
+   * and encodes it as proof. This ensures consistency with the dispute window
+   * specified at transaction creation time.
+   *
+   * @param txId - Transaction ID
+   * @param proof - Optional delivery proof (ABI-encoded dispute window).
+   *                If not provided, uses transaction's disputeWindow.
+   */
+  async deliver(txId: string, proof?: string): Promise<void> {
+    let deliveryProof = proof;
+
+    if (!deliveryProof) {
+      // Fetch transaction to get its actual disputeWindow
+      const tx = await this.runtime.getTransaction(txId);
+      if (!tx) {
+        throw new Error(`Transaction ${txId} not found`);
+      }
+      // Use transaction's disputeWindow, not a default
+      deliveryProof = this.encodeDisputeWindowProof(tx.disputeWindow);
+    }
+
+    await this.runtime.transitionState(txId, 'DELIVERED', deliveryProof);
+  }
+
+  /**
+   * Release escrow funds (EXPLICIT settlement).
+   *
+   * Wrapper around releaseEscrow() for IAdapter interface.
+   *
+   * @param escrowId - Escrow ID (usually same as txId)
+   * @param attestationUID - Optional attestation UID for verification
+   */
+  async release(escrowId: string, attestationUID?: string): Promise<void> {
+    // Find txId from escrowId (they're usually the same)
+    const legacyMatch = escrowId.match(/^escrow-(.+)-\d+$/);
+    const txId = legacyMatch ? legacyMatch[1] : escrowId;
+
+    if (attestationUID) {
+      await this.releaseEscrow(escrowId, { txId, attestationUID });
+    } else {
+      await this.releaseEscrow(escrowId);
+    }
   }
 }
