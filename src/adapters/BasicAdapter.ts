@@ -143,6 +143,7 @@ export class BasicAdapter extends BaseAdapter implements IAdapter {
    * - Cannot pay yourself
    *
    * @param params - Payment parameters
+   * @param agentId - Optional ERC-8004 agent ID (for reputation reporting)
    * @returns User-friendly payment result
    * @throws {ValidationError} If inputs are invalid
    *
@@ -155,7 +156,7 @@ export class BasicAdapter extends BaseAdapter implements IAdapter {
    * });
    * ```
    */
-  async payBasic(params: BasicPayParams): Promise<BasicPayResult> {
+  async payBasic(params: BasicPayParams, agentId?: string): Promise<BasicPayResult> {
     // Validate and parse inputs
     const provider = this.validateAddress(params.to, 'to');
     const amount = this.parseAmount(params.amount);
@@ -193,6 +194,7 @@ export class BasicAdapter extends BaseAdapter implements IAdapter {
       amount: amount.toString(),
       deadline,
       disputeWindow,
+      agentId, // ERC-8004 agent ID for reputation reporting
     });
 
     // Link escrow (auto-transitions to COMMITTED)
@@ -285,8 +287,8 @@ export class BasicAdapter extends BaseAdapter implements IAdapter {
       disputeWindow: params.disputeWindow,
     };
 
-    // Call existing payBasic()
-    const result = await this.payBasic(basicParams);
+    // Call existing payBasic() with optional agentId
+    const result = await this.payBasic(basicParams, params.erc8004AgentId);
 
     // Map to UnifiedPayResult
     return {
@@ -296,10 +298,11 @@ export class BasicAdapter extends BaseAdapter implements IAdapter {
       state: 'COMMITTED',
       success: true,
       amount: result.amount,
-      releaseRequired: false, // Auto-release after dispute window
+      releaseRequired: true, // ACTP requires explicit release()
       provider: result.provider,
       requester: result.requester,
       deadline: result.deadline,
+      erc8004AgentId: params.erc8004AgentId,
     };
   }
 

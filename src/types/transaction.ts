@@ -20,6 +20,12 @@ export interface Transaction {
   attestationUID: string;
   metadata: string;
   platformFeeBpsLocked: number;
+  /**
+   * ERC-8004 agent token ID (optional).
+   * 0 or undefined = not an ERC-8004 agent.
+   * See ADR-001 for architectural rationale.
+   */
+  agentId?: string;
 }
 
 /**
@@ -32,6 +38,12 @@ export interface CreateTransactionParams {
   deadline: number;
   disputeWindow: number;
   metadata?: string;
+  /**
+   * ERC-8004 agent token ID (optional).
+   * Set to 0 or omit if provider is not registered in ERC-8004 Identity Registry.
+   * See ADR-001 for architectural rationale.
+   */
+  agentId?: string;
 }
 
 /**

@@ -429,4 +429,104 @@ describe('AdapterRouter', () => {
       expect(adapter.metadata.id).toBe('standard');
     });
   });
+
+  describe('isERC8004AgentId()', () => {
+    it('returns true for numeric agent IDs', () => {
+      expect(router.isERC8004AgentId('12345')).toBe(true);
+      expect(router.isERC8004AgentId('0')).toBe(true);
+      expect(router.isERC8004AgentId('999999999999')).toBe(true);
+    });
+
+    it('returns false for Ethereum addresses', () => {
+      expect(router.isERC8004AgentId(VALID_ADDRESS)).toBe(false);
+      expect(router.isERC8004AgentId('0x1234567890123456789012345678901234567890')).toBe(false);
+    });
+
+    it('returns false for URLs', () => {
+      expect(router.isERC8004AgentId('https://example.com')).toBe(false);
+      expect(router.isERC8004AgentId('http://api.test.io/pay')).toBe(false);
+    });
+
+    it('returns false for non-numeric strings', () => {
+      expect(router.isERC8004AgentId('agent-name')).toBe(false);
+      expect(router.isERC8004AgentId('my-agent')).toBe(false);
+      expect(router.isERC8004AgentId('')).toBe(false);
+    });
+
+    it('returns false for negative numbers', () => {
+      expect(router.isERC8004AgentId('-1')).toBe(false);
+      expect(router.isERC8004AgentId('-12345')).toBe(false);
+    });
+  });
+
+  describe('selectAndResolve()', () => {
+    it('passes through non-agent params unchanged', async () => {
+      const params: UnifiedPayParams = { to: VALID_ADDRESS, amount: '100' };
+      const result = await router.selectAndResolve(params);
+
+      expect(result.wasAgentIdResolved).toBe(false);
+      expect(result.resolvedParams).toEqual(params);
+      expect(result.adapter.metadata.id).toBe('standard');
+    });
+
+    it('throws when agentId provided but no bridge configured', async () => {
+      const params: UnifiedPayParams = { to: '12345', amount: '100' };
+
+      await expect(router.selectAndResolve(params)).rejects.toThrow(
+        /requires testnet or mainnet mode/
+      );
+    });
+
+    it('resolves agentId to wallet when bridge configured', async () => {
+      const resolvedWallet = '0x9999999999999999999999999999999999999999';
+      const mockBridge = {
+        getAgentWallet: jest.fn().mockResolvedValue(resolvedWallet),
+      };
+
+      router.setERC8004Bridge(mockBridge as any);
+
+      const params: UnifiedPayParams = { to: '12345', amount: '100' };
+      const result = await router.selectAndResolve(params);
+
+      expect(result.wasAgentIdResolved).toBe(true);
+      expect(result.resolvedParams.to).toBe(resolvedWallet);
+      expect(result.resolvedParams.erc8004AgentId).toBe('12345');
+      expect(mockBridge.getAgentWallet).toHaveBeenCalledWith('12345');
+    });
+
+    it('throws user-friendly error when agent not found', async () => {
+      const mockBridge = {
+        getAgentWallet: jest.fn().mockRejectedValue(new Error('Agent 99999 not found')),
+      };
+
+      router.setERC8004Bridge(mockBridge as any);
+
+      const params: UnifiedPayParams = { to: '99999', amount: '100' };
+
+      await expect(router.selectAndResolve(params)).rejects.toThrow(
+        /Failed to resolve ERC-8004 agent '99999'/
+      );
+    });
+  });
+
+  describe('setERC8004Bridge()', () => {
+    it('allows setting bridge after construction', async () => {
+      const resolvedWallet = '0x8888888888888888888888888888888888888888';
+      const mockBridge = {
+        getAgentWallet: jest.fn().mockResolvedValue(resolvedWallet),
+      };
+
+      // Initially no bridge
+      await expect(
+        router.selectAndResolve({ to: '12345', amount: '100' })
+      ).rejects.toThrow(/requires testnet or mainnet mode/);
+
+      // Set bridge
+      router.setERC8004Bridge(mockBridge as any);
+
+      // Now works
+      const result = await router.selectAndResolve({ to: '12345', amount: '100' });
+      expect(result.wasAgentIdResolved).toBe(true);
+    });
+  });
 });

@@ -64,6 +64,20 @@ export {
   StandardTransactionParams,
 } from './adapters/StandardAdapter';
 
+export { AdapterRegistry } from './adapters/AdapterRegistry';
+
+export {
+  AdapterRouter,
+  AdapterSelectionResult,
+} from './adapters/AdapterRouter';
+
+export {
+  IAdapter,
+  TransactionStatus,
+  AdapterTransactionState,
+  isAdapter,
+} from './adapters/IAdapter';
+
 // =============================================================================
 // Runtime Layer - Protocol Implementation
 // =============================================================================
