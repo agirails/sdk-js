@@ -421,7 +421,7 @@ describe('ACTPClient', () => {
         disputeWindow: 3600, // 1 hour (minimum allowed)
       });
       expect(result.state).toBe('COMMITTED');
-      expect(result.releaseRequired).toBe(false); // Auto-release enabled
+      expect(result.releaseRequired).toBe(true); // ACTP requires explicit release (MockRuntime has lazy auto-settle for convenience)
 
       // 2. Provider delivers (standard API) - must go through IN_PROGRESS first
       await client.standard.transitionState(result.txId, 'IN_PROGRESS');

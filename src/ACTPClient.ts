@@ -50,6 +50,9 @@ import { AdapterRouter } from './adapters/AdapterRouter';
 import { IAdapter, TransactionStatus } from './adapters/IAdapter';
 import { UnifiedPayParams, UnifiedPayResult } from './types/adapter';
 import { EASHelper, EASConfig } from './protocol/EASHelper';
+import { ERC8004Bridge } from './erc8004/ERC8004Bridge';
+import { ReputationReporter } from './erc8004/ReputationReporter';
+import { ERC8004Network } from './types/erc8004';
 import { getNetwork } from './config/networks';
 
 // ============================================================================
@@ -454,17 +457,27 @@ export class ACTPClient {
   private readonly router: AdapterRouter;
 
   /**
+   * ERC-8004 Reputation Reporter (testnet/mainnet only).
+   * Used to report settlement outcomes to ERC-8004 Reputation Registry.
+   * @internal
+   */
+  private readonly reputationReporter?: ReputationReporter;
+
+  /**
    * Private constructor - use ACTPClient.create() factory method.
    */
   private constructor(
     runtime: IACTPRuntime,
     requesterAddress: string,
     info: ACTPClientInfo,
-    easHelper?: EASHelper
+    easHelper?: EASHelper,
+    erc8004Bridge?: ERC8004Bridge,
+    reputationReporter?: ReputationReporter
   ) {
     this.runtime = runtime;
     this.info = info;
     this.easHelper = easHelper;
+    this.reputationReporter = reputationReporter;
     this.basic = new BasicAdapter(runtime, requesterAddress, easHelper);
     this.standard = new StandardAdapter(runtime, requesterAddress, easHelper);
 
@@ -472,7 +485,7 @@ export class ACTPClient {
     this.registry = new AdapterRegistry();
     this.registry.register(this.basic);
     this.registry.register(this.standard);
-    this.router = new AdapterRouter(this.registry);
+    this.router = new AdapterRouter(this.registry, erc8004Bridge);
   }
 
   // ==========================================================================
@@ -529,6 +542,8 @@ export class ACTPClient {
     let runtime: IACTPRuntime;
     let stateDirectory: string | undefined;
     let easHelper: EASHelper | undefined;
+    let erc8004Bridge: ERC8004Bridge | undefined;
+    let reputationReporter: ReputationReporter | undefined;
 
     // If custom runtime provided, use it directly
     if (config.runtime) {
@@ -601,6 +616,23 @@ export class ACTPClient {
           if (config.easConfig) {
             easHelper = blockchainRuntime.getEASHelper();
           }
+
+          // ERC-8004 INTEGRATION: Create bridge for agent ID resolution
+          // Maps network to ERC8004Network ('base-sepolia' or 'base')
+          const erc8004Network: ERC8004Network =
+            config.mode === 'testnet' ? 'base-sepolia' : 'base';
+          erc8004Bridge = new ERC8004Bridge({
+            network: erc8004Network,
+            rpcUrl,
+          });
+
+          // ERC-8004 REPUTATION: Create reporter for settlement outcome reporting
+          // Reports successful settlements and dispute outcomes to Reputation Registry
+          reputationReporter = new ReputationReporter({
+            network: erc8004Network,
+            signer,
+          });
+
           break;
         }
 
@@ -622,7 +654,8 @@ export class ACTPClient {
     };
 
     // SECURITY FIX (C-4): Pass EASHelper to adapters for attestation verification
-    return new ACTPClient(runtime, normalizedAddress, info, easHelper);
+    // ERC-8004: Pass bridge for agent ID resolution, reporter for settlement outcomes
+    return new ACTPClient(runtime, normalizedAddress, info, easHelper, erc8004Bridge, reputationReporter);
   }
 
   // ==========================================================================
@@ -866,8 +899,9 @@ export class ACTPClient {
    * ```
    */
   async pay(params: UnifiedPayParams): Promise<UnifiedPayResult> {
-    const adapter = this.router.select(params);
-    return adapter.pay(params);
+    // Use selectAndResolve to auto-resolve ERC-8004 agent IDs to wallet addresses
+    const { adapter, resolvedParams } = await this.router.selectAndResolve(params);
+    return adapter.pay(resolvedParams);
   }
 
   /**
@@ -963,6 +997,10 @@ export class ACTPClient {
    * MUST be called after dispute window expires or requester approves.
    * This is the ONLY way to settle - NO auto-settle.
    *
+   * If ERC-8004 agent ID was set during transaction creation, this method
+   * also reports the settlement to the ERC-8004 Reputation Registry.
+   * Reputation reporting is non-blocking - failures don't affect settlement.
+   *
    * @param escrowId - Escrow ID (usually same as txId)
    * @param attestationUID - Optional attestation UID for verification
    * @throws {Error} If escrow not found or dispute window active
@@ -972,10 +1010,40 @@ export class ACTPClient {
    * // After dispute window expires
    * await client.release(result.escrowId!);
    * // Transaction is now SETTLED
+   * // If ERC-8004 agent, reputation is automatically reported
    * ```
    */
   async release(escrowId: string, attestationUID?: string): Promise<void> {
+    // In ACTP, escrowId === txId
+    const txId = escrowId;
+
+    // Get transaction to find agentId (for reputation reporting)
+    const tx = await this.runtime.getTransaction(txId);
+    const agentId = tx?.agentId;
+
+    // Release escrow (this is the critical operation)
     await this.runtime.releaseEscrow(escrowId, attestationUID);
+
+    // ERC-8004 REPUTATION: Report settlement if agent ID exists
+    // Non-blocking - fire and forget (settlement already succeeded)
+    if (this.reputationReporter && agentId && agentId !== '0') {
+      // Don't await - reputation reporting shouldn't block the release
+      this.reputationReporter
+        .reportSettlement({
+          agentId,
+          txId,
+        })
+        .then((result) => {
+          if (result) {
+            console.log(
+              `[ERC8004] Settlement reported for agent ${agentId}: ${result.txHash}`
+            );
+          }
+        })
+        .catch(() => {
+          // Errors already logged by reporter - silently ignore here
+        });
+    }
   }
 
   /**
@@ -1009,5 +1077,30 @@ export class ACTPClient {
    */
   getRegisteredAdapters(): string[] {
     return this.registry.getIds();
+  }
+
+  /**
+   * Get the ERC-8004 Reputation Reporter instance.
+   *
+   * Only available in testnet/mainnet modes. Returns undefined in mock mode.
+   * Use this for manual reputation reporting or checking stats.
+   *
+   * @returns ReputationReporter instance or undefined
+   *
+   * @example
+   * ```typescript
+   * const reporter = client.getReputationReporter();
+   * if (reporter) {
+   *   // Check if already reported
+   *   const reported = reporter.isReported(txId);
+   *
+   *   // Get agent reputation
+   *   const rep = await reporter.getAgentReputation('12345');
+   *   console.log(`Agent has ${rep?.count} reviews, score: ${rep?.score}`);
+   * }
+   * ```
+   */
+  getReputationReporter(): ReputationReporter | undefined {
+    return this.reputationReporter;
   }
 }

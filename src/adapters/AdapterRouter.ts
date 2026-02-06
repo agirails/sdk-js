@@ -21,6 +21,21 @@ import {
   safeValidatePayParams,
 } from '../types/adapter';
 import { ValidationError } from './BaseAdapter';
+import { ERC8004Bridge } from '../erc8004/ERC8004Bridge';
+
+/**
+ * Result of adapter selection with potential ERC-8004 resolution.
+ */
+export interface AdapterSelectionResult {
+  /** Selected adapter */
+  adapter: IAdapter;
+
+  /** Resolved payment parameters (with wallet instead of agentId) */
+  resolvedParams: UnifiedPayParams;
+
+  /** Whether an ERC-8004 agent ID was resolved */
+  wasAgentIdResolved: boolean;
+}
 
 /**
  * AdapterRouter - Intelligent adapter selection with guard-rails.
@@ -53,12 +68,29 @@ import { ValidationError } from './BaseAdapter';
  * ```
  */
 export class AdapterRouter {
+  private erc8004Bridge?: ERC8004Bridge;
+
   /**
    * Creates a new AdapterRouter instance.
    *
    * @param registry - AdapterRegistry containing available adapters
+   * @param erc8004Bridge - Optional ERC-8004 bridge for agent ID resolution
    */
-  constructor(private registry: AdapterRegistry) {}
+  constructor(
+    private registry: AdapterRegistry,
+    erc8004Bridge?: ERC8004Bridge
+  ) {
+    this.erc8004Bridge = erc8004Bridge;
+  }
+
+  /**
+   * Set the ERC-8004 bridge for agent ID resolution.
+   *
+   * @param bridge - ERC8004Bridge instance
+   */
+  setERC8004Bridge(bridge: ERC8004Bridge): void {
+    this.erc8004Bridge = bridge;
+  }
 
   /**
    * Select the best adapter for the given payment parameters.
@@ -266,6 +298,118 @@ export class AdapterRouter {
     try {
       this.validateParams(params);
       return this.getCompatibleAdapters(params).length > 0;
+    } catch {
+      return false;
+    }
+  }
+
+  // ==========================================================================
+  // ERC-8004 Agent ID Resolution
+  // ==========================================================================
+
+  /**
+   * Select adapter AND resolve ERC-8004 agent IDs.
+   *
+   * This is the recommended method for payment flows. It:
+   * 1. Checks if `to` is an ERC-8004 agent ID (numeric string)
+   * 2. If so, resolves it to a wallet address via ERC8004Bridge
+   * 3. Stores the original agentId in erc8004AgentId field
+   * 4. Selects the appropriate adapter
+   *
+   * @param params - Unified payment parameters
+   * @returns Selection result with resolved params
+   * @throws {ValidationError} If params invalid or agent not found
+   *
+   * @example
+   * ```typescript
+   * const { adapter, resolvedParams } = await router.selectAndResolve({
+   *   to: '12345',  // ERC-8004 agent ID
+   *   amount: '100',
+   * });
+   *
+   * // resolvedParams.to is now the wallet address
+   * // resolvedParams.erc8004AgentId is '12345'
+   * const result = await adapter.pay(resolvedParams);
+   * ```
+   */
+  async selectAndResolve(params: UnifiedPayParams): Promise<AdapterSelectionResult> {
+    // Check if 'to' is an ERC-8004 agent ID
+    if (this.isERC8004AgentId(params.to)) {
+      if (!this.erc8004Bridge) {
+        throw new ValidationError(
+          `Cannot resolve ERC-8004 agent ID '${params.to}': ` +
+            'ERC-8004 resolution requires testnet or mainnet mode. ' +
+            'Use a wallet address (0x...) in mock mode, or switch to testnet/mainnet.'
+        );
+      }
+
+      try {
+        // Resolve agent ID to wallet address
+        const wallet = await this.erc8004Bridge.getAgentWallet(params.to);
+
+        // Create resolved params with wallet and stored agentId
+        const resolvedParams: UnifiedPayParams = {
+          ...params,
+          to: wallet,
+          erc8004AgentId: params.to,
+        };
+
+        // Select adapter for resolved params
+        const adapter = this.select(resolvedParams);
+
+        return {
+          adapter,
+          resolvedParams,
+          wasAgentIdResolved: true,
+        };
+      } catch (error) {
+        // Re-throw with clearer message
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        throw new ValidationError(
+          `Failed to resolve ERC-8004 agent '${params.to}': ${errorMsg}`
+        );
+      }
+    }
+
+    // Not an agent ID - proceed normally
+    const adapter = this.select(params);
+    return {
+      adapter,
+      resolvedParams: params,
+      wasAgentIdResolved: false,
+    };
+  }
+
+  /**
+   * Check if a string looks like an ERC-8004 agent ID.
+   *
+   * Agent IDs are numeric strings (uint256) that are:
+   * - NOT Ethereum addresses (0x-prefixed)
+   * - NOT URLs (http/https)
+   * - Valid as BigInt in range [0, 2^256)
+   *
+   * @param to - Recipient string to check
+   * @returns True if it looks like an agent ID
+   */
+  isERC8004AgentId(to: string): boolean {
+    if (!to || typeof to !== 'string') {
+      return false;
+    }
+
+    // Not an Ethereum address
+    if (to.startsWith('0x')) {
+      return false;
+    }
+
+    // Not a URL
+    if (to.includes('://') || to.startsWith('http')) {
+      return false;
+    }
+
+    // Must be a valid uint256
+    try {
+      const bn = BigInt(to);
+      return bn >= 0n && bn < 2n ** 256n;
     } catch {
       return false;
     }

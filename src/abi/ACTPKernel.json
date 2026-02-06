@@ -328,6 +328,11 @@
         "name": "serviceHash",
         "type": "bytes32",
         "internalType": "bytes32"
+      },
+      {
+        "name": "agentId",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [
@@ -477,6 +482,11 @@
             "name": "platformFeeBpsLocked",
             "type": "uint16",
             "internalType": "uint16"
+          },
+          {
+            "name": "agentId",
+            "type": "uint256",
+            "internalType": "uint256"
           }
         ]
       }
@@ -1325,6 +1335,12 @@
       },
       {
         "name": "timestamp",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "agentId",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

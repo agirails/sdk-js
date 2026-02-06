@@ -206,25 +206,25 @@ export class ERC8004Error extends Error {
 /**
  * ERC-8004 Identity Registry addresses per network.
  *
- * NOTE: Update with canonical addresses when available.
- * Zero addresses indicate registry not yet deployed.
+ * Canonical CREATE2 addresses from: https://github.com/erc-8004/erc-8004-contracts
+ * Vanity prefix 0x8004 ensures same address across all EVM chains.
  */
 export const ERC8004_IDENTITY_REGISTRY: Record<ERC8004Network, string> = {
-  ethereum: '0x0000000000000000000000000000000000000000', // TBD - Mainnet
-  base: '0x0000000000000000000000000000000000000000', // TBD - Base Mainnet
-  'base-sepolia': '0x0000000000000000000000000000000000000000', // TBD - Testnet
+  ethereum: '0x8004A169FB4a3325136EB29fA0ceB6D2e539a432', // Ethereum Mainnet
+  base: '0x8004A169FB4a3325136EB29fA0ceB6D2e539a432', // Base Mainnet
+  'base-sepolia': '0x8004A818BFB912233c491871b3d84c89A494BD9e', // Base Sepolia
 };
 
 /**
  * ERC-8004 Reputation Registry addresses per network.
  *
- * NOTE: Update with canonical addresses when available.
- * Zero addresses indicate registry not yet deployed.
+ * Canonical CREATE2 addresses from: https://github.com/erc-8004/erc-8004-contracts
+ * Vanity prefix 0x8004 ensures same address across all EVM chains.
  */
 export const ERC8004_REPUTATION_REGISTRY: Record<ERC8004Network, string> = {
-  ethereum: '0x0000000000000000000000000000000000000000', // TBD - Mainnet
-  base: '0x0000000000000000000000000000000000000000', // TBD - Base Mainnet
-  'base-sepolia': '0x0000000000000000000000000000000000000000', // TBD - Testnet
+  ethereum: '0x8004BAa17C55a88189AE136b182e5fdA19dE9b63', // Ethereum Mainnet
+  base: '0x8004BAa17C55a88189AE136b182e5fdA19dE9b63', // Base Mainnet
+  'base-sepolia': '0x8004B663056A597Dffe9eCcC1965A193B7388713', // Base Sepolia
 };
 
 // ============================================================================

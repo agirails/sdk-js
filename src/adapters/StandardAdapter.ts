@@ -43,6 +43,9 @@ export interface StandardTransactionParams {
 
   /** Optional: Service description */
   serviceDescription?: string;
+
+  /** Optional: ERC-8004 agent ID (for reputation reporting) */
+  agentId?: string;
 }
 
 /**
@@ -162,6 +165,7 @@ export class StandardAdapter extends BaseAdapter implements IAdapter {
       deadline,
       disputeWindow,
       serviceDescription: params.serviceDescription,
+      agentId: params.agentId, // ERC-8004 agent ID for reputation reporting
     });
   }
 
@@ -376,6 +380,7 @@ export class StandardAdapter extends BaseAdapter implements IAdapter {
       deadline: params.deadline,
       disputeWindow: params.disputeWindow,
       serviceDescription: params.description,
+      agentId: params.erc8004AgentId, // Pass ERC-8004 agent ID
     };
 
     // Create transaction
@@ -400,10 +405,11 @@ export class StandardAdapter extends BaseAdapter implements IAdapter {
       state: 'COMMITTED',
       success: true,
       amount: this.formatAmount(tx.amount),
-      releaseRequired: false, // Auto-release after dispute window
+      releaseRequired: true, // ACTP requires explicit release()
       provider,
       requester: this.requesterAddress,
       deadline: new Date(deadline * 1000).toISOString(),
+      erc8004AgentId: params.erc8004AgentId, // Return agent ID
     };
   }
 

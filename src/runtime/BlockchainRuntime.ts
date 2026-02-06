@@ -395,6 +395,8 @@ export class BlockchainRuntime implements IACTPRuntime {
       // SECURITY FIX (CRITICAL): serviceDescription should be a bytes32 hash
       // If caller passes raw string, it will fail on-chain. Basic/Standard API now hash before calling.
       metadata: this.validateServiceHash(params.serviceDescription),
+      // ERC-8004 agent ID - pass through if provided (see ADR-001)
+      agentId: params.agentId,
     });
 
     return txId;
