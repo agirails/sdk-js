@@ -38,25 +38,20 @@ Get started with real transactions on Base Sepolia testnet:
 # Install CLI globally
 npm install -g @agirails/sdk
 
-# Initialize configuration
-actp init --network base-sepolia
-
-# Set your private key (or use PRIVATE_KEY env var)
-actp config set private-key YOUR_PRIVATE_KEY
-
-# Note: mint is mock mode only. For testnet/mainnet, bridge real USDC via bridge.base.org
-# In mock mode:
-actp mint --amount 1000  # Mint 1000 test USDC (mock mode only)
+# One-time setup: generates encrypted keystore at .actp/keystore.json
+ACTP_KEY_PASSWORD=your-password actp init -m testnet
 
 # Check your balance
-actp balance
+ACTP_KEY_PASSWORD=your-password actp balance
 
 # Make a payment
-actp pay 0xProviderAddress 100 --deadline 24h
+ACTP_KEY_PASSWORD=your-password actp pay 0xProviderAddress 100 --deadline 24h
 
 # Watch transaction status
 actp watch TX_ID
 ```
+
+> **Alternative**: Set `ACTP_PRIVATE_KEY` env var to use a raw private key instead of the keystore.
 
 ### Basic API - Simple Payments
 
@@ -95,10 +90,10 @@ import { ACTPClient } from '@agirails/sdk';
 import { ethers } from 'ethers';
 
 async function main() {
+  // No wallet param needed — auto-detects .actp/keystore.json
   const client = await ACTPClient.create({
     mode: 'testnet',  // or 'mainnet' for production
     requesterAddress: '0x1111111111111111111111111111111111111111',
-    privateKey: process.env.PRIVATE_KEY,
   });
 
   // Step 1: Create transaction (no funds locked yet)
@@ -197,19 +192,17 @@ const client = await ACTPClient.create({
   stateDirectory: '.actp'  // Optional: persist state to disk
 });
 
-// Testnet mode - Base Sepolia
+// Testnet mode - Base Sepolia (auto-detects keystore or ACTP_PRIVATE_KEY)
 const client = await ACTPClient.create({
   mode: 'testnet',
   requesterAddress: '0x1111111111111111111111111111111111111111',
-  privateKey: '0x...',
   rpcUrl: 'https://sepolia.base.org'  // Optional: custom RPC
 });
 
-// Mainnet mode - Base
+// Mainnet mode - Base (auto-detects keystore or ACTP_PRIVATE_KEY)
 const client = await ACTPClient.create({
   mode: 'mainnet',
   requesterAddress: '0x1111111111111111111111111111111111111111',
-  privateKey: '0x...'
 });
 ```
 
@@ -332,7 +325,11 @@ actp simulate fee <amount>
 ### Configuration
 
 ```bash
-# Set configuration
+# Initialize keystore (one-time setup)
+ACTP_KEY_PASSWORD=your-password actp init -m testnet   # or mainnet
+ACTP_KEY_PASSWORD=your-password actp init -m mainnet
+
+# General config
 actp config set <key> <value>
 actp config get <key>
 actp config list
@@ -341,7 +338,6 @@ actp config reset
 # Available config keys:
 #   network: base-sepolia | base-mainnet | mock
 #   rpc-url: RPC endpoint URL
-#   private-key: Wallet private key (or use PRIVATE_KEY env)
 #   state-directory: Directory for mock state persistence
 ```
 
@@ -434,11 +430,11 @@ const providers = directory.find({ capabilities: ['gpt-4'] });
 ```typescript
 import { Agent, AgentConfig } from '@agirails/sdk';
 
-// Create an agent
+// Create an agent (auto-detects keystore, no wallet param needed)
 const agent = new Agent({
   name: 'my-agent',
-  address: '0x...',
-  services: ['text-generation']
+  network: 'testnet',
+  services: ['text-generation'],
 });
 
 // Handle jobs
@@ -604,8 +600,9 @@ DIDs are used internally for:
 ## Environment Variables
 
 ```bash
-# Required for blockchain mode
-PRIVATE_KEY=0x...
+# Wallet resolution (checked in order):
+ACTP_PRIVATE_KEY=0x...       # Raw private key (takes priority if set)
+ACTP_KEY_PASSWORD=...        # Decrypts .actp/keystore.json (recommended)
 
 # Optional
 BASE_SEPOLIA_RPC=https://sepolia.base.org
