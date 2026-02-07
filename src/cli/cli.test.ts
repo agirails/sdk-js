@@ -754,14 +754,14 @@ describe('Init Command', () => {
     }
   });
 
-  it('should reject testnet mode without address', async () => {
+  it('should require password for testnet wallet generation', async () => {
     const mockOutput = createMockOutput();
     const originalCwd = process.cwd();
 
     try {
       process.chdir(testDir);
 
-      await expect(runInit({ mode: 'testnet' }, mockOutput)).rejects.toThrow('Address required');
+      await expect(runInit({ mode: 'testnet' }, mockOutput)).rejects.toThrow('Wallet password required');
     } finally {
       process.chdir(originalCwd);
     }
