@@ -646,7 +646,9 @@ export class MockRuntime implements IACTPRuntime {
       if (newState === 'DELIVERED') {
         tx.completedAt = currentTime;
         // SECURITY FIX (PROOF-PARAM): Store delivery proof if provided
-        if (proof) {
+        // Only set if not already populated (Agent sets deliveryProof before transitioning,
+        // and passes disputeWindowProof as the proof param — don't overwrite the real proof)
+        if (proof && !tx.deliveryProof) {
           tx.deliveryProof = proof;
         }
       }
