@@ -41,3 +41,6 @@ Thumbs.db
 # Local files (not for public repo)
 test-scripts/
 CLAUDE.md
+.claude/
+deliverables/
+*.png
