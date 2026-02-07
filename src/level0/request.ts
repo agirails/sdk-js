@@ -62,7 +62,6 @@ export async function request(
   service: string,
   options: RequestOptions
 ): Promise<RequestResult> {
-  // SECURITY FIX (H-2): Validate service name to prevent injection
   const validatedService = validateServiceName(service);
 
   const logger = new Logger({ source: 'request' });
@@ -76,12 +75,8 @@ export async function request(
     });
   }
 
-  // SECURITY FIX (RPCURL): Use rpcUrl from options or fallback to network default
-  // This allows Level0 request() to work with testnet/mainnet without requiring
-  // explicit rpcUrl if user is okay with public RPC endpoints.
   let rpcUrl = options.rpcUrl;
   if (!rpcUrl && (options.network === 'testnet' || options.network === 'mainnet')) {
-    // Import getNetwork to get default rpcUrl from network config
     const { getNetwork } = await import('../config/networks');
     const networkName = options.network === 'testnet' ? 'base-sepolia' : 'base-mainnet';
     const networkConfig = getNetwork(networkName);
@@ -89,13 +84,11 @@ export async function request(
     logger.info(`Using default RPC URL for ${networkName}: ${rpcUrl}`);
   }
 
-  // Resolve wallet key: explicit wallet option → keystore auto-detect → undefined
   const resolvedKey = await resolveKeyIfNeeded(options.wallet, options.network, options.stateDirectory);
   const resolvedAddress = resolvedKey
     ? new ethers.Wallet(resolvedKey).address.toLowerCase()
     : undefined;
 
-  // Create ACTP client
   const client = await ACTPClient.create({
     mode: options.network === 'testnet' ? 'testnet' : options.network === 'mainnet' ? 'mainnet' : 'mock',
     requesterAddress: resolvedAddress || getRequesterAddress(options.wallet),
@@ -104,10 +97,7 @@ export async function request(
     rpcUrl,
   });
 
-  // Calculate deadline
   const deadline = calculateDeadline(options.deadline, options.timeout);
-
-  // Create transaction with service metadata
   const startTime = Date.now();
 
   try {
@@ -115,7 +105,6 @@ export async function request(
     const amountWei = (options.budget * 1_000_000).toString(); // Convert to USDC wei (6 decimals)
 
     // In mock mode, ensure requester has enough funds
-    // This is a convenience feature for testing - won't exist in production
     if (client.runtime && 'mintTokens' in client.runtime) {
       const mockRuntime = client.runtime as any;
       const balance = await mockRuntime.getBalance(requesterAddress);
@@ -129,30 +118,19 @@ export async function request(
       }
     }
 
-    // ARCHITECTURE FIX: Service metadata handling
-    // - MockRuntime: Store plaintext for provider matching and input extraction
-    // - BlockchainRuntime: Hashes plaintext internally before sending on-chain
-    //
-    // Provider needs plaintext to:
-    // 1. Match service name to handler (findServiceHandler)
-    // 2. Extract input data for job execution (extractJobInput)
-    //
-    // On-chain storage uses bytes32 hash (BlockchainRuntime.validateServiceHash handles this)
     const serviceMetadata = JSON.stringify({
       service: validatedService,
       input: options.input,
       timestamp: Date.now(),
     });
 
-    // Create transaction with structured metadata
-    // MockRuntime stores as-is, BlockchainRuntime hashes for on-chain
     const txId = await client.runtime.createTransaction({
       provider,
       requester: requesterAddress,
       amount: amountWei,
       deadline,
-      disputeWindow: options.disputeWindow ?? 172800, // Default 2 days
-      serviceDescription: serviceMetadata, // Structured JSON for provider parsing
+      disputeWindow: options.disputeWindow ?? 172800,
+      serviceDescription: serviceMetadata,
     });
 
     // Call onProgress if provided
@@ -194,12 +172,8 @@ export async function request(
       attempts++;
     }
 
-    // Check if we got a result
     if (!tx || (tx.state !== 'DELIVERED' && tx.state !== 'SETTLED')) {
-      const _timedOut = true; // Flag for potential future use
-
-      // SECURITY FIX (H-3): Auto-cancel transaction on timeout if still in early state
-      // This prevents funds from being locked indefinitely if provider never responds
+      // Auto-cancel on timeout if still in early state
       if (tx && (tx.state === 'INITIATED' || tx.state === 'COMMITTED')) {
         try {
           logger.warn('Transaction timed out, cancelling to release funds', {
@@ -207,8 +181,6 @@ export async function request(
             state: tx.state,
           });
 
-          // ACTUALLY CANCEL THE TRANSACTION
-          // Check if runtime has cancelTransaction method
           if ('cancelTransaction' in client.runtime) {
             await (client.runtime as any).cancelTransaction(txId);
             logger.info('Transaction cancelled successfully', { txId });
@@ -218,7 +190,6 @@ export async function request(
             (error as any).wasCancelled = true;
             throw error;
           } else {
-            // Fallback: Transition to CANCELLED state
             await client.runtime.transitionState(txId, 'CANCELLED');
             logger.info('Transaction cancelled successfully (via transitionState)', { txId });
 
@@ -229,7 +200,6 @@ export async function request(
           }
         } catch (cancelError) {
           logger.error('Failed to cancel timed-out transaction', { txId }, cancelError as Error);
-          // Continue with original timeout error
         }
       }
 
@@ -239,13 +209,8 @@ export async function request(
       throw error;
     }
 
-    // SECURITY FIX (C-3): Safe JSON parsing with schema validation
-    // Extract result from delivery proof
     let deliveredResult: any = {};
     if (tx.deliveryProof) {
-      // Define expected schema for delivery proof
-      // NOTE: 'type' field with value 'delivery.proof' is the unique wrapper marker
-      // (set by ProofGenerator.generateDeliveryProof) that handlers won't naturally return
       const DELIVERY_PROOF_SCHEMA: Record<string, string> = {
         result: 'any',
         data: 'any',
@@ -254,28 +219,18 @@ export async function request(
         timestamp: 'number',
         contentHash: 'string',
         txId: 'string',
-        type: 'string',  // Unique marker: 'delivery.proof'
+        type: 'string',
       };
 
-      // Use safeJSONParse with schema validation which:
-      // 1. Validates JSON structure
-      // 2. Removes __proto__, constructor, prototype properties
-      // 3. Prevents prototype pollution attacks
-      // 4. Validates against expected schema
-      // 5. Checks size limits to prevent DoS
-      // 6. Returns null if parsing fails
       const parsed = safeJSONParse(tx.deliveryProof, DELIVERY_PROOF_SCHEMA);
 
       if (parsed !== null) {
         deliveredResult = parsed;
       } else {
-        // If parsing failed, treat as plain text (but don't execute or eval)
         deliveredResult = { data: tx.deliveryProof };
         logger.warn('Failed to parse delivery proof as JSON', { txId });
       }
     } else if (options.network === 'testnet' || options.network === 'mainnet') {
-      // KNOWN LIMITATION: BlockchainRuntime doesn't fetch deliveryProof from IPFS yet
-      // Result will be empty until this is implemented
       logger.warn(
         'Delivery proof retrieval not yet implemented for testnet/mainnet. ' +
         'Result may be empty. Use ACTPClient with manual proof handling for production.',
@@ -283,17 +238,11 @@ export async function request(
       );
     }
 
-    // SECURITY FIX (CRITICAL-2): Release escrow only after proper validation
-    // For mock mode, auto-release is safe. For testnet/mainnet, require attestation.
     if (tx.state === 'DELIVERED' && tx.escrowId) {
-      // Wait for dispute window to expire
       const disputeWindowEnd = (tx.completedAt ?? 0) + tx.disputeWindow;
       const currentTime = client.runtime.time.now();
 
       if (currentTime >= disputeWindowEnd) {
-        // SECURITY FIX (CRITICAL-2): Only auto-release in mock mode
-        // For real networks, the requester should manually verify and release
-        // or use attestation-based verification
         const isMockMode = options.network !== 'testnet' && options.network !== 'mainnet';
 
         if (isMockMode) {
@@ -402,23 +351,10 @@ function findProvider(
   return providers[0];
 }
 
-/**
- * Get requester address from wallet option
- *
- * SECURITY FIX (HIGH): Properly derive addresses from private keys using ethers
- * Never fabricate addresses or use partial key slices as addresses.
- *
- * @param wallet - Wallet configuration
- * @returns Ethereum address
- * @throws {ValidationError} If address format is invalid
- */
 function getRequesterAddress(
   wallet?: 'auto' | 'connect' | string | { privateKey: string }
 ): string {
-  // For mock mode only: generate deterministic address
-  // This is only safe because mock mode doesn't involve real funds
   if (!wallet || wallet === 'auto') {
-    // Create a valid Ethereum address (40 hex chars) - ONLY for mock mode
     const hex = Buffer.from('requester').toString('hex');
     return '0x' + hex.padEnd(40, '0');
   }
@@ -428,15 +364,12 @@ function getRequesterAddress(
   }
 
   if (typeof wallet === 'string') {
-    // SECURITY FIX (HIGH): Validate address format
     if (!isValidAddress(wallet)) {
       throw new ValidationError('wallet', `Invalid Ethereum address format: ${wallet}`);
     }
     return wallet.toLowerCase();
   }
 
-  // SECURITY FIX (HIGH): Derive address from private key using ethers
-  // This is the correct way to get address from a private key
   try {
     const walletInstance = new ethers.Wallet(wallet.privateKey);
     return walletInstance.address.toLowerCase();
@@ -445,15 +378,6 @@ function getRequesterAddress(
   }
 }
 
-/**
- * Get private key from wallet option
- *
- * SECURITY FIX (HIGH): Validate private key format before use
- *
- * @param wallet - Wallet configuration
- * @returns Private key or undefined
- * @throws {ValidationError} If private key format is invalid
- */
 function getPrivateKey(
   wallet?: 'auto' | 'connect' | string | { privateKey: string }
 ): string | undefined {
@@ -461,12 +385,8 @@ function getPrivateKey(
     return undefined;
   }
 
-  // If wallet is a string that looks like a private key (0x + 64 hex chars), use it
-  // Otherwise treat it as an address and return undefined
   if (typeof wallet === 'string') {
-    // Check if it looks like a private key (0x + 64 hex chars)
     if (/^0x[0-9a-fA-F]{64}$/.test(wallet)) {
-      // Validate by trying to create a wallet
       try {
         new ethers.Wallet(wallet);
         return wallet;
@@ -474,11 +394,9 @@ function getPrivateKey(
         throw new ValidationError('wallet', 'Invalid private key format');
       }
     }
-    // It's an address, not a private key
     return undefined;
   }
 
-  // Validate private key format
   if (wallet.privateKey) {
     try {
       new ethers.Wallet(wallet.privateKey);
