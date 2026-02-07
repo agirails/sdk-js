@@ -176,6 +176,9 @@ export {
   createUsedAttestationTracker,
 } from './utils/UsedAttestationTracker';
 
+// Wallet
+export { resolvePrivateKey, getCachedAddress } from './wallet/keystore';
+
 // Helper utilities
 export {
   USDC,

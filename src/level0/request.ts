@@ -14,6 +14,7 @@ import { NoProviderFoundError, TimeoutError, ValidationError } from '../errors';
 import { safeJSONParse, validateServiceName, isValidAddress } from '../utils/security';
 import { Logger } from '../utils/Logger';
 import { ethers } from 'ethers';
+import { resolvePrivateKey } from '../wallet/keystore';
 
 /**
  * Request a service
@@ -88,12 +89,18 @@ export async function request(
     logger.info(`Using default RPC URL for ${networkName}: ${rpcUrl}`);
   }
 
+  // Resolve wallet key: explicit wallet option → keystore auto-detect → undefined
+  const resolvedKey = await resolveKeyIfNeeded(options.wallet, options.network, options.stateDirectory);
+  const resolvedAddress = resolvedKey
+    ? new ethers.Wallet(resolvedKey).address.toLowerCase()
+    : undefined;
+
   // Create ACTP client
   const client = await ACTPClient.create({
     mode: options.network === 'testnet' ? 'testnet' : options.network === 'mainnet' ? 'mainnet' : 'mock',
-    requesterAddress: getRequesterAddress(options.wallet),
+    requesterAddress: resolvedAddress || getRequesterAddress(options.wallet),
     stateDirectory: options.stateDirectory,
-    privateKey: getPrivateKey(options.wallet),
+    privateKey: resolvedKey || getPrivateKey(options.wallet),
     rpcUrl,
   });
 
@@ -104,7 +111,7 @@ export async function request(
   const startTime = Date.now();
 
   try {
-    const requesterAddress = getRequesterAddress(options.wallet);
+    const requesterAddress = resolvedAddress || getRequesterAddress(options.wallet);
     const amountWei = (options.budget * 1_000_000).toString(); // Convert to USDC wei (6 decimals)
 
     // In mock mode, ensure requester has enough funds
@@ -351,6 +358,20 @@ export async function request(
     // Wrap unknown errors
     throw new Error(`Request failed: ${error instanceof Error ? error.message : String(error)}`);
   }
+}
+
+/**
+ * Resolve private key from keystore if wallet is auto/undefined and network is testnet/mainnet.
+ * Returns undefined if wallet is explicitly set (caller should use getPrivateKey instead).
+ */
+async function resolveKeyIfNeeded(
+  wallet?: 'auto' | 'connect' | string | { privateKey: string },
+  network?: string,
+  stateDirectory?: string
+): Promise<string | undefined> {
+  if (wallet && wallet !== 'auto') return undefined; // explicit wallet, skip auto-detect
+  if (network !== 'testnet' && network !== 'mainnet') return undefined;
+  return resolvePrivateKey(stateDirectory);
 }
 
 /**

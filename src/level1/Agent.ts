@@ -13,6 +13,7 @@ import * as os from 'os';
 import * as fs from 'fs';
 import { ethers } from 'ethers';
 import { ACTPClient } from '../ACTPClient';
+import { resolvePrivateKey } from '../wallet/keystore';
 import { Job, JobHandler, JobContext } from './types/Job';
 import { RequestOptions, RequestResult, NetworkOption } from './types/Options';
 import { PricingStrategy } from './pricing/PricingStrategy';
@@ -402,9 +403,9 @@ export class Agent extends EventEmitter {
       // Initialize ACTP client
       this._client = await ACTPClient.create({
         mode: this.network === 'testnet' ? 'testnet' : this.network === 'mainnet' ? 'mainnet' : 'mock',
-        requesterAddress: this.address || this.generateAddress(),
+        requesterAddress: this.address || await this.generateAddress(),
         stateDirectory: this.config.stateDirectory,
-        privateKey: this.getPrivateKey(),
+        privateKey: await this.getPrivateKey(),
         rpcUrl,
       });
 
@@ -1377,9 +1378,9 @@ export class Agent extends EventEmitter {
    * SECURITY FIX (HIGH): For testnet/mainnet, MUST derive from private key.
    * For mock mode, can use deterministic address for convenience.
    */
-  private generateAddress(): string {
+  private async generateAddress(): Promise<string> {
     // If wallet has private key, ALWAYS derive address from it
-    const privateKey = this.getPrivateKey();
+    const privateKey = await this.getPrivateKey();
     if (privateKey) {
       try {
         const wallet = new ethers.Wallet(privateKey);
@@ -1393,7 +1394,8 @@ export class Agent extends EventEmitter {
     if (this.network === 'testnet' || this.network === 'mainnet') {
       throw new ValidationError(
         'wallet',
-        `${this.network} mode requires a valid private key or address in wallet configuration`
+        `${this.network} mode requires a valid private key or address in wallet configuration.\n` +
+        'Run "actp init" to generate a keystore, or set ACTP_PRIVATE_KEY env var.'
       );
     }
 
@@ -1407,8 +1409,16 @@ export class Agent extends EventEmitter {
    *
    * SECURITY FIX (HIGH): Validate private key format before use
    */
-  private getPrivateKey(): string | undefined {
-    if (!this.config.wallet || this.config.wallet === 'auto' || this.config.wallet === 'connect') {
+  private async getPrivateKey(): Promise<string | undefined> {
+    // Auto-detect: keystore → env var resolution for testnet/mainnet
+    if (!this.config.wallet || this.config.wallet === 'auto') {
+      if (this.network === 'testnet' || this.network === 'mainnet') {
+        return resolvePrivateKey(this.config.stateDirectory);
+      }
+      return undefined;
+    }
+
+    if (this.config.wallet === 'connect') {
       return undefined;
     }
 
