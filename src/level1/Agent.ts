@@ -387,12 +387,8 @@ export class Agent extends EventEmitter {
     this.emit('starting');
 
     try {
-      // SECURITY FIX (RPCURL): Use rpcUrl from config or fallback to network default
-      // This allows Agent to work with testnet/mainnet without requiring explicit rpcUrl
-      // if user is okay with public RPC endpoints.
       let rpcUrl = this.config.rpcUrl;
       if (!rpcUrl && (this.network === 'testnet' || this.network === 'mainnet')) {
-        // Import getNetwork to get default rpcUrl from network config
         const { getNetwork } = await import('../config/networks');
         const networkName = this.network === 'testnet' ? 'base-sepolia' : 'base-mainnet';
         const networkConfig = getNetwork(networkName);
@@ -400,7 +396,6 @@ export class Agent extends EventEmitter {
         this.logger.info(`Using default RPC URL for ${networkName}: ${rpcUrl}`);
       }
 
-      // Initialize ACTP client
       this._client = await ACTPClient.create({
         mode: this.network === 'testnet' ? 'testnet' : this.network === 'mainnet' ? 'mainnet' : 'mock',
         requesterAddress: this.address || await this.generateAddress(),
@@ -409,7 +404,6 @@ export class Agent extends EventEmitter {
         rpcUrl,
       });
 
-      // Start polling for jobs
       this.startPolling();
 
       this._status = 'running';
@@ -1372,14 +1366,7 @@ export class Agent extends EventEmitter {
     }
   }
 
-  /**
-   * Generate address based on wallet configuration
-   *
-   * SECURITY FIX (HIGH): For testnet/mainnet, MUST derive from private key.
-   * For mock mode, can use deterministic address for convenience.
-   */
   private async generateAddress(): Promise<string> {
-    // If wallet has private key, ALWAYS derive address from it
     const privateKey = await this.getPrivateKey();
     if (privateKey) {
       try {
@@ -1390,7 +1377,6 @@ export class Agent extends EventEmitter {
       }
     }
 
-    // For non-mock networks, require a valid private key or address
     if (this.network === 'testnet' || this.network === 'mainnet') {
       throw new ValidationError(
         'wallet',
@@ -1399,18 +1385,10 @@ export class Agent extends EventEmitter {
       );
     }
 
-    // For mock mode only: generate deterministic address from agent name
-    // This is safe because mock mode doesn't involve real funds
     return `0x${Buffer.from(this.name).toString('hex').padEnd(40, '0').slice(0, 40)}`;
   }
 
-  /**
-   * Get private key from configuration
-   *
-   * SECURITY FIX (HIGH): Validate private key format before use
-   */
   private async getPrivateKey(): Promise<string | undefined> {
-    // Auto-detect: keystore → env var resolution for testnet/mainnet
     if (!this.config.wallet || this.config.wallet === 'auto') {
       if (this.network === 'testnet' || this.network === 'mainnet') {
         return resolvePrivateKey(this.config.stateDirectory);
@@ -1423,9 +1401,7 @@ export class Agent extends EventEmitter {
     }
 
     if (typeof this.config.wallet === 'string') {
-      // Check if it looks like a private key (0x + 64 hex chars)
       if (/^0x[0-9a-fA-F]{64}$/.test(this.config.wallet)) {
-        // Validate by trying to create a wallet
         try {
           new ethers.Wallet(this.config.wallet);
           return this.config.wallet;
@@ -1433,11 +1409,9 @@ export class Agent extends EventEmitter {
           throw new ValidationError('wallet', 'Invalid private key format');
         }
       }
-      // It's an address, not a private key
       return undefined;
     }
 
-    // Validate private key format
     if (this.config.wallet.privateKey) {
       try {
         new ethers.Wallet(this.config.wallet.privateKey);
