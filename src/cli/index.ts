@@ -48,6 +48,9 @@ import { createWatchCommand } from './commands/watch';
 import { createSimulateCommand } from './commands/simulate';
 import { createBatchCommand } from './commands/batch';
 import { createTimeCommand } from './commands/time';
+import { createPublishCommand } from './commands/publish';
+import { createPullCommand } from './commands/pull';
+import { createDiffCommand } from './commands/diff';
 
 // ============================================================================
 // Program Setup
@@ -91,6 +94,11 @@ program.addCommand(createBatchCommand());
 
 // Mock mode utilities
 program.addCommand(createTimeCommand());
+
+// Config sync commands (AGIRAILS.md as source of truth)
+program.addCommand(createPublishCommand());
+program.addCommand(createPullCommand());
+program.addCommand(createDiffCommand());
 
 // ============================================================================
 // Error Handling

@@ -655,7 +655,16 @@ export class ACTPClient {
 
     // SECURITY FIX (C-4): Pass EASHelper to adapters for attestation verification
     // ERC-8004: Pass bridge for agent ID resolution, reporter for settlement outcomes
-    return new ACTPClient(runtime, normalizedAddress, info, easHelper, erc8004Bridge, reputationReporter);
+    const client = new ACTPClient(runtime, normalizedAddress, info, easHelper, erc8004Bridge, reputationReporter);
+
+    // Drift detection: non-blocking check for AGIRAILS.md sync status
+    if (config.mode !== 'mock') {
+      client.checkConfigDrift(config).catch(() => {
+        // Silently ignore drift check errors — non-critical
+      });
+    }
+
+    return client;
   }
 
   // ==========================================================================
@@ -1102,5 +1111,49 @@ export class ACTPClient {
    */
   getReputationReporter(): ReputationReporter | undefined {
     return this.reputationReporter;
+  }
+
+  /**
+   * Non-blocking drift detection for AGIRAILS.md config.
+   * Checks if local AGIRAILS.md matches on-chain config hash.
+   * Logs warnings but never blocks agent operation.
+   * @internal
+   */
+  private async checkConfigDrift(config: ACTPClientConfig): Promise<void> {
+    try {
+      const { existsSync, readFileSync } = await import('fs');
+      const { join } = await import('path');
+
+      // Look for AGIRAILS.md in cwd
+      const agirailsMdPath = join(process.cwd(), 'AGIRAILS.md');
+      if (!existsSync(agirailsMdPath)) {
+        return; // No local file — nothing to check
+      }
+
+      const network = config.mode === 'testnet' ? 'base-sepolia' : 'base-mainnet';
+      const networkConfig = getNetwork(network);
+      if (!networkConfig.contracts.agentRegistry) {
+        return; // No registry on this network
+      }
+
+      const content = readFileSync(agirailsMdPath, 'utf-8');
+      const { computeConfigHash } = await import('./config/agirailsmd');
+      const { configHash: localHash } = computeConfigHash(content);
+
+      const { AgentRegistryClient } = await import('./registry/AgentRegistryClient');
+      const provider = new ethers.JsonRpcProvider(networkConfig.rpcUrl);
+      const registryClient = AgentRegistryClient.readOnly(networkConfig.contracts.agentRegistry, provider);
+
+      const onChainState = await registryClient.getConfig(config.requesterAddress);
+      const ZERO_HASH = '0x' + '0'.repeat(64);
+
+      if (onChainState.configHash === ZERO_HASH) {
+        console.warn('[AGIRAILS] Config not published on-chain. Run: actp publish');
+      } else if (onChainState.configHash !== localHash) {
+        console.warn('[AGIRAILS] Local AGIRAILS.md differs from on-chain. Run: actp diff');
+      }
+    } catch {
+      // Silently ignore — drift detection is best-effort
+    }
   }
 }
