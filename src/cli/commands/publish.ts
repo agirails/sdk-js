@@ -18,7 +18,7 @@ import { AgentRegistryClient } from '../../registry/AgentRegistryClient';
 import { FilebaseClient } from '../../storage/FilebaseClient';
 import { ArweaveClient } from '../../storage/ArweaveClient';
 import { getNetwork } from '../../config/networks';
-import { publishAgirailsMd } from '../../config/publishPipeline';
+import { publishAgirailsMd, PENDING_ENDPOINT } from '../../config/publishPipeline';
 
 // ============================================================================
 // Command Definition
@@ -173,17 +173,35 @@ async function runPublish(
         cid: result.cid,
         txHash: result.txHash,
         arweaveTxId: result.arweaveTxId || null,
+        registered: result.registered || false,
         network: options.network,
       },
       { quietKey: 'configHash' }
     );
 
     output.blank();
-    output.success('Config published successfully!');
+    if (result.registered) {
+      output.success('Agent registered and config published!');
+    } else {
+      output.success('Config published successfully!');
+    }
     output.print('');
     output.print('Next steps:');
     output.print('  - Verify sync:  actp diff');
     output.print('  - View on-chain: ' + networkConfig.blockExplorer + '/tx/' + result.txHash);
+
+    // Warn if placeholder endpoint was used during auto-register
+    if (result.registered) {
+      const content = readFileSync(resolvedPath, 'utf-8');
+      const { frontmatter } = parseAgirailsMd(content);
+      if (!frontmatter.endpoint || frontmatter.endpoint === PENDING_ENDPOINT) {
+        output.print('');
+        output.warning('No endpoint in AGIRAILS.md — registered with placeholder URL.');
+        output.print('  Update when your agent is deployed:');
+        output.print('    1. Add "endpoint: https://your-agent.com/webhook" to AGIRAILS.md');
+        output.print('    2. Run: actp publish');
+      }
+    }
   } catch (error) {
     spinner.stop(false);
     throw error;

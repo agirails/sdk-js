@@ -12,11 +12,13 @@
  */
 
 import { readFileSync, writeFileSync } from 'fs';
-import { Signer } from 'ethers';
+import { Signer, keccak256, toUtf8Bytes } from 'ethers';
 import { parseAgirailsMd, computeConfigHash, computeConfigHashFromParts, serializeAgirailsMd } from './agirailsmd';
 import { AgentRegistryClient } from '../registry/AgentRegistryClient';
+import { AgentRegistry } from '../protocol/AgentRegistry';
 import { FilebaseClient } from '../storage/FilebaseClient';
 import { ArweaveClient } from '../storage/ArweaveClient';
+import { ServiceDescriptor } from '../types';
 
 // ============================================================================
 // Types
@@ -57,6 +59,120 @@ export interface PublishResult {
   arweaveTxId?: string;
   /** Whether this was a dry run */
   dryRun: boolean;
+  /** Whether the agent was auto-registered during this publish */
+  registered?: boolean;
+}
+
+// ============================================================================
+// Registration Helpers
+// ============================================================================
+
+export const PENDING_ENDPOINT = 'https://pending.agirails.io';
+
+/** Default values for capabilities-to-services conversion */
+const SERVICE_DEFAULTS = {
+  schemaURI: '',
+  minPrice: 0n,
+  maxPrice: 1_000_000_000n, // 1000 USDC
+  avgCompletionTime: 3600,  // 1 hour
+  metadataCID: '',
+};
+
+/** Max safe USDC value before BigInt conversion loses precision */
+const MAX_SAFE_USDC = Math.floor(Number.MAX_SAFE_INTEGER / 1_000_000);
+
+/** Validate service type format (must match contract requirements) */
+function validateServiceType(serviceType: string, source: string): void {
+  if (!serviceType) {
+    throw new Error(`Empty service type in ${source}`);
+  }
+  if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(serviceType)) {
+    throw new Error(
+      `Invalid service type "${serviceType}" in ${source}. ` +
+      'Must be lowercase alphanumeric with hyphens (e.g., "text-generation").'
+    );
+  }
+}
+
+/** Convert human-readable USDC to 6-decimal base units with overflow check */
+function usdcToBaseUnits(value: number, fieldName: string): bigint {
+  if (value < 0) throw new Error(`${fieldName} cannot be negative`);
+  if (value > MAX_SAFE_USDC) throw new Error(`${fieldName} exceeds maximum safe value (${MAX_SAFE_USDC} USDC)`);
+  return BigInt(Math.round(value * 1_000_000));
+}
+
+/**
+ * Extract registration params from AGIRAILS.md frontmatter.
+ *
+ * Supports two formats:
+ * - `services`: full ServiceDescriptor objects with pricing
+ * - `capabilities`: simple string list, auto-converted with defaults
+ *
+ * @throws Error if neither services nor capabilities are present
+ */
+function extractRegistrationParams(
+  frontmatter: Record<string, unknown>
+): { endpoint: string; serviceDescriptors: ServiceDescriptor[] } {
+  // Endpoint: use frontmatter field or placeholder
+  const endpoint = typeof frontmatter.endpoint === 'string' && frontmatter.endpoint
+    ? frontmatter.endpoint
+    : PENDING_ENDPOINT;
+
+  // Try explicit services first
+  if (Array.isArray(frontmatter.services) && frontmatter.services.length > 0) {
+    const serviceDescriptors = (frontmatter.services as Record<string, unknown>[]).map(svc => {
+      const serviceType = String(svc.type || svc.service_type || '').trim().toLowerCase();
+      validateServiceType(serviceType, 'services');
+
+      // Parse price range: "1.0-100.0" or separate min/max
+      let minPrice = SERVICE_DEFAULTS.minPrice;
+      let maxPrice = SERVICE_DEFAULTS.maxPrice;
+      if (typeof svc.price === 'string' && svc.price.includes('-')) {
+        const [min, max] = svc.price.split('-').map(Number);
+        minPrice = usdcToBaseUnits(min, 'min_price');
+        maxPrice = usdcToBaseUnits(max, 'max_price');
+      } else {
+        if (svc.min_price !== undefined) minPrice = usdcToBaseUnits(Number(svc.min_price), 'min_price');
+        if (svc.max_price !== undefined) maxPrice = usdcToBaseUnits(Number(svc.max_price), 'max_price');
+      }
+
+      return {
+        serviceTypeHash: keccak256(toUtf8Bytes(serviceType)),
+        serviceType,
+        schemaURI: String(svc.schema_uri || svc.schemaURI || SERVICE_DEFAULTS.schemaURI),
+        minPrice,
+        maxPrice,
+        avgCompletionTime: Number(svc.avg_completion_time || svc.avgCompletionTime || SERVICE_DEFAULTS.avgCompletionTime),
+        metadataCID: String(svc.metadata_cid || svc.metadataCID || SERVICE_DEFAULTS.metadataCID),
+      };
+    });
+    return { endpoint, serviceDescriptors };
+  }
+
+  // Fallback: convert capabilities list to services with defaults
+  if (Array.isArray(frontmatter.capabilities) && frontmatter.capabilities.length > 0) {
+    const serviceDescriptors = (frontmatter.capabilities as string[]).map(cap => {
+      const serviceType = String(cap).trim().toLowerCase();
+      validateServiceType(serviceType, 'capabilities');
+      return {
+        serviceTypeHash: keccak256(toUtf8Bytes(serviceType)),
+        serviceType,
+        schemaURI: SERVICE_DEFAULTS.schemaURI,
+        minPrice: SERVICE_DEFAULTS.minPrice,
+        maxPrice: SERVICE_DEFAULTS.maxPrice,
+        avgCompletionTime: SERVICE_DEFAULTS.avgCompletionTime,
+        metadataCID: SERVICE_DEFAULTS.metadataCID,
+      };
+    });
+    return { endpoint, serviceDescriptors };
+  }
+
+  throw new Error(
+    'AGIRAILS.md must have "services" or "capabilities" in frontmatter for agent registration.\n' +
+    'Add at least one, e.g.:\n' +
+    '  capabilities:\n' +
+    '    - text-generation\n'
+  );
 }
 
 // ============================================================================
@@ -91,6 +207,7 @@ export async function publishAgirailsMd(options: PublishOptions): Promise<Publis
       cid: '(dry-run)',
       configHash,
       dryRun: true,
+      registered: false,
     };
   }
 
@@ -119,8 +236,21 @@ export async function publishAgirailsMd(options: PublishOptions): Promise<Publis
     arweaveTxId = arweaveResult.txId;
   }
 
-  // Step 4: Publish on-chain
+  // Step 4: Auto-register if needed, then publish on-chain
+  const registry = new AgentRegistry(registryAddress, signer, gasSettings);
   const registryClient = new AgentRegistryClient(registryAddress, signer, gasSettings);
+  let registered = false;
+
+  const signerAddress = await signer.getAddress();
+  const profile = await registry.getAgent(signerAddress);
+
+  if (!profile) {
+    // Not registered — extract params from frontmatter and auto-register
+    const regParams = extractRegistrationParams(frontmatter);
+    await registry.registerAgent(regParams);
+    registered = true;
+  }
+
   const { txHash } = await registryClient.publishConfig(cid, configHash);
 
   // Step 5: Update frontmatter with publish metadata
@@ -141,5 +271,6 @@ export async function publishAgirailsMd(options: PublishOptions): Promise<Publis
     txHash,
     arweaveTxId,
     dryRun: false,
+    registered,
   };
 }

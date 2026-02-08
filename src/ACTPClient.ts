@@ -1144,11 +1144,20 @@ export class ACTPClient {
       const provider = new ethers.JsonRpcProvider(networkConfig.rpcUrl);
       const registryClient = AgentRegistryClient.readOnly(networkConfig.contracts.agentRegistry, provider);
 
+      // Detect template vs published state from frontmatter
+      const { parseAgirailsMd: parseMd } = await import('./config/agirailsmd');
+      const { frontmatter } = parseMd(content);
+      const isTemplate = !frontmatter.config_hash;
+
       const onChainState = await registryClient.getConfig(config.requesterAddress);
       const ZERO_HASH = '0x' + '0'.repeat(64);
 
       if (onChainState.configHash === ZERO_HASH) {
-        console.warn('[AGIRAILS] Config not published on-chain. Run: actp publish');
+        if (isTemplate) {
+          console.info('[AGIRAILS] AGIRAILS.md loaded (template mode). Run "actp publish" to register and sync on-chain.');
+        } else {
+          console.warn('[AGIRAILS] Config not published on-chain. Run: actp publish');
+        }
       } else if (onChainState.configHash !== localHash) {
         console.warn('[AGIRAILS] Local AGIRAILS.md differs from on-chain. Run: actp diff');
       }
