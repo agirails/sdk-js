@@ -35,6 +35,7 @@ export interface NetworkConfig {
   };
   eas: {
     deliverySchemaUID: string; // AIP-4 delivery proof schema
+    configSnapshotSchemaUID?: string; // AGIRAILS.md config snapshot schema
   };
   gasSettings: {
     maxFeePerGas: bigint;
@@ -161,7 +162,8 @@ export function getNetwork(network: string): NetworkConfig {
       archiveTreasury: config.contracts.archiveTreasury
     },
     eas: {
-      deliverySchemaUID: config.eas.deliverySchemaUID
+      deliverySchemaUID: config.eas.deliverySchemaUID,
+      configSnapshotSchemaUID: config.eas.configSnapshotSchemaUID
     },
     gasSettings: {
       maxFeePerGas: config.gasSettings.maxFeePerGas,
