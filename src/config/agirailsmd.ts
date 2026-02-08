@@ -60,6 +60,7 @@ export const PUBLISH_METADATA_KEYS = [
   'published_at',
   'config_cid',
   'arweave_tx',
+  'template_source',
 ] as const;
 
 /**
