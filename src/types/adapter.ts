@@ -11,6 +11,7 @@
  */
 
 import { z } from 'zod';
+import type { X402FeeBreakdown } from './x402';
 
 // ============================================================================
 // AdapterMetadata - Describes adapter capabilities
@@ -249,6 +250,12 @@ export interface UnifiedPayResult {
    * Use with ReputationReporter.reportSettlement() after release.
    */
   erc8004AgentId?: string;
+
+  /**
+   * Fee breakdown for x402 payments routed through X402Relay.
+   * Present only when relay is configured and payment used the relay path.
+   */
+  feeBreakdown?: X402FeeBreakdown;
 }
 
 /**
@@ -268,6 +275,13 @@ export const UnifiedPayResultSchema = z.object({
   requester: z.string().min(1),
   deadline: z.string().min(1),
   erc8004AgentId: z.string().optional(),
+  feeBreakdown: z.object({
+    grossAmount: z.string(),
+    providerNet: z.string(),
+    platformFee: z.string(),
+    feeBps: z.number(),
+    estimated: z.literal(true),
+  }).optional(),
 });
 
 // ============================================================================

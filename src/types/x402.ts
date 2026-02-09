@@ -195,6 +195,38 @@ export class X402Error extends Error {
 }
 
 // ============================================================================
+// Fee Types
+// ============================================================================
+
+/**
+ * Fee breakdown for x402 payments routed through X402Relay.
+ *
+ * Shows how the gross amount was split between provider and platform.
+ * Fee = max(grossAmount * feeBps / 10000, MIN_FEE).
+ *
+ * NOTE: This is a client-side **estimate** computed from the configured
+ * platformFeeBps. The on-chain X402Relay contract is the source of truth.
+ * If an admin updates the relay's fee rate, this estimate may diverge
+ * from the actual on-chain split until the SDK config is refreshed.
+ */
+export interface X402FeeBreakdown {
+  /** Total amount from the 402 header (USDC wei, 6 decimals) */
+  grossAmount: string;
+
+  /** Estimated amount provider received: grossAmount - platformFee */
+  providerNet: string;
+
+  /** Estimated amount treasury received: max(feeBps%, $0.05) */
+  platformFee: string;
+
+  /** Fee rate used for estimate (basis points, e.g. 100 = 1%) */
+  feeBps: number;
+
+  /** True — this is a client-side estimate, not read from chain */
+  estimated: true;
+}
+
+// ============================================================================
 // Type Guards
 // ============================================================================
 

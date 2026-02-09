@@ -35,6 +35,7 @@ import {
   X402Error,
   X402ErrorCode,
   X402Network,
+  X402FeeBreakdown,
   isValidX402Network,
 } from '../types/x402';
 
@@ -46,13 +47,32 @@ import {
 export type FetchFunction = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
 /**
- * Transfer function for atomic payments.
- * 
+ * Transfer function for atomic payments (legacy direct transfer).
+ *
  * @param to - Recipient address
  * @param amount - Amount in USDC wei (string)
  * @returns Transaction hash as proof
  */
 export type TransferFunction = (to: string, amount: string) => Promise<string>;
+
+/**
+ * Approve function for USDC allowance (used with X402Relay).
+ *
+ * @param spender - Spender address (relay contract)
+ * @param amount - Amount in USDC wei (string)
+ * @returns Transaction hash
+ */
+export type ApproveFunction = (spender: string, amount: string) => Promise<string>;
+
+/**
+ * Relay pay function — calls X402Relay.payWithFee().
+ *
+ * @param provider - Provider address
+ * @param grossAmount - Gross USDC amount (string)
+ * @param serviceId - Service identifier (bytes32 hex)
+ * @returns Transaction hash
+ */
+export type RelayPayFunction = (provider: string, grossAmount: string, serviceId: string) => Promise<string>;
 
 /** Supported HTTP methods for x402 requests */
 export type X402HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
@@ -76,12 +96,15 @@ export interface X402PayParams extends UnifiedPayParams {
 
 /**
  * Configuration options for X402Adapter.
+ *
+ * For fee-enabled payments via X402Relay, provide relayAddress + approveFn + relayPayFn.
+ * Without relay config, falls back to legacy direct transfer (no platform fee).
  */
 export interface X402AdapterConfig {
   /** Expected network for validation (must match server's X-Payment-Network) */
   expectedNetwork: X402Network;
 
-  /** Transfer function for atomic payments (required) */
+  /** Transfer function for direct atomic payments (legacy fallback) */
   transferFn: TransferFunction;
 
   /** Request timeout in milliseconds (default: 30000) */
@@ -92,6 +115,20 @@ export interface X402AdapterConfig {
 
   /** Default headers to include in all requests */
   defaultHeaders?: Record<string, string>;
+
+  // --- X402Relay fee-splitting (optional, recommended) ---
+
+  /** X402Relay contract address for on-chain fee splitting */
+  relayAddress?: string;
+
+  /** USDC approve function — required when relayAddress is set */
+  approveFn?: ApproveFunction;
+
+  /** Relay payWithFee function — required when relayAddress is set */
+  relayPayFn?: RelayPayFunction;
+
+  /** Platform fee in basis points (default: 100 = 1%). Read-only display hint. */
+  platformFeeBps?: number;
 }
 
 /**
@@ -104,6 +141,7 @@ interface AtomicPaymentRecord {
   amount: string;
   timestamp: number;
   endpoint: string;
+  feeBreakdown?: X402FeeBreakdown;
 }
 
 // ============================================================================
@@ -287,15 +325,15 @@ export class X402Adapter extends BaseAdapter implements IAdapter {
       );
     }
 
-    // Step 6: ATOMIC PAYMENT - direct transfer, no escrow
-    const txHash = await this.executeAtomicPayment(paymentHeaders);
+    // Step 6: ATOMIC PAYMENT - via relay (with fee) or direct transfer (legacy)
+    const { txHash, feeBreakdown } = await this.executeAtomicPayment(paymentHeaders);
 
     // Step 7: Retry with proof (same method/headers/body + payment proof)
     const serviceResponse = await this.retryWithProof(
-      endpoint, 
-      txHash, 
-      method, 
-      requestHeaders, 
+      endpoint,
+      txHash,
+      method,
+      requestHeaders,
       requestBody,
       contentType
     );
@@ -308,6 +346,7 @@ export class X402Adapter extends BaseAdapter implements IAdapter {
       amount: paymentHeaders.amount,
       timestamp: now,
       endpoint,
+      feeBreakdown,
     });
 
     // Step 9: Return result - DONE! No release needed.
@@ -323,6 +362,7 @@ export class X402Adapter extends BaseAdapter implements IAdapter {
       provider: paymentHeaders.paymentAddress.toLowerCase(),
       requester: this.requesterAddress.toLowerCase(),
       deadline: new Date(paymentHeaders.deadline * 1000).toISOString(),
+      feeBreakdown,
     };
   }
 
@@ -562,20 +602,58 @@ export class X402Adapter extends BaseAdapter implements IAdapter {
   }
 
   /**
-   * Execute atomic payment - direct transfer to provider.
+   * Execute atomic payment with fee splitting via X402Relay (if configured),
+   * or direct transfer as legacy fallback.
    *
-   * This is the key difference from ACTP:
-   * - No escrow
-   * - No state machine
-   * - Just transfer and done
+   * Relay flow: approve relay → relay.payWithFee(provider, gross, serviceId)
+   * Legacy flow: transferFn(provider, amount) — no fee extraction
    */
-  private async executeAtomicPayment(headers: X402PaymentHeaders): Promise<string> {
+  private async executeAtomicPayment(headers: X402PaymentHeaders): Promise<{
+    txHash: string;
+    feeBreakdown?: X402FeeBreakdown;
+  }> {
     try {
+      // Relay path: on-chain fee splitting
+      if (this.config.relayAddress && this.config.approveFn && this.config.relayPayFn) {
+        const grossAmount = headers.amount;
+        const feeBps = this.config.platformFeeBps ?? 100;
+        const MIN_FEE = 50_000n; // $0.05 USDC
+
+        // Calculate fee: max(gross * bps / 10000, MIN_FEE)
+        const grossBig = BigInt(grossAmount);
+        const bpsFee = (grossBig * BigInt(feeBps)) / 10_000n;
+        const fee = bpsFee > MIN_FEE ? bpsFee : MIN_FEE;
+        const providerNet = grossBig - fee;
+
+        // 1. Approve relay for gross amount
+        await this.config.approveFn(this.config.relayAddress, grossAmount);
+
+        // 2. Call relay.payWithFee
+        const serviceId = headers.serviceId ?? '0x' + '0'.repeat(64);
+        const txHash = await this.config.relayPayFn(
+          headers.paymentAddress,
+          grossAmount,
+          serviceId
+        );
+
+        return {
+          txHash,
+          feeBreakdown: {
+            grossAmount,
+            providerNet: providerNet.toString(),
+            platformFee: fee.toString(),
+            feeBps,
+            estimated: true,
+          },
+        };
+      }
+
+      // Legacy path: direct transfer, no fee
       const txHash = await this.transferFn(
         headers.paymentAddress,
         headers.amount
       );
-      return txHash;
+      return { txHash };
     } catch (error) {
       throw new X402Error(
         `Atomic payment failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
