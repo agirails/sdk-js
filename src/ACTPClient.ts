@@ -675,6 +675,21 @@ export class ACTPClient {
               );
             }
 
+            // Validate that bundler/paymaster URLs have actual API keys
+            const cdpBundlerUrl = networkConfig.aa.bundlerUrls.coinbase;
+            const hasPimlico = !!networkConfig.aa.bundlerUrls.pimlico;
+            if (cdpBundlerUrl.endsWith('/') && !hasPimlico) {
+              throw new Error(
+                'CDP_API_KEY is required for gas-sponsored transactions.\n\n' +
+                'Set up your API key:\n' +
+                '  1. Visit https://portal.cdp.coinbase.com/\n' +
+                '  2. Create a new API key\n' +
+                '  3. export CDP_API_KEY="your-key-here"\n\n' +
+                'Or set PIMLICO_API_KEY as an alternative bundler/paymaster.\n' +
+                'Or use wallet: undefined for traditional EOA transactions (requires ETH for gas).'
+              );
+            }
+
             const autoWallet = await AutoWalletProvider.create({
               signer,
               provider,

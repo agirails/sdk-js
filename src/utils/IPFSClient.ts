@@ -74,8 +74,8 @@ export interface IPFSClientConfig {
   allowedProtocols?: string[];
 
   /**
-   * SECURITY FIX (MEDIUM-3): Allow localhost URLs
-   * Default: true (required for local IPFS daemon)
+   * Allow localhost URLs (e.g., local IPFS daemon).
+   * Default: false (SSRF protection). Set to true explicitly for local development.
    */
   allowLocalhost?: boolean;
 }
@@ -85,7 +85,8 @@ export interface IPFSClientConfig {
  */
 export const IPFS_CONFIGS = {
   local: {
-    url: 'http://localhost:5001'
+    url: 'http://localhost:5001',
+    allowLocalhost: true, // Explicit opt-in for local development
   },
   infura: {
     url: 'https://ipfs.infura.io:5001/api/v0'
@@ -128,14 +129,14 @@ export class IPFSHTTPClientImpl implements IPFSClient {
     const url = config.url || 'http://localhost:5001';
 
     // SECURITY FIX (MEDIUM-3): Validate URL
-    this.validateUrl(url, config.allowLocalhost ?? true, config.allowedProtocols);
+    this.validateUrl(url, config.allowLocalhost ?? false, config.allowedProtocols);
 
     this.config = {
       url,
       timeout: config.timeout || 60000,
       maxSize: config.maxSize || IPFSHTTPClientImpl.DEFAULT_MAX_SIZE,
       allowedProtocols: config.allowedProtocols || IPFSHTTPClientImpl.DEFAULT_ALLOWED_PROTOCOLS,
-      allowLocalhost: config.allowLocalhost ?? true,
+      allowLocalhost: config.allowLocalhost ?? false,
       auth: config.auth,
       headers: config.headers,
     } as Required<IPFSClientConfig>;
@@ -359,8 +360,9 @@ export function createIPFSClient(): IPFSClient {
     });
   }
 
-  // Default to local IPFS daemon
+  // Default to local IPFS daemon (explicit localhost opt-in)
   return new IPFSHTTPClientImpl({
-    url: 'http://localhost:5001'
+    url: 'http://localhost:5001',
+    allowLocalhost: true,
   });
 }
