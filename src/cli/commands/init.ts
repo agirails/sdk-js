@@ -107,6 +107,8 @@ async function runInit(options: InitOptions, output: Output): Promise<void> {
 
   // Get or generate address
   let address = options.address;
+  let smartWalletAddress: string | undefined;
+  let didRegister = false;
   if (!address) {
     if (mode === 'mock') {
       // Generate a random address for mock mode
@@ -120,7 +122,17 @@ async function runInit(options: InitOptions, output: Output): Promise<void> {
 
       if (walletType === 'auto') {
         // Compute Smart Wallet address from signer
-        address = await computeSmartWalletInit(eoaAddress, mode, output);
+        smartWalletAddress = await computeSmartWalletInit(eoaAddress, mode, output);
+
+        // Y/N: Register for gas-free transactions?
+        const shouldRegister = await promptRegister(output);
+        if (shouldRegister) {
+          didRegister = await runInlineRegistration(projectRoot, mode, output);
+        }
+
+        // address = Smart Wallet if registered, EOA if not
+        // This ensures CLI commands (balance, tx list) show the correct address
+        address = didRegister ? smartWalletAddress : eoaAddress;
       } else {
         address = eoaAddress;
       }
@@ -141,6 +153,8 @@ async function runInit(options: InitOptions, output: Output): Promise<void> {
     address: address.toLowerCase(),
     version: '1.0',
     ...(walletType !== 'mock' && { wallet: walletType as 'auto' | 'eoa' }),
+    ...(smartWalletAddress && { smartWallet: smartWalletAddress.toLowerCase() }),
+    ...(didRegister && { registered: true }),
   };
 
   // Save configuration
@@ -189,7 +203,13 @@ async function runInit(options: InitOptions, output: Output): Promise<void> {
   } else {
     output.blank();
     output.print('Next steps:');
-    if (walletType === 'auto') {
+    if (walletType === 'auto' && didRegister) {
+      // Already registered — ready to go
+      output.print('  1. Create a payment: actp pay <provider> <amount>');
+      output.print('  2. Check your balance: actp balance');
+      output.print('  3. List transactions: actp tx list');
+    } else if (walletType === 'auto') {
+      // Skipped registration — remind them
       output.print('  1. Register for gas-free: actp register');
       output.print('  2. Create a payment: actp pay <provider> <amount>');
       output.print('  3. Check your balance: actp balance');
@@ -270,6 +290,164 @@ async function computeSmartWalletInit(
   output.info('Register with: actp register');
 
   return smartWalletAddress;
+}
+
+/**
+ * Ask user if they want to register for gas-free transactions.
+ * Non-TTY (piped/agent) defaults to yes.
+ */
+async function promptRegister(output: Output): Promise<boolean> {
+  output.blank();
+  output.print('Register for gas-free transactions? (recommended)');
+  output.print('  Your agent gets a Smart Wallet with sponsored gas — no ETH needed.');
+  output.print('  Requires on-chain registration on AgentRegistry.');
+  output.blank();
+
+  if (!process.stdin.isTTY) {
+    output.info('Non-interactive mode: auto-registering');
+    return true;
+  }
+
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+
+  return new Promise((resolve) => {
+    rl.question('  Register now? [Y/n] ', (answer) => {
+      rl.close();
+      const trimmed = answer.trim().toLowerCase();
+      resolve(trimmed === '' || trimmed === 'y' || trimmed === 'yes');
+    });
+  });
+}
+
+/**
+ * Run inline registration during init.
+ * Reuses the same logic as `actp register` — parses AGIRAILS.md,
+ * builds gasless UserOp (testnet: register + mint 1000 USDC).
+ *
+ * Returns true if registration succeeded, false on failure (non-fatal).
+ */
+async function runInlineRegistration(
+  projectRoot: string,
+  mode: string,
+  output: Output
+): Promise<boolean> {
+  try {
+    const { resolvePrivateKey } = await import('../../wallet/keystore');
+    const privateKey = await resolvePrivateKey(projectRoot);
+    if (!privateKey) {
+      output.warning('Could not load wallet key. Run "actp register" later.');
+      return false;
+    }
+
+    const { parseAgirailsMd } = await import('../../config/agirailsmd');
+    const { extractRegistrationParams } = await import('../../config/publishPipeline');
+    const { ethers } = await import('ethers');
+    const { getNetwork } = await import('../../config/networks');
+    const { AutoWalletProvider } = await import('../../wallet/AutoWalletProvider');
+    const { buildRegisterAgentBatch, buildTestnetInitBatch } = await import('../../wallet/aa/TransactionBatcher');
+
+    // Parse AGIRAILS.md if present
+    const agirailsMdPath = path.join(projectRoot, 'AGIRAILS.md');
+    let endpoint = '';
+    let serviceDescriptors;
+
+    if (fs.existsSync(agirailsMdPath)) {
+      const content = fs.readFileSync(agirailsMdPath, 'utf-8');
+      const parsed = parseAgirailsMd(content);
+      const regParams = extractRegistrationParams(parsed.frontmatter);
+      endpoint = regParams.endpoint;
+      serviceDescriptors = regParams.serviceDescriptors;
+      output.info(`Parsed ${serviceDescriptors.length} service(s) from AGIRAILS.md`);
+    } else {
+      const serviceType = 'general';
+      serviceDescriptors = [{
+        serviceTypeHash: ethers.keccak256(ethers.toUtf8Bytes(serviceType)),
+        serviceType,
+        schemaURI: '',
+        minPrice: 0n,
+        maxPrice: 1_000_000_000n,
+        avgCompletionTime: 3600,
+        metadataCID: '',
+      }];
+      output.info('No AGIRAILS.md found. Using default "general" service.');
+    }
+
+    const network = mode === 'testnet' ? 'base-sepolia' : 'base-mainnet';
+    const networkConfig = getNetwork(network);
+
+    if (!networkConfig.aa || !networkConfig.contracts.agentRegistry) {
+      output.warning('AA or AgentRegistry not configured. Run "actp register" later.');
+      return false;
+    }
+
+    const provider = new ethers.JsonRpcProvider(networkConfig.rpcUrl);
+    const signer = new ethers.Wallet(privateKey, provider);
+
+    const autoWallet = await AutoWalletProvider.create({
+      signer,
+      provider,
+      chainId: networkConfig.chainId,
+      actpKernelAddress: networkConfig.contracts.actpKernel,
+      bundler: {
+        primaryUrl: networkConfig.aa.bundlerUrls.coinbase,
+        backupUrl: networkConfig.aa.bundlerUrls.pimlico,
+      },
+      paymaster: {
+        primaryUrl: networkConfig.aa.paymasterUrls.coinbase,
+        backupUrl: networkConfig.aa.paymasterUrls.pimlico,
+      },
+    });
+
+    const smartWalletAddress = autoWallet.getAddress();
+
+    // Build batch
+    let calls;
+    if (mode === 'testnet') {
+      output.info('Testnet: registering + minting 1000 test USDC in one gasless tx...');
+      calls = buildTestnetInitBatch({
+        agentRegistryAddress: networkConfig.contracts.agentRegistry,
+        endpoint,
+        serviceDescriptors,
+        mockUsdcAddress: networkConfig.contracts.usdc,
+        recipient: smartWalletAddress,
+        mintAmount: '1000000000',
+      });
+    } else {
+      output.info('Registering on AgentRegistry (gasless)...');
+      calls = buildRegisterAgentBatch(
+        networkConfig.contracts.agentRegistry,
+        endpoint,
+        serviceDescriptors
+      );
+    }
+
+    const txRequests = calls.map((c) => ({
+      to: c.target,
+      data: c.data,
+      value: c.value.toString(),
+    }));
+
+    const receipt = await autoWallet.sendBatchTransaction(txRequests);
+
+    if (!receipt.success) {
+      output.warning(`Registration failed (tx: ${receipt.hash}). Run "actp register" later.`);
+      return false;
+    }
+
+    output.success('Agent registered on AgentRegistry');
+    if (mode === 'testnet') {
+      output.success('Minted 1,000 test USDC to Smart Wallet');
+    }
+    output.print(`  Tx: ${receipt.hash}`);
+    return true;
+  } catch (error) {
+    output.warning(`Registration failed: ${(error as Error).message}`);
+    output.info('You can register later with: actp register');
+    return false;
+  }
 }
 
 async function promptPassword(): Promise<string> {

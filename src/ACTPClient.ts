@@ -702,8 +702,9 @@ export class ACTPClient {
                   provider, agentRegistryAddress, smartWalletAddress
                 );
               } catch {
-                // Registry check failed (network issues) — allow AA anyway
-                // Paymaster policy is the final gate
+                // Registry check failed (e.g. RPC down) — allow AA anyway.
+                // Rationale: don't punish legit registered agents for infra issues.
+                // Paymaster contract allowlist + rate limits prevent abuse.
                 isRegistered = true;
                 sdkLogger.warn('AgentRegistry check failed, proceeding with AA wallet');
               }
@@ -723,7 +724,9 @@ export class ACTPClient {
                 'Run "actp register" for gas-free transactions.'
               );
               walletProvider = new EOAWalletProvider(signer, networkConfig.chainId);
-              requesterAddress = config.requesterAddress ?? signer.address;
+              // Force signer.address — config.requesterAddress may be the Smart Wallet
+              // address (set by `actp init --wallet auto`), which would be wrong for EOA.
+              requesterAddress = signer.address;
             }
           } else {
             // Tier 2: EOA Wallet (backward compatible)
