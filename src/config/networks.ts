@@ -91,24 +91,17 @@ export const BASE_SEPOLIA: NetworkConfig = {
   rpcUrl: BASE_SEPOLIA_RPC_URL,
   blockExplorer: 'https://sepolia.basescan.org',
   contracts: {
-    // Redeployed 2026-02-06 with agentId support
     actpKernel: '0x469CBADbACFFE096270594F0a31f0EEC53753411',
     escrowVault: '0x57f888261b629bB380dfb983f5DA6c70Ff2D49E5',
     usdc: '0x444b4e1A65949AB2ac75979D5d0166Eb7A248Ccb', // MockUSDC
-    // EAS contracts (Base native deployment)
     eas: '0x4200000000000000000000000000000000000021',
     easSchemaRegistry: '0x4200000000000000000000000000000000000020',
-    // AIP-7 Agent Registry v2 (redeployed 2026-02-09 with configHash/configCID/listed)
     agentRegistry: '0xDd6D66924B43419F484aE981F174b803487AF25A',
-    // AIP-7 Identity Registry - ERC-1056 DID Registry (deployed 2026-01-09)
     identityRegistry: '0xF64F748C7802a68Cb936a9213881fE74e83FDA97',
-    // AIP-7 Archive Treasury - Arweave funding (deployed 2026-01-09)
     archiveTreasury: '0xeB75DE7cF5ce77ab15BB0fFa3a2A79e6aaa554B0',
-    // X402Relay - atomic payment fee splitting (deployed 2026-02-09)
     x402Relay: '0x4DCD02b276Dbeab57c265B72435e90507b6Ac81A',
   },
   eas: {
-    // Deployed 2025-11-23 - AIP-4 delivery proof schema
     deliverySchemaUID: '0x1b0ebdf0bd20c28ec9d5362571ce8715a55f46e81c3de2f9b0d8e1b95fb5ffce'
   },
   gasSettings: {
@@ -136,9 +129,6 @@ export const BASE_SEPOLIA: NetworkConfig = {
 
 /**
  * Base Mainnet Configuration
- *
- * Base Mainnet Configuration
- * Redeployed 2026-02-09 with agentId + AgentRegistry v2 (configHash, configCID, listed)
  */
 export const BASE_MAINNET: NetworkConfig = {
   name: 'Base Mainnet',
@@ -146,21 +136,16 @@ export const BASE_MAINNET: NetworkConfig = {
   rpcUrl: BASE_MAINNET_RPC_URL,
   blockExplorer: 'https://basescan.org',
   contracts: {
-    // Redeployed 2026-02-09 with agentId support
     actpKernel: '0x132B9eB321dBB57c828B083844287171BDC92d29',
     escrowVault: '0x6aAF45882c4b0dD34130ecC790bb5Ec6be7fFb99',
-    usdc: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', // Official USDC on Base
-    // EAS contracts (Base native deployment)
+    usdc: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
     eas: '0x4200000000000000000000000000000000000021',
     easSchemaRegistry: '0x4200000000000000000000000000000000000020',
-    // AIP-7 contracts (redeployed 2026-02-09)
     agentRegistry: '0x6fB222CF3DDdf37Bcb248EE7BBBA42Fb41901de8',
     archiveTreasury: '0x0516C411C0E8d75D17A768022819a0a4FB3cA2f2',
-    // X402Relay - atomic payment fee splitting (deployed 2026-02-09)
     x402Relay: '0x81DFb954A3D58FEc24Fc9c946aC2C71a911609F8',
   },
   eas: {
-    // Registered 2026-02-03
     deliverySchemaUID: '0x166501e7476e2fcf9214c4c5144533c2957d56fe59d639effc1719a0658d9c9a'
   },
   gasSettings: {
