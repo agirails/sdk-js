@@ -16,7 +16,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { Command } from 'commander';
 import { Output, ExitCode } from '../utils/output';
-import { loadConfig, getActpDir } from '../utils/config';
+import { loadConfig, updateConfig, getActpDir } from '../utils/config';
 import { resolvePrivateKey } from '../../wallet/keystore';
 
 // ============================================================================
@@ -203,6 +203,14 @@ async function runRegister(
   if (config.mode === 'testnet') {
     output.success('Minted 1,000 test USDC to Smart Wallet');
   }
+
+  // Update config: flip address to Smart Wallet, mark as registered
+  updateConfig({
+    address: smartWalletAddress.toLowerCase(),
+    smartWallet: smartWalletAddress.toLowerCase(),
+    registered: true,
+  }, projectRoot);
+  output.info('Config updated: address set to Smart Wallet');
 
   output.blank();
   output.result(

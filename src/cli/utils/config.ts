@@ -38,6 +38,12 @@ export interface CLIConfig {
   /** AIP-12: Wallet type — 'auto' (Smart Wallet, gasless) or 'eoa' (traditional) */
   wallet?: 'auto' | 'eoa';
 
+  /** AIP-12: Smart Wallet address (set when wallet=auto, used by `actp register`) */
+  smartWallet?: string;
+
+  /** AIP-12: Whether agent is registered on AgentRegistry */
+  registered?: boolean;
+
   /** Configuration version for migrations */
   version: string;
 }
