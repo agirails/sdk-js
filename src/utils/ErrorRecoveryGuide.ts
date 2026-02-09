@@ -7,6 +7,8 @@
  * @module utils/ErrorRecoveryGuide
  */
 
+import { sdkLogger } from './Logger';
+
 /**
  * Error severity levels for prioritization
  */
@@ -650,14 +652,14 @@ export async function withRecoveryGuidance<T>(
       }
 
       if (logGuidance) {
-        console.error(ErrorRecoveryGuide.formatGuidance(error));
+        sdkLogger.error(ErrorRecoveryGuide.formatGuidance(error));
       }
 
       if (autoRetry && recovery.retryable) {
         const retryParams = ErrorRecoveryGuide.getRetryParams(error);
         if (retryParams && attempts < retryParams.maxRetries) {
           attempts++;
-          console.log(
+          sdkLogger.info(
             `Retrying (${attempts}/${retryParams.maxRetries}) after ${retryParams.delayMs}ms...`
           );
           await new Promise((resolve) =>
