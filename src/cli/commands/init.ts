@@ -537,8 +537,8 @@ async function runScaffold(
     const tsconfigContent = JSON.stringify({
       compilerOptions: {
         target: 'ES2022',
-        module: 'ES2022',
-        moduleResolution: 'bundler',
+        module: 'commonjs',
+        moduleResolution: 'node',
         esModuleInterop: true,
         strict: true,
         outDir: 'dist',
@@ -557,19 +557,7 @@ async function runScaffold(
     }
   }
 
-  // Check package.json for type: module
-  const pkgFile = path.join(process.cwd(), 'package.json');
-  if (fs.existsSync(pkgFile)) {
-    try {
-      const pkg = JSON.parse(fs.readFileSync(pkgFile, 'utf-8'));
-      if (pkg.type !== 'module') {
-        output.warning(
-          'package.json has type: "' + (pkg.type || 'commonjs') + '". ' +
-          'Set "type": "module" for ESM support, or run with: npx ts-node --esm agent.ts'
-        );
-      }
-    } catch { /* ignore parse errors */ }
-  }
+  // Note: @agirails/sdk is CJS — no type:module check needed
 
   output.blank();
   output.print('Next steps:');
