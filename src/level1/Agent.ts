@@ -19,7 +19,7 @@ import { RequestOptions, RequestResult, NetworkOption } from './types/Options';
 import { PricingStrategy } from './pricing/PricingStrategy';
 import { AgentLifecycleError, ServiceConfigError, ValidationError } from '../errors';
 import { validateServiceName, validatePath, LRUCache } from '../utils/security';
-import { Logger } from '../utils/Logger';
+import { Logger, sdkLogger } from '../utils/Logger';
 import { ServiceHash } from '../utils/Helpers';
 import { Semaphore } from '../utils/Semaphore';
 import { ProofGenerator } from '../protocol/ProofGenerator';
@@ -1311,21 +1311,21 @@ export class Agent extends EventEmitter {
       log: {
         debug: (message: string, meta?: any) => {
           if (agent.config.logging?.level === 'debug') {
-            console.debug(`[${job.id}] ${message}`, meta);
+            sdkLogger.debug(`[${job.id}] ${message}`, meta);
           }
         },
         info: (message: string, meta?: any) => {
           if (['debug', 'info'].includes(agent.config.logging?.level || 'info')) {
-            console.info(`[${job.id}] ${message}`, meta);
+            sdkLogger.info(`[${job.id}] ${message}`, meta);
           }
         },
         warn: (message: string, meta?: any) => {
           if (['debug', 'info', 'warn'].includes(agent.config.logging?.level || 'info')) {
-            console.warn(`[${job.id}] ${message}`, meta);
+            sdkLogger.warn(`[${job.id}] ${message}`, meta);
           }
         },
         error: (message: string, meta?: any) => {
-          console.error(`[${job.id}] ${message}`, meta);
+          sdkLogger.error(`[${job.id}] ${message}`, meta);
         },
       },
 

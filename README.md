@@ -3,18 +3,24 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0+-blue.svg)](https://www.typescriptlang.org/)
 [![Node.js](https://img.shields.io/badge/Node.js-18+-green.svg)](https://nodejs.org/)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Tests](https://img.shields.io/badge/tests-1489%20passed-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-1506%20passed-brightgreen.svg)]()
 
 The official TypeScript SDK for the **Agent Commerce Transaction Protocol (ACTP)** - enabling AI agents to transact with each other through blockchain-based escrow.
 
 ## Features
 
 - **Three-tier API**: Basic, Standard, and Advanced levels for different use cases
+- **Adapter Routing**: `0x...` addresses route to ACTP, `https://` to x402, agent IDs to ERC-8004
+- **x402 Payments**: HTTP-native micropayments via x402 protocol with optional relay fee splitting
+- **ERC-8004 Bridge**: Read-only resolution of agent IDs to wallet addresses for payments
+- **ERC-8004 Reputation**: Post-settlement feedback reporting to on-chain reputation registry
+- **AGIRAILS.md**: Agent config as source of truth with publish/pull/diff CLI and drift detection
 - **Mock Runtime**: Full local testing without blockchain connection
 - **Type-safe**: Complete TypeScript types with strict mode support
 - **Async/Await**: Promise-based API for modern async workflows
-- **Comprehensive Errors**: Structured exception types with error codes
+- **Comprehensive Errors**: Structured exception types with error codes and recovery guidance
 - **Security Built-in**: EIP-712 signing, replay protection, safe nonce management
+- **Configurable Confirmations**: Block confirmation depth configurable per-network (default: 2)
 
 ## Installation
 
@@ -322,6 +328,22 @@ actp simulate pay <provider> <amount>
 actp simulate fee <amount>
 ```
 
+### AGIRAILS.md Config Management
+
+```bash
+# Publish agent config to on-chain registry
+actp publish [--dry-run]
+
+# Pull config from on-chain registry
+actp pull <agent-id>
+
+# Compare local config vs on-chain
+actp diff <agent-id>
+
+# Register agent on AgentRegistry
+actp register
+```
+
 ### Configuration
 
 ```bash
@@ -457,7 +479,10 @@ This TypeScript SDK maintains **full parity** with the Python SDK:
 | EIP-712 Signing | Full support | Full support |
 | Level0 API | Full ACTP flow | Full ACTP flow |
 | Level1 Agent API | Complete | Complete |
-| CLI Commands | watch, batch, simulate | watch, batch, simulate |
+| CLI Commands | watch, batch, simulate, publish, pull, diff | watch, batch, simulate |
+| Adapter Routing | ACTP + x402 + ERC-8004 | ACTP only |
+| ERC-8004 Bridge | Identity + Reputation | Not yet |
+| AGIRAILS.md Config | publish/pull/diff/drift detection | Not yet |
 | Nonce Tracking | SecureNonce, ReceivedNonceTracker | SecureNonce, ReceivedNonceTracker |
 | Attestation Tracking | UsedAttestationTracker | UsedAttestationTracker |
 
@@ -481,11 +506,12 @@ This TypeScript SDK maintains **full parity** with the Python SDK:
 - **Replay Protection**: Nonce management prevents transaction replay
 - **Non-custodial Escrow**: 2-of-2 release pattern
 - **EAS Integration**: Ethereum Attestation Service for delivery proofs
+- **ERC-8004 Reputation**: On-chain settlement/dispute feedback after ACTP transactions
 - **Input Validation**: All user inputs validated before processing
 
 ### Transaction Confirmations
 
-All state-changing operations in ACTPKernel use `tx.wait(2)` — transactions are confirmed with 2 block confirmations before events are emitted. On Base L2 (~2s blocks), this means events arrive ~4-6s after submission and are safe from reorgs. The SDK's `EventMonitor` receives already-confirmed events; no additional confirmation handling is needed at the application layer.
+All state-changing operations in ACTPKernel wait for block confirmations before events are emitted. The default is 2 confirmations (~4-6s on Base L2's ~2s blocks), configurable via `BlockchainRuntimeConfig.confirmations`. The SDK's `EventMonitor` receives already-confirmed events; no additional confirmation handling is needed at the application layer.
 
 ## Decentralized Identifiers (DIDs)
 
@@ -609,15 +635,18 @@ ACTP_PRIVATE_KEY=0x...       # Raw private key (takes priority if set)
 ACTP_KEY_PASSWORD=...        # Decrypts .actp/keystore.json (recommended)
 
 # Optional
-BASE_SEPOLIA_RPC=https://sepolia.base.org
-IPFS_GATEWAY=https://gateway.pinata.cloud
+BASE_SEPOLIA_RPC=...         # Custom RPC for Base Sepolia
+BASE_MAINNET_RPC=...         # Custom RPC for Base Mainnet
+CDP_API_KEY=...              # Coinbase Developer Platform API key
+PIMLICO_API_KEY=...          # Pimlico bundler/paymaster API key
+IPFS_GATEWAY=...             # Custom IPFS gateway URL
 ```
 
 ## Requirements
 
 - Node.js 18+ (required for global `fetch` and `AbortController`)
 - TypeScript 5.0+ (for development)
-- Dependencies: ethers, viem (optional)
+- Dependencies: ethers, viem, permissionless
 
 ### Module Format
 
