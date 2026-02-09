@@ -22,6 +22,8 @@ import {
   UnifiedPayParams,
   UnifiedPayResult,
 } from '../types/adapter';
+import { IWalletProvider } from '../wallet/IWalletProvider';
+import { ethers } from 'ethers';
 
 /**
  * Parameters for creating a simple payment.
@@ -116,11 +118,15 @@ export class BasicAdapter extends BaseAdapter implements IAdapter {
    * @param runtime - ACTP runtime implementation (MockRuntime or BlockchainRuntime)
    * @param requesterAddress - The requester's Ethereum address
    * @param easHelper - Optional EAS helper for attestation verification (SECURITY FIX C-4)
+   * @param walletProvider - Optional wallet provider for AA batched payments
+   * @param contractAddresses - Optional contract addresses for batched payment encoding
    */
   constructor(
     private runtime: IACTPRuntime,
     requesterAddress: string,
-    private easHelper?: EASHelper
+    private easHelper?: EASHelper,
+    private walletProvider?: IWalletProvider,
+    private contractAddresses?: { usdc: string; actpKernel: string; escrowVault: string }
   ) {
     super(requesterAddress);
   }
@@ -186,6 +192,40 @@ export class BasicAdapter extends BaseAdapter implements IAdapter {
         `For larger amounts, please contact support@agirails.io.`
       );
     }
+
+    // ====================================================================
+    // AIP-12: Batched payment via AA wallet (1 UserOp = 3 on-chain calls)
+    // ====================================================================
+    if (this.walletProvider?.payACTPBatched && this.contractAddresses) {
+      const serviceHash = ethers.ZeroHash;
+      const result = await this.walletProvider.payACTPBatched({
+        provider,
+        requester,
+        amount: amount.toString(),
+        deadline,
+        disputeWindow,
+        serviceHash,
+        agentId: agentId || '0',
+        contracts: this.contractAddresses,
+      });
+
+      if (!result.success) {
+        throw new Error(`Batched payment UserOp failed: ${result.hash}`);
+      }
+
+      return {
+        txId: result.txId,
+        provider,
+        requester,
+        amount: this.formatAmount(amount),
+        deadline: new Date(deadline * 1000).toISOString(),
+        state: 'COMMITTED',
+      };
+    }
+
+    // ====================================================================
+    // Legacy flow: sequential on-chain calls (EOA / mock)
+    // ====================================================================
 
     // Create transaction
     const txId = await this.runtime.createTransaction({

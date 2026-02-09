@@ -32,6 +32,7 @@ export function createInitCommand(): Command {
     .description('Initialize ACTP in the current directory')
     .option('-m, --mode <mode>', 'Operating mode: mock, testnet, mainnet', 'mock')
     .option('-a, --address <address>', 'Your Ethereum address')
+    .option('-w, --wallet <type>', 'Wallet type: auto (gas-free Smart Wallet) or eoa (traditional)', 'auto')
     .option('-f, --force', 'Overwrite existing configuration')
     .option('--scaffold', 'Generate a starter agent.ts file')
     .option('--intent <intent>', 'Agent intent: earn, pay, or both (default: earn)')
@@ -67,6 +68,7 @@ type ScaffoldIntent = 'earn' | 'pay' | 'both';
 interface InitOptions {
   mode: string;
   address?: string;
+  wallet?: string;
   force?: boolean;
   scaffold?: boolean;
   intent?: string;
@@ -95,6 +97,14 @@ async function runInit(options: InitOptions, output: Output): Promise<void> {
 
   const mode = options.mode as CLIMode;
 
+  // Determine wallet type
+  const walletType = (mode === 'mock') ? 'mock' : (options.wallet || 'auto');
+  if (walletType !== 'mock' && walletType !== 'auto' && walletType !== 'eoa') {
+    throw new Error(
+      `Invalid wallet type: "${walletType}". Valid types: auto, eoa`
+    );
+  }
+
   // Get or generate address
   let address = options.address;
   if (!address) {
@@ -106,7 +116,14 @@ async function runInit(options: InitOptions, output: Output): Promise<void> {
       // Generate a real wallet with encrypted keystore
       const actpDir = getActpDir(projectRoot);
       fs.mkdirSync(actpDir, { recursive: true });
-      address = await generateWallet(actpDir, output);
+      const eoaAddress = await generateWallet(actpDir, output);
+
+      if (walletType === 'auto') {
+        // Compute Smart Wallet address from signer
+        address = await computeSmartWalletInit(eoaAddress, mode, output);
+      } else {
+        address = eoaAddress;
+      }
     }
   }
 
@@ -123,6 +140,7 @@ async function runInit(options: InitOptions, output: Output): Promise<void> {
     mode,
     address: address.toLowerCase(),
     version: '1.0',
+    ...(walletType !== 'mock' && { wallet: walletType as 'auto' | 'eoa' }),
   };
 
   // Save configuration
@@ -160,6 +178,7 @@ async function runInit(options: InitOptions, output: Output): Promise<void> {
       directory: getActpDir(projectRoot),
       mode,
       address,
+      ...(walletType !== 'mock' && { wallet: walletType }),
     },
     { quietKey: 'address' }
   );
@@ -170,9 +189,15 @@ async function runInit(options: InitOptions, output: Output): Promise<void> {
   } else {
     output.blank();
     output.print('Next steps:');
-    output.print('  1. Create a payment: actp pay <provider> <amount>');
-    output.print('  2. Check your balance: actp balance');
-    output.print('  3. List transactions: actp tx list');
+    if (walletType === 'auto') {
+      output.print('  1. Register for gas-free: actp register');
+      output.print('  2. Create a payment: actp pay <provider> <amount>');
+      output.print('  3. Check your balance: actp balance');
+    } else {
+      output.print('  1. Create a payment: actp pay <provider> <amount>');
+      output.print('  2. Check your balance: actp balance');
+      output.print('  3. List transactions: actp tx list');
+    }
     output.print('');
     output.print('Tip: Use --scaffold to generate a starter agent.ts');
   }
@@ -217,6 +242,34 @@ async function generateWallet(actpDir: string, output: Output): Promise<string> 
   output.info('  npx ts-node agent.ts');
 
   return wallet.address;
+}
+
+/**
+ * Compute the Smart Wallet address for an EOA signer.
+ * Uses CREATE2 counterfactual derivation — no deployment needed.
+ */
+async function computeSmartWalletInit(
+  eoaAddress: string,
+  mode: string,
+  output: Output
+): Promise<string> {
+  const { ethers } = await import('ethers');
+  const { getNetwork } = await import('../../config/networks');
+  const { computeSmartWalletAddress } = await import('../../wallet/aa/UserOpBuilder');
+
+  const network = mode === 'testnet' ? 'base-sepolia' : 'base-mainnet';
+  const networkConfig = getNetwork(network);
+  const rpcUrl = networkConfig.rpcUrl;
+  const provider = new ethers.JsonRpcProvider(rpcUrl);
+
+  output.info('Computing Smart Wallet address...');
+  const smartWalletAddress = await computeSmartWalletAddress(eoaAddress, provider);
+
+  output.success(`Smart Wallet: ${smartWalletAddress}`);
+  output.info('Gas-free transactions enabled (requires registration)');
+  output.info('Register with: actp register');
+
+  return smartWalletAddress;
 }
 
 async function promptPassword(): Promise<string> {

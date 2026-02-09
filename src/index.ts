@@ -178,6 +178,18 @@ export {
 
 // Wallet
 export { resolvePrivateKey, getCachedAddress } from './wallet/keystore';
+export type {
+  IWalletProvider,
+  TransactionRequest as WalletTransactionRequest,
+  TransactionReceipt as WalletTransactionReceipt,
+  WalletInfo,
+  WalletTier,
+  BatchedPayParams,
+  BatchedPayResult,
+} from './wallet/IWalletProvider';
+export { EOAWalletProvider } from './wallet/EOAWalletProvider';
+export { AutoWalletProvider } from './wallet/AutoWalletProvider';
+export type { AutoWalletConfig } from './wallet/AutoWalletProvider';
 
 // Helper utilities
 export {
