@@ -40,13 +40,13 @@ export function createInitCommand(): Command {
     .option('--price <usdc>', 'Base price in USDC (default: 1)')
     .option('--json', 'Output as JSON')
     .option('-q, --quiet', 'Minimal output')
-    .action(async (options) => {
+    .action(async (options, command) => {
       const output = new Output(
         options.json ? 'json' : options.quiet ? 'quiet' : 'human'
       );
 
       try {
-        await runInit(options, output);
+        await runInit(options, output, command);
       } catch (error) {
         output.errorResult({
           code: 'INIT_FAILED',
@@ -76,7 +76,7 @@ interface InitOptions {
   price?: string;
 }
 
-async function runInit(options: InitOptions, output: Output): Promise<void> {
+async function runInit(options: InitOptions, output: Output, cmd?: Command): Promise<void> {
   const projectRoot = process.cwd();
 
   // Check if already initialized
@@ -86,6 +86,65 @@ async function runInit(options: InitOptions, output: Output): Promise<void> {
         'Use --force to reinitialize.'
     );
   }
+
+  // ── AGIRAILS.md pre-fill ──────────────────────────────────────────────
+  const agirailsMdPath = path.join(projectRoot, 'AGIRAILS.md');
+  let mdConfig: Record<string, unknown> | null = null;
+
+  if (fs.existsSync(agirailsMdPath)) {
+    try {
+      const { parseAgirailsMd } = await import('../../config/agirailsmd');
+      const parsed = parseAgirailsMd(fs.readFileSync(agirailsMdPath, 'utf-8'));
+      mdConfig = parsed.frontmatter;
+    } catch {
+      output.warning('Found AGIRAILS.md but could not parse it — ignoring');
+    }
+  }
+
+  // Helper: true when the user explicitly passed a flag on the CLI
+  const isExplicit = (flag: string): boolean =>
+    cmd?.getOptionValueSource(flag) === 'cli';
+
+  // Apply AGIRAILS.md values where the user didn't set an explicit flag
+  if (mdConfig) {
+    // network → mode mapping
+    if (!isExplicit('mode') && mdConfig.network) {
+      const net = String(mdConfig.network);
+      if (net === 'base-sepolia' || net === 'testnet') options.mode = 'testnet';
+      else if (net === 'base-mainnet' || net === 'mainnet') options.mode = 'mainnet';
+      else if (net === 'mock') options.mode = 'mock';
+    }
+
+    // intent
+    if (!isExplicit('intent') && mdConfig.intent) {
+      options.intent = String(mdConfig.intent);
+    }
+
+    // capabilities → service (first capability)
+    if (!isExplicit('service') && Array.isArray(mdConfig.capabilities) && mdConfig.capabilities.length > 0) {
+      options.service = String(mdConfig.capabilities[0]);
+    }
+
+    // price
+    if (!isExplicit('price') && mdConfig.price != null) {
+      options.price = String(mdConfig.price);
+    }
+
+    // Log what we pre-filled
+    const lines: string[] = [];
+    if (mdConfig.network) lines.push(`  Mode: ${options.mode}`);
+    if (mdConfig.name) lines.push(`  Agent: ${String(mdConfig.name)}`);
+    if (mdConfig.intent) lines.push(`  Intent: ${options.intent || mdConfig.intent}`);
+    if (Array.isArray(mdConfig.capabilities)) lines.push(`  Capabilities: ${mdConfig.capabilities.join(', ')}`);
+    if (mdConfig.price != null) lines.push(`  Price: $${mdConfig.price} USDC`);
+
+    output.info('Found AGIRAILS.md \u2014 using config from file');
+    for (const line of lines) {
+      output.print(line);
+    }
+    output.blank();
+  }
+  // ── End AGIRAILS.md pre-fill ──────────────────────────────────────────
 
   // Validate mode
   const validModes: CLIMode[] = ['mock', 'testnet', 'mainnet'];
@@ -155,6 +214,14 @@ async function runInit(options: InitOptions, output: Output): Promise<void> {
     ...(walletType !== 'mock' && { wallet: walletType as 'auto' | 'eoa' }),
     ...(smartWalletAddress && { smartWallet: smartWalletAddress.toLowerCase() }),
     ...(didRegister && { registered: true }),
+    // AGIRAILS.md-derived values (stored for downstream use)
+    ...(mdConfig && mdConfig.name ? { agentName: String(mdConfig.name) } : {}),
+    ...(mdConfig && mdConfig.intent ? { intent: String(mdConfig.intent) as 'earn' | 'pay' | 'both' } : {}),
+    ...(mdConfig && Array.isArray(mdConfig.capabilities) ? { capabilities: mdConfig.capabilities.map(String) } : {}),
+    ...(mdConfig && mdConfig.price != null ? { price: Number(mdConfig.price) } : {}),
+    ...(mdConfig && mdConfig.concurrency != null ? { concurrency: Number(mdConfig.concurrency) } : {}),
+    ...(mdConfig && mdConfig.payment_mode ? { paymentMode: String(mdConfig.payment_mode) as 'actp' | 'x402' | 'both' } : {}),
+    ...(mdConfig && mdConfig.budget != null ? { budget: Number(mdConfig.budget) } : {}),
   };
 
   // Save configuration
@@ -199,7 +266,7 @@ async function runInit(options: InitOptions, output: Output): Promise<void> {
 
   // Generate scaffold if requested
   if (options.scaffold) {
-    await runScaffold(options, mode, output);
+    await runScaffold(options, mode, output, mdConfig);
   } else {
     output.blank();
     output.print('Next steps:');
@@ -486,6 +553,7 @@ async function runScaffold(
   options: InitOptions,
   mode: CLIMode,
   output: Output,
+  mdConfig?: Record<string, unknown> | null,
 ): Promise<void> {
   const validIntents: ScaffoldIntent[] = ['earn', 'pay', 'both'];
   const intent: ScaffoldIntent = (options.intent as ScaffoldIntent) || 'earn';
@@ -506,8 +574,8 @@ async function runScaffold(
     return;
   }
 
-  // Derive agent name from directory
-  const agentName = path.basename(process.cwd());
+  // Derive agent name: prefer AGIRAILS.md name, fallback to directory name
+  const agentName = (mdConfig?.name ? String(mdConfig.name) : null) || path.basename(process.cwd());
 
   // Get template and substitute variables
   const template = getTemplate(intent);
