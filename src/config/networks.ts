@@ -15,6 +15,11 @@ import { ethers } from 'ethers';
 const BASE_SEPOLIA_RPC_URL = process.env.BASE_SEPOLIA_RPC || 'https://sepolia.base.org';
 const BASE_MAINNET_RPC_URL = process.env.BASE_MAINNET_RPC || 'https://mainnet.base.org';
 
+// AGIRAILS CDP Client API Key — safe to embed, cannot access funds/portfolios.
+// Developers can override with their own key via CDP_API_KEY env var.
+// Paymaster policy restricts sponsorship to AGIRAILS contracts only.
+const CDP_CLIENT_KEY = process.env.CDP_API_KEY || '2txciN85t41erCjveqgNnXYyHRcoo5xP';
+
 /**
  * Network configuration
  */
@@ -88,8 +93,8 @@ export const BASE_SEPOLIA: NetworkConfig = {
     // EAS contracts (Base native deployment)
     eas: '0x4200000000000000000000000000000000000021',
     easSchemaRegistry: '0x4200000000000000000000000000000000000020',
-    // AIP-7 Agent Registry (deployed 2025-12-11)
-    agentRegistry: '0xFed6914Aa70c0a53E9c7Cc4d2Ae159e4748fb09D',
+    // AIP-7 Agent Registry v2 (redeployed 2026-02-09 with configHash/configCID/listed)
+    agentRegistry: '0xDd6D66924B43419F484aE981F174b803487AF25A',
     // AIP-7 Identity Registry - ERC-1056 DID Registry (deployed 2026-01-09)
     identityRegistry: '0xF64F748C7802a68Cb936a9213881fE74e83FDA97',
     // AIP-7 Archive Treasury - Arweave funding (deployed 2026-01-09)
@@ -111,13 +116,13 @@ export const BASE_SEPOLIA: NetworkConfig = {
     smartWalletFactory: '0xBA5ED110eFDBa3D005bfC882d75358ACBbB85842',
     bundlerUrls: {
       // Coinbase CDP bundler — set CDP_API_KEY env var
-      coinbase: process.env.CDP_BUNDLER_URL || `https://api.developer.coinbase.com/rpc/v1/base-sepolia/${process.env.CDP_API_KEY || ''}`,
+      coinbase: process.env.CDP_BUNDLER_URL || `https://api.developer.coinbase.com/rpc/v1/base-sepolia/${CDP_CLIENT_KEY}`,
       // Pimlico backup bundler — set PIMLICO_API_KEY env var
       pimlico: process.env.PIMLICO_BUNDLER_URL || (process.env.PIMLICO_API_KEY ? `https://api.pimlico.io/v2/base-sepolia/rpc?apikey=${process.env.PIMLICO_API_KEY}` : undefined),
     },
     paymasterUrls: {
       // Coinbase CDP paymaster — same endpoint as bundler
-      coinbase: process.env.CDP_PAYMASTER_URL || `https://api.developer.coinbase.com/rpc/v1/base-sepolia/${process.env.CDP_API_KEY || ''}`,
+      coinbase: process.env.CDP_PAYMASTER_URL || `https://api.developer.coinbase.com/rpc/v1/base-sepolia/${CDP_CLIENT_KEY}`,
       // Pimlico backup paymaster — set PIMLICO_API_KEY env var
       pimlico: process.env.PIMLICO_PAYMASTER_URL || (process.env.PIMLICO_API_KEY ? `https://api.pimlico.io/v2/base-sepolia/rpc?apikey=${process.env.PIMLICO_API_KEY}` : undefined),
     },
@@ -127,9 +132,8 @@ export const BASE_SEPOLIA: NetworkConfig = {
 /**
  * Base Mainnet Configuration
  *
- * WARNING: Mainnet contracts are NOT YET DEPLOYED.
- * Using 'base-mainnet' will throw an error until contracts are deployed.
- * Use 'base-sepolia' for testnet development.
+ * Base Mainnet Configuration
+ * Redeployed 2026-02-09 with agentId + AgentRegistry v2 (configHash, configCID, listed)
  */
 export const BASE_MAINNET: NetworkConfig = {
   name: 'Base Mainnet',
@@ -137,16 +141,16 @@ export const BASE_MAINNET: NetworkConfig = {
   rpcUrl: BASE_MAINNET_RPC_URL,
   blockExplorer: 'https://basescan.org',
   contracts: {
-    // Deployed 2026-02-03
-    actpKernel: '0xeaE4D6925510284dbC45C8C64bb8104a079D4c60',
-    escrowVault: '0xb7bCadF7F26f0761995d95105DFb2346F81AF02D',
+    // Redeployed 2026-02-09 with agentId support
+    actpKernel: '0x132B9eB321dBB57c828B083844287171BDC92d29',
+    escrowVault: '0x6aAF45882c4b0dD34130ecC790bb5Ec6be7fFb99',
     usdc: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', // Official USDC on Base
     // EAS contracts (Base native deployment)
     eas: '0x4200000000000000000000000000000000000021',
     easSchemaRegistry: '0x4200000000000000000000000000000000000020',
-    // AIP-7 contracts
-    agentRegistry: '0xbf9Aa0FC291A06A4dFA943c3E0Ad41E7aE20DF02',
-    archiveTreasury: '0x64B8f93fef2D2E749F5E88586753343F73246012',
+    // AIP-7 contracts (redeployed 2026-02-09)
+    agentRegistry: '0x6fB222CF3DDdf37Bcb248EE7BBBA42Fb41901de8',
+    archiveTreasury: '0x0516C411C0E8d75D17A768022819a0a4FB3cA2f2',
     // X402Relay - atomic payment fee splitting (TODO: deploy and set address)
     // x402Relay: '0x...',
   },
@@ -169,12 +173,12 @@ export const BASE_MAINNET: NetworkConfig = {
     entryPoint: '0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789',
     smartWalletFactory: '0xBA5ED110eFDBa3D005bfC882d75358ACBbB85842',
     bundlerUrls: {
-      coinbase: process.env.CDP_BUNDLER_URL || `https://api.developer.coinbase.com/rpc/v1/base/${process.env.CDP_API_KEY || ''}`,
+      coinbase: process.env.CDP_BUNDLER_URL || `https://api.developer.coinbase.com/rpc/v1/base/${CDP_CLIENT_KEY}`,
       // Pimlico backup bundler — set PIMLICO_API_KEY env var
       pimlico: process.env.PIMLICO_BUNDLER_URL || (process.env.PIMLICO_API_KEY ? `https://api.pimlico.io/v2/base/rpc?apikey=${process.env.PIMLICO_API_KEY}` : undefined),
     },
     paymasterUrls: {
-      coinbase: process.env.CDP_PAYMASTER_URL || `https://api.developer.coinbase.com/rpc/v1/base/${process.env.CDP_API_KEY || ''}`,
+      coinbase: process.env.CDP_PAYMASTER_URL || `https://api.developer.coinbase.com/rpc/v1/base/${CDP_CLIENT_KEY}`,
       // Pimlico backup paymaster — set PIMLICO_API_KEY env var
       pimlico: process.env.PIMLICO_PAYMASTER_URL || (process.env.PIMLICO_API_KEY ? `https://api.pimlico.io/v2/base/rpc?apikey=${process.env.PIMLICO_API_KEY}` : undefined),
     },
