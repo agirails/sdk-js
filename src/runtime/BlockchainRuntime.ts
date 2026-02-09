@@ -65,6 +65,11 @@ export interface BlockchainRuntimeConfig {
    * If provided, attestation replay protection will survive restarts
    */
   stateDirectory?: string;
+  /**
+   * Number of block confirmations to wait after each state-changing tx.
+   * Default: 2 (Base L2 reorg safety). Set to 1 on testnet for speed.
+   */
+  confirmations?: number;
 }
 
 /**
@@ -163,7 +168,8 @@ export class BlockchainRuntime implements IACTPRuntime {
     this.kernel = new ACTPKernel(
       this.networkConfig.contracts.actpKernel,
       this.signer,
-      config.gasSettings
+      config.gasSettings,
+      config.confirmations
     );
 
     this.escrow = new EscrowVault(

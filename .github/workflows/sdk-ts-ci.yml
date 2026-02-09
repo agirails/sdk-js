@@ -1,0 +1,112 @@
+name: SDK TypeScript CI
+
+on:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'package.json'
+      - 'tsconfig.json'
+      - '.github/workflows/sdk-ts-ci.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'package.json'
+      - 'tsconfig.json'
+      - '.github/workflows/sdk-ts-ci.yml'
+
+jobs:
+  lint-build-test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [18, 20, 22]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build (tsc)
+        run: npm run build
+
+      - name: Unit tests
+        run: npm test
+
+  cjs-smoke:
+    runs-on: ubuntu-latest
+    needs: lint-build-test
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [18, 20, 22]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: CJS require() smoke test
+        run: |
+          node -e "
+            const sdk = require('./dist/index.js');
+            const assert = require('assert');
+
+            // Core exports
+            assert(sdk.ACTPClient, 'ACTPClient missing');
+            assert(typeof sdk.ACTPClient.create === 'function', 'ACTPClient.create not a function');
+
+            // Error classes
+            assert(sdk.ACTPError, 'ACTPError missing');
+            assert(sdk.TransactionNotFoundError, 'TransactionNotFoundError missing');
+            assert(sdk.InvalidStateTransitionError, 'InvalidStateTransitionError missing');
+            assert(sdk.InsufficientBalanceError, 'InsufficientBalanceError missing');
+            assert(sdk.ValidationError, 'ValidationError missing');
+
+            // Adapters
+            assert(sdk.BasicAdapter, 'BasicAdapter missing');
+            assert(sdk.StandardAdapter, 'StandardAdapter missing');
+
+            // Runtime
+            assert(sdk.MockRuntime, 'MockRuntime missing');
+
+            // Wallet
+            assert(sdk.EOAWalletProvider, 'EOAWalletProvider missing');
+
+            console.log('CJS smoke test passed on Node ' + process.version);
+          "
+
+      - name: CJS sub-path export test
+        run: |
+          node -e "
+            const storage = require('./dist/storage/index.js');
+            const assert = require('assert');
+            assert(storage, 'storage sub-path export missing');
+            console.log('CJS sub-path export test passed on Node ' + process.version);
+          "
+
+      - name: Verify no ESM-only syntax in dist
+        run: |
+          # Ensure dist/ has no top-level import/export (CJS only)
+          if grep -rn '^\(import \|export \)' dist/ --include='*.js' | head -5; then
+            echo 'ERROR: Found ESM syntax in dist/ — SDK must be CJS only'
+            exit 1
+          fi
+          echo 'No ESM syntax found in dist/ — OK'

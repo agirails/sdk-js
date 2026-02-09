@@ -6,14 +6,15 @@ import { State, Transaction } from '../types';
  *
  * ## Confirmation Policy
  *
- * Events received by EventMonitor are already confirmed. ACTPKernel uses
- * `tx.wait(2)` (2 block confirmations) for all state-changing operations
- * before emitting events. On Base L2 (~2s blocks), this means events arrive
- * ~4-6s after submission and are safe from reorgs.
+ * Events received by EventMonitor are already confirmed. ACTPKernel waits
+ * for N block confirmations (default 2, configurable via `confirmations`
+ * parameter in BlockchainRuntimeConfig) before returning from state-changing
+ * operations. On Base L2 (~2 s blocks), the default means events arrive
+ * ~4-6 s after submission and are safe from reorgs.
  *
  * Confirmation flow:
  *   User calls ACTPKernel.createTransaction()
- *     → tx.wait(2) blocks until 2 confirmations
+ *     → tx.wait(confirmations) blocks until N confirmations
  *     → Event emitted (already confirmed)
  *     → EventMonitor receives event (instant)
  *
