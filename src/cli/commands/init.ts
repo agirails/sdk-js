@@ -383,6 +383,15 @@ async function runInlineRegistration(
       return false;
     }
 
+    // Check for valid bundler/paymaster URL (CDP_API_KEY must be set)
+    const cdpUrl = networkConfig.aa.bundlerUrls.coinbase;
+    const hasPimlico = !!networkConfig.aa.bundlerUrls.pimlico;
+    if (cdpUrl.endsWith('/') && !hasPimlico) {
+      output.warning('CDP_API_KEY not set. Skipping registration.');
+      output.info('Set CDP_API_KEY and run "actp register" later.');
+      return false;
+    }
+
     const provider = new ethers.JsonRpcProvider(networkConfig.rpcUrl);
     const signer = new ethers.Wallet(privateKey, provider);
 
