@@ -81,10 +81,11 @@ describe('Networks Config', () => {
       expect(config.aa?.paymasterUrls.pimlico).toContain('pimlico-test-key');
     });
 
-    it('should leave Pimlico URLs undefined when PIMLICO_API_KEY is missing', () => {
+    it('should use hardcoded Pimlico key when PIMLICO_API_KEY is missing', () => {
       const config = freshConfig();
-      expect(config.aa?.bundlerUrls.pimlico).toBeUndefined();
-      expect(config.aa?.paymasterUrls.pimlico).toBeUndefined();
+      // Falls back to hardcoded AGIRAILS Pimlico key (restricted by dashboard policy)
+      expect(config.aa?.bundlerUrls.pimlico).toContain('api.pimlico.io');
+      expect(config.aa?.bundlerUrls.pimlico).not.toContain('undefined');
     });
 
     it('should prefer CDP_BUNDLER_URL over constructed URL', () => {
