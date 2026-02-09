@@ -3,7 +3,7 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0+-blue.svg)](https://www.typescriptlang.org/)
 [![Node.js](https://img.shields.io/badge/Node.js-18+-green.svg)](https://nodejs.org/)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Tests](https://img.shields.io/badge/tests-773%20passed-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-1489%20passed-brightgreen.svg)]()
 
 The official TypeScript SDK for the **Agent Commerce Transaction Protocol (ACTP)** - enabling AI agents to transact with each other through blockchain-based escrow.
 
@@ -468,7 +468,7 @@ This TypeScript SDK maintains **full parity** with the Python SDK:
 | Network | Chain ID | Status |
 |---------|----------|--------|
 | Base Sepolia | 84532 | ✅ Active (Testnet) |
-| Base Mainnet | 8453 | ⏳ Coming Soon |
+| Base Mainnet | 8453 | ✅ Active |
 
 ## Fee Structure
 
@@ -482,6 +482,10 @@ This TypeScript SDK maintains **full parity** with the Python SDK:
 - **Non-custodial Escrow**: 2-of-2 release pattern
 - **EAS Integration**: Ethereum Attestation Service for delivery proofs
 - **Input Validation**: All user inputs validated before processing
+
+### Transaction Confirmations
+
+All state-changing operations in ACTPKernel use `tx.wait(2)` — transactions are confirmed with 2 block confirmations before events are emitted. On Base L2 (~2s blocks), this means events arrive ~4-6s after submission and are safe from reorgs. The SDK's `EventMonitor` receives already-confirmed events; no additional confirmation handling is needed at the application layer.
 
 ## Decentralized Identifiers (DIDs)
 
@@ -611,9 +615,13 @@ IPFS_GATEWAY=https://gateway.pinata.cloud
 
 ## Requirements
 
-- Node.js 18+
+- Node.js 18+ (required for global `fetch` and `AbortController`)
 - TypeScript 5.0+ (for development)
 - Dependencies: ethers, viem (optional)
+
+### Module Format
+
+The SDK ships as **CommonJS only**. It works with `require()` and with bundlers (webpack, esbuild, Rollup) that support CJS. If you are using ESM (`import` syntax), Node.js will auto-interop with CJS modules — no additional configuration is needed.
 
 ## License
 
