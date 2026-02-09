@@ -44,7 +44,5 @@ if (require.main === module) {
   console.log(typeHash);
   console.log();
 
-  console.log('✅ Update this value in:');
-  console.log('- /Testnet/docs/AIP-4.md:204');
-  console.log('- /Testnet/docs/schemas/aip-4-delivery.eip712.json:11');
+  console.log('Use this type hash in your EIP-712 typed data configuration.');
 }
