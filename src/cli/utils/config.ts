@@ -46,6 +46,27 @@ export interface CLIConfig {
 
   /** Configuration version for migrations */
   version: string;
+
+  /** Agent name from AGIRAILS.md */
+  agentName?: string;
+
+  /** Agent intent: earn, pay, or both */
+  intent?: 'earn' | 'pay' | 'both';
+
+  /** Service capabilities from AGIRAILS.md */
+  capabilities?: string[];
+
+  /** Base price in USDC */
+  price?: number;
+
+  /** Max concurrent jobs */
+  concurrency?: number;
+
+  /** Payment mode: actp, x402, or both */
+  paymentMode?: 'actp' | 'x402' | 'both';
+
+  /** Budget cap in USDC */
+  budget?: number;
 }
 
 /**
