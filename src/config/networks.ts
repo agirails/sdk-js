@@ -49,6 +49,27 @@ export interface NetworkConfig {
    * Set to undefined for no limit (testnet only).
    */
   maxTransactionAmount?: number;
+
+  /**
+   * AIP-12: Account Abstraction (AA) configuration.
+   * EntryPoint v0.6 + CoinbaseSmartWallet.
+   */
+  aa?: {
+    /** ERC-4337 EntryPoint v0.6 address */
+    entryPoint: string;
+    /** CoinbaseSmartWallet factory address */
+    smartWalletFactory: string;
+    /** Bundler RPC URLs */
+    bundlerUrls: {
+      coinbase: string;
+      pimlico?: string;
+    };
+    /** Paymaster RPC URLs (ERC-7677) */
+    paymasterUrls: {
+      coinbase: string;
+      pimlico?: string;
+    };
+  };
 }
 
 /**
@@ -83,7 +104,24 @@ export const BASE_SEPOLIA: NetworkConfig = {
   gasSettings: {
     maxFeePerGas: ethers.parseUnits('2', 'gwei'),
     maxPriorityFeePerGas: ethers.parseUnits('1', 'gwei')
-  }
+  },
+  // AIP-12: Account Abstraction
+  aa: {
+    entryPoint: '0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789',
+    smartWalletFactory: '0xBA5ED110eFDBa3D005bfC882d75358ACBbB85842',
+    bundlerUrls: {
+      // Coinbase CDP bundler — set CDP_API_KEY env var
+      coinbase: process.env.CDP_BUNDLER_URL || `https://api.developer.coinbase.com/rpc/v1/base-sepolia/${process.env.CDP_API_KEY || ''}`,
+      // Pimlico backup bundler — set PIMLICO_API_KEY env var
+      pimlico: process.env.PIMLICO_BUNDLER_URL || (process.env.PIMLICO_API_KEY ? `https://api.pimlico.io/v2/base-sepolia/rpc?apikey=${process.env.PIMLICO_API_KEY}` : undefined),
+    },
+    paymasterUrls: {
+      // Coinbase CDP paymaster — same endpoint as bundler
+      coinbase: process.env.CDP_PAYMASTER_URL || `https://api.developer.coinbase.com/rpc/v1/base-sepolia/${process.env.CDP_API_KEY || ''}`,
+      // Pimlico backup paymaster — set PIMLICO_API_KEY env var
+      pimlico: process.env.PIMLICO_PAYMASTER_URL || (process.env.PIMLICO_API_KEY ? `https://api.pimlico.io/v2/base-sepolia/rpc?apikey=${process.env.PIMLICO_API_KEY}` : undefined),
+    },
+  },
 };
 
 /**
@@ -125,7 +163,22 @@ export const BASE_MAINNET: NetworkConfig = {
    * This limits exposure in case of undiscovered vulnerabilities.
    * Will be removed/increased after formal security audit.
    */
-  maxTransactionAmount: 1000
+  maxTransactionAmount: 1000,
+  // AIP-12: Account Abstraction
+  aa: {
+    entryPoint: '0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789',
+    smartWalletFactory: '0xBA5ED110eFDBa3D005bfC882d75358ACBbB85842',
+    bundlerUrls: {
+      coinbase: process.env.CDP_BUNDLER_URL || `https://api.developer.coinbase.com/rpc/v1/base/${process.env.CDP_API_KEY || ''}`,
+      // Pimlico backup bundler — set PIMLICO_API_KEY env var
+      pimlico: process.env.PIMLICO_BUNDLER_URL || (process.env.PIMLICO_API_KEY ? `https://api.pimlico.io/v2/base/rpc?apikey=${process.env.PIMLICO_API_KEY}` : undefined),
+    },
+    paymasterUrls: {
+      coinbase: process.env.CDP_PAYMASTER_URL || `https://api.developer.coinbase.com/rpc/v1/base/${process.env.CDP_API_KEY || ''}`,
+      // Pimlico backup paymaster — set PIMLICO_API_KEY env var
+      pimlico: process.env.PIMLICO_PAYMASTER_URL || (process.env.PIMLICO_API_KEY ? `https://api.pimlico.io/v2/base/rpc?apikey=${process.env.PIMLICO_API_KEY}` : undefined),
+    },
+  },
 };
 
 /**
@@ -174,7 +227,15 @@ export function getNetwork(network: string): NetworkConfig {
     gasSettings: {
       maxFeePerGas: config.gasSettings.maxFeePerGas,
       maxPriorityFeePerGas: config.gasSettings.maxPriorityFeePerGas
-    }
+    },
+    ...(config.aa ? {
+      aa: {
+        entryPoint: config.aa.entryPoint,
+        smartWalletFactory: config.aa.smartWalletFactory,
+        bundlerUrls: { ...config.aa.bundlerUrls },
+        paymasterUrls: { ...config.aa.paymasterUrls },
+      }
+    } : {}),
   };
 }
 

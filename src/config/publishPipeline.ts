@@ -110,7 +110,7 @@ function usdcToBaseUnits(value: number, fieldName: string): bigint {
  *
  * @throws Error if neither services nor capabilities are present
  */
-function extractRegistrationParams(
+export function extractRegistrationParams(
   frontmatter: Record<string, unknown>
 ): { endpoint: string; serviceDescriptors: ServiceDescriptor[] } {
   // Endpoint: use frontmatter field or placeholder

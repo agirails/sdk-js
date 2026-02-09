@@ -54,6 +54,10 @@ import { ERC8004Bridge } from './erc8004/ERC8004Bridge';
 import { ReputationReporter } from './erc8004/ReputationReporter';
 import { ERC8004Network } from './types/erc8004';
 import { getNetwork } from './config/networks';
+import { IWalletProvider } from './wallet/IWalletProvider';
+import { EOAWalletProvider } from './wallet/EOAWalletProvider';
+import { AutoWalletProvider } from './wallet/AutoWalletProvider';
+import { sdkLogger } from './utils/Logger';
 
 // ============================================================================
 // Security: Path Validation
@@ -70,6 +74,33 @@ import { getNetwork } from './config/networks';
  * @param stateDirectory - The directory path to validate
  * @throws Error if path is unsafe
  */
+/**
+ * Check if an agent is registered on AgentRegistry.
+ * Lightweight read-only check — no signer needed.
+ *
+ * Uses minimal ABI fragment to avoid importing the full AgentRegistry class.
+ * Checks registeredAt field of AgentProfile struct (> 0 means registered).
+ */
+async function checkRegistration(
+  provider: ethers.JsonRpcProvider,
+  registryAddress: string,
+  agentAddress: string
+): Promise<boolean> {
+  const contract = new ethers.Contract(
+    registryAddress,
+    [
+      'function getAgent(address agentAddress) view returns ' +
+      '(tuple(address agentAddress, string did, string endpoint, bytes32[] serviceTypes, ' +
+      'uint256 stakedAmount, uint256 reputationScore, uint256 totalTransactions, ' +
+      'uint256 disputedTransactions, uint256 totalVolumeUSDC, uint256 registeredAt, ' +
+      'uint256 updatedAt, bool isActive, bytes32 configHash, string configCID, bool listed))',
+    ],
+    provider
+  );
+  const profile = await contract.getAgent(agentAddress);
+  return profile.registeredAt > 0n;
+}
+
 function validateStateDirectory(stateDirectory: string): void {
   // Check for path traversal characters
   if (stateDirectory.includes('..')) {
@@ -174,9 +205,24 @@ export interface ACTPClientConfig {
    * This address is used as the "from" address for all transactions
    * created through this client instance.
    *
+   * When wallet is 'auto', this is auto-derived from the Smart Wallet
+   * and does NOT need to be provided.
+   *
    * @example '0x1111111111111111111111111111111111111111'
    */
-  requesterAddress: string;
+  requesterAddress?: string;
+
+  /**
+   * AIP-12: Wallet mode.
+   *
+   * - 'auto': CoinbaseSmartWallet + gas sponsorship (Tier 1, recommended).
+   *           Requires CDP_API_KEY env var. Agent address = Smart Wallet address.
+   * - undefined: EOA wallet from privateKey (Tier 2, backward compatible).
+   *
+   * When 'auto', requesterAddress is derived from the Smart Wallet
+   * and does not need to be provided.
+   */
+  wallet?: 'auto';
 
   /**
    * Optional: Project root directory for mock state file storage.
@@ -263,6 +309,7 @@ export interface ACTPClientConfig {
     actpKernel?: string;
     escrowVault?: string;
     usdc?: string;
+    agentRegistry?: string;
   };
 
   /**
@@ -319,6 +366,8 @@ export interface ACTPClientInfo {
   address: string;
   /** State directory (mock mode only) */
   stateDirectory?: string;
+  /** Wallet tier ('auto' = Smart Wallet, 'eoa' = EOA, undefined = mock) */
+  walletTier?: 'auto' | 'eoa';
 }
 
 // ============================================================================
@@ -464,6 +513,13 @@ export class ACTPClient {
   private readonly reputationReporter?: ReputationReporter;
 
   /**
+   * AIP-12: Wallet provider (Tier 1 Auto or Tier 2 EOA).
+   * Only set in testnet/mainnet modes.
+   * @internal
+   */
+  private readonly walletProvider?: IWalletProvider;
+
+  /**
    * Private constructor - use ACTPClient.create() factory method.
    */
   private constructor(
@@ -472,13 +528,16 @@ export class ACTPClient {
     info: ACTPClientInfo,
     easHelper?: EASHelper,
     erc8004Bridge?: ERC8004Bridge,
-    reputationReporter?: ReputationReporter
+    reputationReporter?: ReputationReporter,
+    walletProvider?: IWalletProvider,
+    contractAddresses?: { usdc: string; actpKernel: string; escrowVault: string }
   ) {
     this.runtime = runtime;
     this.info = info;
     this.easHelper = easHelper;
     this.reputationReporter = reputationReporter;
-    this.basic = new BasicAdapter(runtime, requesterAddress, easHelper);
+    this.walletProvider = walletProvider;
+    this.basic = new BasicAdapter(runtime, requesterAddress, easHelper, walletProvider, contractAddresses);
     this.standard = new StandardAdapter(runtime, requesterAddress, easHelper);
 
     // Initialize registry and router
@@ -527,31 +586,45 @@ export class ACTPClient {
    * ```
    */
   static async create(config: ACTPClientConfig): Promise<ACTPClient> {
-    // Validate requester address
-    if (!config.requesterAddress) {
-      throw new Error('requesterAddress is required');
-    }
-
-    if (!/^0x[a-fA-F0-9]{40}$/.test(config.requesterAddress)) {
-      throw new Error(
-        `Invalid requesterAddress: "${config.requesterAddress}". ` +
-          'Must be a valid Ethereum address (0x-prefixed, 40 hex chars)'
-      );
-    }
-
     let runtime: IACTPRuntime;
     let stateDirectory: string | undefined;
     let easHelper: EASHelper | undefined;
     let erc8004Bridge: ERC8004Bridge | undefined;
     let reputationReporter: ReputationReporter | undefined;
+    let walletProvider: IWalletProvider | undefined;
+    let requesterAddress: string;
+    let contractAddresses: { usdc: string; actpKernel: string; escrowVault: string } | undefined;
 
     // If custom runtime provided, use it directly
     if (config.runtime) {
+      // Custom runtime: requesterAddress is mandatory
+      if (!config.requesterAddress) {
+        throw new Error('requesterAddress is required when providing a custom runtime');
+      }
+      if (!/^0x[a-fA-F0-9]{40}$/.test(config.requesterAddress)) {
+        throw new Error(
+          `Invalid requesterAddress: "${config.requesterAddress}". ` +
+            'Must be a valid Ethereum address (0x-prefixed, 40 hex chars)'
+        );
+      }
+      requesterAddress = config.requesterAddress;
       runtime = config.runtime;
     } else {
       // Initialize runtime based on mode
       switch (config.mode) {
         case 'mock': {
+          // Mock mode: requesterAddress is mandatory
+          if (!config.requesterAddress) {
+            throw new Error('requesterAddress is required for mock mode');
+          }
+          if (!/^0x[a-fA-F0-9]{40}$/.test(config.requesterAddress)) {
+            throw new Error(
+              `Invalid requesterAddress: "${config.requesterAddress}". ` +
+                'Must be a valid Ethereum address (0x-prefixed, 40 hex chars)'
+            );
+          }
+          requesterAddress = config.requesterAddress;
+
           // SECURITY FIX: Enhanced path validation to prevent path traversal attacks
           if (config.stateDirectory) {
             validateStateDirectory(config.stateDirectory);
@@ -576,14 +649,12 @@ export class ACTPClient {
 
           // Map mode to network config
           const network = config.mode === 'testnet' ? 'base-sepolia' : 'base-mainnet';
+          const networkConfig = getNetwork(network);
 
           // Default RPC URL from network config if not provided
-          // This makes Level0/Agent usable on testnet without forcing users to pass rpcUrl explicitly.
-          const rpcUrl = config.rpcUrl ?? getNetwork(network).rpcUrl;
+          const rpcUrl = config.rpcUrl ?? networkConfig.rpcUrl;
 
-          // Optional persistent state directory can be used for:
-          // - mock mode state (mock-state.json)
-          // - blockchain mode safety state (e.g., used-attestation replay protection)
+          // Optional persistent state directory
           if (config.stateDirectory) {
             validateStateDirectory(config.stateDirectory);
           }
@@ -591,6 +662,82 @@ export class ACTPClient {
           // Create ethers provider and signer
           const provider = new ethers.JsonRpcProvider(rpcUrl);
           const signer = new ethers.Wallet(config.privateKey, provider);
+
+          // ====================================================================
+          // AIP-12: Wallet Provider Selection
+          // ====================================================================
+          if (config.wallet === 'auto') {
+            // Tier 1: CoinbaseSmartWallet + gasless transactions
+            if (!networkConfig.aa) {
+              throw new Error(
+                `AA configuration not available for ${config.mode} mode. ` +
+                  'Check that networks.ts has aa config for this network.'
+              );
+            }
+
+            const autoWallet = await AutoWalletProvider.create({
+              signer,
+              provider,
+              chainId: networkConfig.chainId,
+              actpKernelAddress: config.contracts?.actpKernel ?? networkConfig.contracts.actpKernel,
+              bundler: {
+                primaryUrl: networkConfig.aa.bundlerUrls.coinbase,
+                backupUrl: networkConfig.aa.bundlerUrls.pimlico,
+              },
+              paymaster: {
+                primaryUrl: networkConfig.aa.paymasterUrls.coinbase,
+                backupUrl: networkConfig.aa.paymasterUrls.pimlico,
+              },
+            });
+
+            // Check AgentRegistry — gasless only for registered agents
+            const smartWalletAddress = autoWallet.getAddress();
+            const agentRegistryAddress = config.contracts?.agentRegistry
+              ?? networkConfig.contracts.agentRegistry;
+
+            let isRegistered = false;
+            if (agentRegistryAddress) {
+              try {
+                isRegistered = await checkRegistration(
+                  provider, agentRegistryAddress, smartWalletAddress
+                );
+              } catch {
+                // Registry check failed (network issues) — allow AA anyway
+                // Paymaster policy is the final gate
+                isRegistered = true;
+                sdkLogger.warn('AgentRegistry check failed, proceeding with AA wallet');
+              }
+            } else {
+              // No registry deployed — skip check (early testnet)
+              isRegistered = true;
+            }
+
+            if (isRegistered) {
+              walletProvider = autoWallet;
+              requesterAddress = smartWalletAddress;
+            } else {
+              // Not registered — fall back to EOA with warning
+              sdkLogger.warn(
+                'Agent not registered on AgentRegistry. ' +
+                'Falling back to EOA wallet (gas not sponsored). ' +
+                'Run "actp register" for gas-free transactions.'
+              );
+              walletProvider = new EOAWalletProvider(signer, networkConfig.chainId);
+              requesterAddress = config.requesterAddress ?? signer.address;
+            }
+          } else {
+            // Tier 2: EOA Wallet (backward compatible)
+            walletProvider = new EOAWalletProvider(signer, networkConfig.chainId);
+            requesterAddress = config.requesterAddress ?? signer.address;
+          }
+
+          // Validate derived/provided address
+          if (!/^0x[a-fA-F0-9]{40}$/.test(requesterAddress)) {
+            throw new Error(
+              `Invalid requesterAddress: "${requesterAddress}". ` +
+                'Must be a valid Ethereum address (0x-prefixed, 40 hex chars)'
+            );
+          }
 
           const requireAttestation = config.requireAttestation ?? Boolean(config.easConfig);
 
@@ -618,7 +765,6 @@ export class ACTPClient {
           }
 
           // ERC-8004 INTEGRATION: Create bridge for agent ID resolution
-          // Maps network to ERC8004Network ('base-sepolia' or 'base')
           const erc8004Network: ERC8004Network =
             config.mode === 'testnet' ? 'base-sepolia' : 'base';
           erc8004Bridge = new ERC8004Bridge({
@@ -627,11 +773,17 @@ export class ACTPClient {
           });
 
           // ERC-8004 REPUTATION: Create reporter for settlement outcome reporting
-          // Reports successful settlements and dispute outcomes to Reputation Registry
           reputationReporter = new ReputationReporter({
             network: erc8004Network,
             signer,
           });
+
+          // AIP-12: Contract addresses for AA batched payments
+          contractAddresses = {
+            usdc: config.contracts?.usdc ?? networkConfig.contracts.usdc,
+            actpKernel: config.contracts?.actpKernel ?? networkConfig.contracts.actpKernel,
+            escrowVault: config.contracts?.escrowVault ?? networkConfig.contracts.escrowVault,
+          };
 
           break;
         }
@@ -645,17 +797,20 @@ export class ACTPClient {
     }
 
     // Normalize address to lowercase for consistency
-    const normalizedAddress = config.requesterAddress.toLowerCase();
+    const normalizedAddress = requesterAddress.toLowerCase();
 
     const info: ACTPClientInfo = {
       mode: config.mode,
       address: normalizedAddress,
       stateDirectory,
+      walletTier: walletProvider?.getWalletInfo().tier,
     };
 
-    // SECURITY FIX (C-4): Pass EASHelper to adapters for attestation verification
-    // ERC-8004: Pass bridge for agent ID resolution, reporter for settlement outcomes
-    const client = new ACTPClient(runtime, normalizedAddress, info, easHelper, erc8004Bridge, reputationReporter);
+    // Pass wallet provider and contract addresses to constructor
+    const client = new ACTPClient(
+      runtime, normalizedAddress, info, easHelper,
+      erc8004Bridge, reputationReporter, walletProvider, contractAddresses
+    );
 
     // Drift detection: non-blocking check for AGIRAILS.md sync status
     if (config.mode !== 'mock') {
@@ -1114,6 +1269,19 @@ export class ACTPClient {
   }
 
   /**
+   * AIP-12: Get the wallet provider instance.
+   *
+   * Only available in testnet/mainnet modes.
+   * Returns undefined in mock mode.
+   *
+   * Use this for advanced operations like checking wallet info,
+   * or sending custom batched transactions.
+   */
+  getWalletProvider(): IWalletProvider | undefined {
+    return this.walletProvider;
+  }
+
+  /**
    * Non-blocking drift detection for AGIRAILS.md config.
    * Checks if local AGIRAILS.md matches on-chain config hash.
    * Logs warnings but never blocks agent operation.
@@ -1149,7 +1317,7 @@ export class ACTPClient {
       const { frontmatter } = parseMd(content);
       const isTemplate = !frontmatter.config_hash;
 
-      const onChainState = await registryClient.getConfig(config.requesterAddress);
+      const onChainState = await registryClient.getConfig(config.requesterAddress ?? this.info.address);
       const ZERO_HASH = '0x' + '0'.repeat(64);
 
       if (onChainState.configHash === ZERO_HASH) {

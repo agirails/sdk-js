@@ -35,6 +35,9 @@ export interface CLIConfig {
   /** Optional: RPC URL override */
   rpcUrl?: string;
 
+  /** AIP-12: Wallet type — 'auto' (Smart Wallet, gasless) or 'eoa' (traditional) */
+  wallet?: 'auto' | 'eoa';
+
   /** Configuration version for migrations */
   version: string;
 }
