@@ -389,8 +389,8 @@ describe('withRetry', () => {
       });
 
       const elapsed = Date.now() - startTime;
-      // Should wait at least 100ms (0.1 * 1000)
-      expect(elapsed).toBeGreaterThanOrEqual(100);
+      // Should wait at least 100ms (0.1 * 1000); allow 5ms tolerance for timer resolution
+      expect(elapsed).toBeGreaterThanOrEqual(95);
     });
   });
 });
