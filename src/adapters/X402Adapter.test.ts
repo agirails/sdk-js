@@ -10,7 +10,13 @@
  * @module adapters/X402Adapter.test
  */
 
-import { X402Adapter, X402AdapterConfig, TransferFunction } from './X402Adapter';
+import {
+  X402Adapter,
+  X402AdapterConfig,
+  TransferFunction,
+  ApproveFunction,
+  RelayPayFunction,
+} from './X402Adapter';
 import { ValidationError } from './BaseAdapter';
 import {
   X402Error,
@@ -502,6 +508,384 @@ describe('X402Adapter', () => {
       expect(capturedHeaders!.get(X402_PROOF_HEADERS.TX_ID)).toBe(result.txId);
       // No escrow ID for atomic payments
       expect(capturedHeaders!.get(X402_PROOF_HEADERS.ESCROW_ID)).toBeNull();
+    });
+  });
+
+  // ==========================================================================
+  // X402Relay Fee Splitting Tests
+  // ==========================================================================
+
+  describe('pay() - relay path (fee splitting)', () => {
+    const relayAddress = '0x3333333333333333333333333333333333333333';
+    const relayTxHash = '0x' + 'c'.repeat(64);
+
+    // Tracking mocks for relay functions
+    let approveSpender: string | undefined;
+    let approveAmount: string | undefined;
+    let relayProvider: string | undefined;
+    let relayGross: string | undefined;
+    let relayServiceId: string | undefined;
+
+    const mockApproveFn: ApproveFunction = async (spender, amount) => {
+      approveSpender = spender;
+      approveAmount = amount;
+      return '0x' + 'd'.repeat(64);
+    };
+
+    const mockRelayPayFn: RelayPayFunction = async (provider, grossAmount, serviceId) => {
+      relayProvider = provider;
+      relayGross = grossAmount;
+      relayServiceId = serviceId;
+      return relayTxHash;
+    };
+
+    const relayConfig: X402AdapterConfig = {
+      expectedNetwork: 'base-sepolia',
+      transferFn: mockTransferFn, // legacy fallback
+      relayAddress,
+      approveFn: mockApproveFn,
+      relayPayFn: mockRelayPayFn,
+      platformFeeBps: 100, // 1%
+      requestTimeout: 5000,
+    };
+
+    beforeEach(() => {
+      approveSpender = undefined;
+      approveAmount = undefined;
+      relayProvider = undefined;
+      relayGross = undefined;
+      relayServiceId = undefined;
+    });
+
+    it('uses relay path when relayAddress + approveFn + relayPayFn configured', async () => {
+      const mockFetch = createMockFetch([
+        mock402Response(providerAddress, '100000000'), // $100
+        mockResponse(200),
+      ]);
+
+      const adapterWithRelay = new X402Adapter(requesterAddress, {
+        ...relayConfig,
+        fetchFn: mockFetch,
+      });
+
+      const result = await adapterWithRelay.pay({
+        to: 'https://api.example.com/service',
+        amount: '100',
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.txId).toBe(relayTxHash);
+    });
+
+    it('approves relay contract for gross amount', async () => {
+      const grossAmount = '100000000'; // $100
+      const mockFetch = createMockFetch([
+        mock402Response(providerAddress, grossAmount),
+        mockResponse(200),
+      ]);
+
+      const adapterWithRelay = new X402Adapter(requesterAddress, {
+        ...relayConfig,
+        fetchFn: mockFetch,
+      });
+
+      await adapterWithRelay.pay({
+        to: 'https://api.example.com/service',
+        amount: '100',
+      });
+
+      expect(approveSpender).toBe(relayAddress);
+      expect(approveAmount).toBe(grossAmount);
+    });
+
+    it('passes provider and gross amount to relayPayFn', async () => {
+      const grossAmount = '100000000'; // $100
+      const mockFetch = createMockFetch([
+        mock402Response(providerAddress, grossAmount),
+        mockResponse(200),
+      ]);
+
+      const adapterWithRelay = new X402Adapter(requesterAddress, {
+        ...relayConfig,
+        fetchFn: mockFetch,
+      });
+
+      await adapterWithRelay.pay({
+        to: 'https://api.example.com/service',
+        amount: '100',
+      });
+
+      expect(relayProvider).toBe(providerAddress.toLowerCase());
+      expect(relayGross).toBe(grossAmount);
+    });
+
+    it('passes serviceId from 402 headers to relay', async () => {
+      const svcId = 'my-service-123';
+      const mockFetch = createMockFetch([
+        mockResponse(402, {
+          [X402_HEADERS.REQUIRED]: 'true',
+          [X402_HEADERS.ADDRESS]: providerAddress,
+          [X402_HEADERS.AMOUNT]: '10000000',
+          [X402_HEADERS.NETWORK]: 'base-sepolia',
+          [X402_HEADERS.TOKEN]: 'USDC',
+          [X402_HEADERS.DEADLINE]: (Math.floor(Date.now() / 1000) + 86400).toString(),
+          [X402_HEADERS.SERVICE_ID]: svcId,
+        }),
+        mockResponse(200),
+      ]);
+
+      const adapterWithRelay = new X402Adapter(requesterAddress, {
+        ...relayConfig,
+        fetchFn: mockFetch,
+      });
+
+      await adapterWithRelay.pay({
+        to: 'https://api.example.com/service',
+        amount: '10',
+      });
+
+      expect(relayServiceId).toBe(svcId);
+    });
+
+    it('uses zero-hash serviceId when header absent', async () => {
+      const mockFetch = createMockFetch([
+        mock402Response(providerAddress, '10000000'), // no serviceId header
+        mockResponse(200),
+      ]);
+
+      const adapterWithRelay = new X402Adapter(requesterAddress, {
+        ...relayConfig,
+        fetchFn: mockFetch,
+      });
+
+      await adapterWithRelay.pay({
+        to: 'https://api.example.com/service',
+        amount: '10',
+      });
+
+      expect(relayServiceId).toBe('0x' + '0'.repeat(64));
+    });
+
+    // -- Fee breakdown tests --
+
+    it('returns feeBreakdown with correct 1% split for $100', async () => {
+      const mockFetch = createMockFetch([
+        mock402Response(providerAddress, '100000000'), // $100
+        mockResponse(200),
+      ]);
+
+      const adapterWithRelay = new X402Adapter(requesterAddress, {
+        ...relayConfig,
+        fetchFn: mockFetch,
+      });
+
+      const result = await adapterWithRelay.pay({
+        to: 'https://api.example.com/service',
+        amount: '100',
+      });
+
+      expect(result.feeBreakdown).toBeDefined();
+      expect(result.feeBreakdown!.grossAmount).toBe('100000000');
+      expect(result.feeBreakdown!.platformFee).toBe('1000000'); // $1
+      expect(result.feeBreakdown!.providerNet).toBe('99000000'); // $99
+      expect(result.feeBreakdown!.feeBps).toBe(100);
+      expect(result.feeBreakdown!.estimated).toBe(true);
+    });
+
+    it('enforces $0.05 minimum fee for small amounts', async () => {
+      // $1 payment: 1% = $0.01, but MIN_FEE = $0.05
+      const mockFetch = createMockFetch([
+        mock402Response(providerAddress, '1000000'), // $1
+        mockResponse(200),
+      ]);
+
+      const adapterWithRelay = new X402Adapter(requesterAddress, {
+        ...relayConfig,
+        fetchFn: mockFetch,
+      });
+
+      const result = await adapterWithRelay.pay({
+        to: 'https://api.example.com/service',
+        amount: '1',
+      });
+
+      expect(result.feeBreakdown).toBeDefined();
+      expect(result.feeBreakdown!.grossAmount).toBe('1000000');
+      expect(result.feeBreakdown!.platformFee).toBe('50000'); // MIN_FEE = $0.05
+      expect(result.feeBreakdown!.providerNet).toBe('950000'); // $0.95
+    });
+
+    it('uses 1% when it exceeds minimum ($5 threshold)', async () => {
+      // $5: 1% = $0.05 = MIN_FEE (exactly at threshold, bps == MIN_FEE)
+      const mockFetch = createMockFetch([
+        mock402Response(providerAddress, '5000000'), // $5
+        mockResponse(200),
+      ]);
+
+      const adapterWithRelay = new X402Adapter(requesterAddress, {
+        ...relayConfig,
+        fetchFn: mockFetch,
+      });
+
+      const result = await adapterWithRelay.pay({
+        to: 'https://api.example.com/service',
+        amount: '5',
+      });
+
+      // At exactly $5, bpsFee = 50000 = MIN_FEE; contract uses MIN_FEE (not strictly greater)
+      expect(result.feeBreakdown!.platformFee).toBe('50000');
+    });
+
+    it('uses custom platformFeeBps when provided', async () => {
+      // 2% fee on $100 = $2
+      const mockFetch = createMockFetch([
+        mock402Response(providerAddress, '100000000'),
+        mockResponse(200),
+      ]);
+
+      const adapterWith2Pct = new X402Adapter(requesterAddress, {
+        ...relayConfig,
+        platformFeeBps: 200, // 2%
+        fetchFn: mockFetch,
+      });
+
+      const result = await adapterWith2Pct.pay({
+        to: 'https://api.example.com/service',
+        amount: '100',
+      });
+
+      expect(result.feeBreakdown!.platformFee).toBe('2000000'); // $2
+      expect(result.feeBreakdown!.providerNet).toBe('98000000'); // $98
+      expect(result.feeBreakdown!.feeBps).toBe(200);
+    });
+
+    it('defaults platformFeeBps to 100 (1%) when not specified', async () => {
+      const mockFetch = createMockFetch([
+        mock402Response(providerAddress, '100000000'),
+        mockResponse(200),
+      ]);
+
+      const { platformFeeBps, ...configWithoutBps } = relayConfig;
+      const adapterNoBps = new X402Adapter(requesterAddress, {
+        ...configWithoutBps,
+        fetchFn: mockFetch,
+      });
+
+      const result = await adapterNoBps.pay({
+        to: 'https://api.example.com/service',
+        amount: '100',
+      });
+
+      expect(result.feeBreakdown!.feeBps).toBe(100);
+      expect(result.feeBreakdown!.platformFee).toBe('1000000');
+    });
+
+    it('feeBreakdown.estimated is always true', async () => {
+      const mockFetch = createMockFetch([
+        mock402Response(providerAddress, '10000000'),
+        mockResponse(200),
+      ]);
+
+      const adapterWithRelay = new X402Adapter(requesterAddress, {
+        ...relayConfig,
+        fetchFn: mockFetch,
+      });
+
+      const result = await adapterWithRelay.pay({
+        to: 'https://api.example.com/service',
+        amount: '10',
+      });
+
+      expect(result.feeBreakdown!.estimated).toBe(true);
+    });
+
+    // -- Fallback / error tests --
+
+    it('falls back to legacy (no feeBreakdown) without relay config', async () => {
+      const mockFetch = createMockFetch([
+        mock402Response(providerAddress, '10000000'),
+        mockResponse(200),
+      ]);
+
+      const legacyAdapter = new X402Adapter(requesterAddress, {
+        ...defaultConfig,
+        fetchFn: mockFetch,
+      });
+
+      const result = await legacyAdapter.pay({
+        to: 'https://api.example.com/service',
+        amount: '10',
+      });
+
+      expect(result.feeBreakdown).toBeUndefined();
+      expect(result.success).toBe(true);
+    });
+
+    it('falls back to legacy when only relayAddress set (missing approveFn)', async () => {
+      const mockFetch = createMockFetch([
+        mock402Response(providerAddress, '10000000'),
+        mockResponse(200),
+      ]);
+
+      const partialConfig = new X402Adapter(requesterAddress, {
+        ...defaultConfig,
+        relayAddress,
+        // no approveFn, no relayPayFn
+        fetchFn: mockFetch,
+      });
+
+      const result = await partialConfig.pay({
+        to: 'https://api.example.com/service',
+        amount: '10',
+      });
+
+      expect(result.feeBreakdown).toBeUndefined();
+    });
+
+    it('throws PAYMENT_FAILED when approveFn fails', async () => {
+      const failingApprove: ApproveFunction = async () => {
+        throw new Error('Approve rejected');
+      };
+
+      const mockFetch = createMockFetch([
+        mock402Response(providerAddress, '10000000'),
+      ]);
+
+      const adapterFailApprove = new X402Adapter(requesterAddress, {
+        ...relayConfig,
+        approveFn: failingApprove,
+        fetchFn: mockFetch,
+      });
+
+      await expect(adapterFailApprove.pay({
+        to: 'https://api.example.com/service',
+        amount: '10',
+      })).rejects.toMatchObject({
+        code: X402ErrorCode.PAYMENT_FAILED,
+      });
+    });
+
+    it('throws PAYMENT_FAILED when relayPayFn fails', async () => {
+      const failingRelay: RelayPayFunction = async () => {
+        throw new Error('Relay tx reverted');
+      };
+
+      const mockFetch = createMockFetch([
+        mock402Response(providerAddress, '10000000'),
+      ]);
+
+      const adapterFailRelay = new X402Adapter(requesterAddress, {
+        ...relayConfig,
+        relayPayFn: failingRelay,
+        fetchFn: mockFetch,
+      });
+
+      await expect(adapterFailRelay.pay({
+        to: 'https://api.example.com/service',
+        amount: '10',
+      })).rejects.toMatchObject({
+        code: X402ErrorCode.PAYMENT_FAILED,
+      });
     });
   });
 });

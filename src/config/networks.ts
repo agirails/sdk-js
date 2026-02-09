@@ -32,6 +32,7 @@ export interface NetworkConfig {
     agentRegistry?: string; // AIP-7 Agent Registry (optional until deployed)
     identityRegistry?: string; // AIP-7 ERC-1056 DID Registry (optional until deployed)
     archiveTreasury?: string; // AIP-7 Archive Treasury for Arweave funding (optional until deployed)
+    x402Relay?: string; // X402Relay for atomic payment fee splitting (optional until deployed)
   };
   eas: {
     deliverySchemaUID: string; // AIP-4 delivery proof schema
@@ -71,7 +72,9 @@ export const BASE_SEPOLIA: NetworkConfig = {
     // AIP-7 Identity Registry - ERC-1056 DID Registry (deployed 2026-01-09)
     identityRegistry: '0xF64F748C7802a68Cb936a9213881fE74e83FDA97',
     // AIP-7 Archive Treasury - Arweave funding (deployed 2026-01-09)
-    archiveTreasury: '0xeB75DE7cF5ce77ab15BB0fFa3a2A79e6aaa554B0'
+    archiveTreasury: '0xeB75DE7cF5ce77ab15BB0fFa3a2A79e6aaa554B0',
+    // X402Relay - atomic payment fee splitting (TODO: deploy and set address)
+    // x402Relay: '0x...',
   },
   eas: {
     // Deployed 2025-11-23 - AIP-4 delivery proof schema
@@ -105,7 +108,9 @@ export const BASE_MAINNET: NetworkConfig = {
     easSchemaRegistry: '0x4200000000000000000000000000000000000020',
     // AIP-7 contracts
     agentRegistry: '0xbf9Aa0FC291A06A4dFA943c3E0Ad41E7aE20DF02',
-    archiveTreasury: '0x64B8f93fef2D2E749F5E88586753343F73246012'
+    archiveTreasury: '0x64B8f93fef2D2E749F5E88586753343F73246012',
+    // X402Relay - atomic payment fee splitting (TODO: deploy and set address)
+    // x402Relay: '0x...',
   },
   eas: {
     // Registered 2026-02-03
@@ -159,7 +164,8 @@ export function getNetwork(network: string): NetworkConfig {
       easSchemaRegistry: config.contracts.easSchemaRegistry,
       agentRegistry: config.contracts.agentRegistry,
       identityRegistry: config.contracts.identityRegistry,
-      archiveTreasury: config.contracts.archiveTreasury
+      archiveTreasury: config.contracts.archiveTreasury,
+      x402Relay: config.contracts.x402Relay
     },
     eas: {
       deliverySchemaUID: config.eas.deliverySchemaUID,
