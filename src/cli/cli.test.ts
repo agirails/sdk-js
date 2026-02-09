@@ -1220,3 +1220,81 @@ describe('CLI Command Structure', () => {
     expect(subcommandNames).toContain('set');
   });
 });
+
+// ============================================================================
+// AIP-12: Auto-mode Address Config Tests (ISSUE-005)
+// ============================================================================
+
+describe('AIP-12: Auto-mode Config', () => {
+  describe('smartWallet and registered fields', () => {
+    it('should persist smartWallet field in config', () => {
+      const config: CLIConfig = {
+        mode: 'testnet',
+        address: '0x1111111111111111111111111111111111111111',
+        version: '1.0',
+        smartWallet: '0x2222222222222222222222222222222222222222',
+        registered: true,
+      };
+
+      saveConfig(config, testDir);
+      const loaded = loadConfig(testDir);
+
+      expect(loaded.smartWallet).toBe('0x2222222222222222222222222222222222222222');
+      expect(loaded.registered).toBe(true);
+    });
+
+    it('should handle config without smartWallet (backward compat)', () => {
+      const config: CLIConfig = {
+        mode: 'mock',
+        address: '0x1111111111111111111111111111111111111111',
+        version: '1.0',
+      };
+
+      saveConfig(config, testDir);
+      const loaded = loadConfig(testDir);
+
+      expect(loaded.smartWallet).toBeUndefined();
+      expect(loaded.registered).toBeUndefined();
+    });
+
+    it('should store EOA as address when not registered', () => {
+      const eoaAddress = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+      const smartWalletAddress = '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+
+      const config: CLIConfig = {
+        mode: 'testnet',
+        address: eoaAddress, // EOA when not registered
+        version: '1.0',
+        smartWallet: smartWalletAddress,
+        registered: false,
+      };
+
+      saveConfig(config, testDir);
+      const loaded = loadConfig(testDir);
+
+      // address should be EOA (not Smart Wallet)
+      expect(loaded.address).toBe(eoaAddress);
+      // smartWallet is still available for later registration
+      expect(loaded.smartWallet).toBe(smartWalletAddress);
+      expect(loaded.registered).toBe(false);
+    });
+
+    it('should store Smart Wallet as address when registered', () => {
+      const smartWalletAddress = '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+
+      const config: CLIConfig = {
+        mode: 'testnet',
+        address: smartWalletAddress, // Smart Wallet when registered
+        version: '1.0',
+        smartWallet: smartWalletAddress,
+        registered: true,
+      };
+
+      saveConfig(config, testDir);
+      const loaded = loadConfig(testDir);
+
+      expect(loaded.address).toBe(smartWalletAddress);
+      expect(loaded.registered).toBe(true);
+    });
+  });
+});
