@@ -660,6 +660,82 @@ describe('ACTPKernel', () => {
   });
 });
 
+// ============================================================================
+// Confirmations parameter tests
+// ============================================================================
+
+describe('ACTPKernel confirmations', () => {
+  const KERNEL_ADDRESS = '0xD199070F8e9FB9a127F6Fe730Bc13300B4b3d962';
+
+  it('should default to 2 confirmations', () => {
+    const kernel = new ACTPKernel(KERNEL_ADDRESS, ethers.Wallet.createRandom());
+    // Access private field for testing — confirmations is an internal detail
+    expect((kernel as any).confirmations).toBe(2);
+  });
+
+  it('should accept custom confirmations', () => {
+    const kernel = new ACTPKernel(KERNEL_ADDRESS, ethers.Wallet.createRandom(), undefined, 5);
+    expect((kernel as any).confirmations).toBe(5);
+  });
+
+  it('should accept 1 confirmation', () => {
+    const kernel = new ACTPKernel(KERNEL_ADDRESS, ethers.Wallet.createRandom(), undefined, 1);
+    expect((kernel as any).confirmations).toBe(1);
+  });
+
+  it('should reject 0 confirmations', () => {
+    expect(() => {
+      new ACTPKernel(KERNEL_ADDRESS, ethers.Wallet.createRandom(), undefined, 0);
+    }).toThrow('confirmations must be >= 1');
+  });
+
+  it('should reject negative confirmations', () => {
+    expect(() => {
+      new ACTPKernel(KERNEL_ADDRESS, ethers.Wallet.createRandom(), undefined, -1);
+    }).toThrow('confirmations must be >= 1');
+  });
+
+  it('should pass confirmations to tx.wait()', async () => {
+    const kernel = new ACTPKernel(KERNEL_ADDRESS, ethers.Wallet.createRandom(), undefined, 3);
+
+    // Stub the internal contract
+    const mockWait = jest.fn().mockResolvedValue(undefined);
+    const mockTxFunc = jest.fn().mockResolvedValue({ wait: mockWait });
+    (mockTxFunc as any).estimateGas = jest.fn().mockResolvedValue(100000n);
+
+    const mockContract = {
+      getFunction: jest.fn().mockReturnValue(mockTxFunc),
+      getTransaction: jest.fn().mockResolvedValue({
+        requester: '0x1111111111111111111111111111111111111111',
+        provider: '0x2222222222222222222222222222222222222222',
+        amount: 100000000n,
+        state: 3n, // IN_PROGRESS
+        deadline: BigInt(Math.floor(Date.now() / 1000) + 86400),
+        disputeWindow: 172800n,
+        createdAt: BigInt(Math.floor(Date.now() / 1000)),
+        updatedAt: BigInt(Math.floor(Date.now() / 1000)),
+        escrowContract: ethers.ZeroAddress,
+        escrowId: ethers.ZeroHash,
+        serviceHash: ethers.ZeroHash,
+        attestationUID: ethers.ZeroHash,
+        platformFeeBpsLocked: 100n
+      }),
+    };
+
+    // Replace internal contract
+    (kernel as any).contract = mockContract;
+
+    // Call transitionState (IN_PROGRESS → DELIVERED is valid)
+    await kernel.transitionState(
+      '0xabcd1234567890abcd1234567890abcd1234567890abcd1234567890abcd1234',
+      4 // DELIVERED
+    );
+
+    // Verify tx.wait was called with 3 (our custom confirmations)
+    expect(mockWait).toHaveBeenCalledWith(3);
+  });
+});
+
 describe('ACTPKernel edge cases', () => {
   it('should handle BigInt overflow detection', async () => {
     // Should not overflow with BigInt arithmetic

@@ -37,14 +37,25 @@ interface GasOptions {
 export class ACTPKernel {
   private contract: Contract;
   private readonly gasSettings?: GasOptions;
+  /**
+   * Number of block confirmations to wait after each state-changing tx.
+   * Default: 2 (Base L2 reorg safety — ~4-6 s on Base's 2 s blocks).
+   * Set to 1 for faster feedback on testnet; never set to 0 in production.
+   */
+  private readonly confirmations: number;
 
   constructor(
     private readonly address: string,
     signer: Signer,
-    gasSettings?: GasOptions
+    gasSettings?: GasOptions,
+    confirmations: number = 2
   ) {
+    if (confirmations < 1) {
+      throw new Error(`confirmations must be >= 1, got ${confirmations}`);
+    }
     this.contract = new Contract(address, ACTPKernelABI, signer);
     this.gasSettings = gasSettings;
+    this.confirmations = confirmations;
   }
 
   /**
@@ -213,7 +224,7 @@ export class ACTPKernel {
         txOptions
       );
 
-      const receipt = await tx.wait(2); // Wait for 2 confirmations (Base L2 reorg safety)
+      const receipt = await tx.wait(this.confirmations);
       if (!receipt) {
         throw new Error('Transaction receipt not available');
       }
@@ -280,7 +291,7 @@ export class ACTPKernel {
 
       const tx = await transitionFunc(txId, newState, proof, txOptions);
 
-      await tx.wait(2); // Wait for 2 confirmations (Base L2 reorg safety)
+      await tx.wait(this.confirmations);
     } catch (error: any) {
       throw new TransactionRevertedError(error.transactionHash, error.reason || error.message);
     }
@@ -400,8 +411,7 @@ export class ACTPKernel {
 
       const tx = await linkEscrowFunc(txId, escrowContract, escrowId, txOptions);
 
-      // Wait for 2 confirmations to ensure state is updated on RPC nodes (Base Sepolia reorg safety)
-      await tx.wait(2);
+      await tx.wait(this.confirmations);
     } catch (error: any) {
       throw new TransactionRevertedError(error.transactionHash, error.reason || error.message);
     }
@@ -437,7 +447,7 @@ export class ACTPKernel {
 
       const tx = await releaseMilestoneFunc(txId, amount, txOptions);
 
-      await tx.wait(2); // Wait for 2 confirmations (Base L2 reorg safety)
+      await tx.wait(this.confirmations);
     } catch (error: any) {
       throw new TransactionRevertedError(error.transactionHash, error.reason || error.message);
     }
@@ -521,7 +531,7 @@ export class ACTPKernel {
 
       const tx = await releaseEscrowFunc(txId, txOptions);
 
-      await tx.wait(2); // Wait for 2 confirmations (Base L2 reorg safety)
+      await tx.wait(this.confirmations);
     } catch (error: any) {
       throw new TransactionRevertedError(error.transactionHash, error.reason || error.message);
     }
@@ -669,7 +679,7 @@ export class ACTPKernel {
         txOptions
       );
 
-      await tx.wait(2); // Wait for 2 confirmations (Base L2 reorg safety)
+      await tx.wait(this.confirmations);
     } catch (error: any) {
       throw new TransactionRevertedError(error.transactionHash, error.reason || error.message);
     }
@@ -735,7 +745,7 @@ export class ACTPKernel {
         txOptions
       );
 
-      await tx.wait(2); // Wait for 2 confirmations (Base L2 reorg safety)
+      await tx.wait(this.confirmations);
     } catch (error: any) {
       throw new TransactionRevertedError(error.transactionHash, error.reason || error.message);
     }
@@ -789,7 +799,7 @@ export class ACTPKernel {
         txOptions
       );
 
-      await tx.wait(2); // Wait for 2 confirmations (Base L2 reorg safety)
+      await tx.wait(this.confirmations);
     } catch (error: any) {
       throw new TransactionRevertedError(error.transactionHash, error.reason || error.message);
     }
