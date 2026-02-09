@@ -14,8 +14,6 @@ import {
   withRetryResult,
   isRetryableError,
   calculateBackoffDelay,
-  RetryOptions,
-  RetryResult
 } from './retry';
 import { StorageRateLimitError } from '../errors';
 

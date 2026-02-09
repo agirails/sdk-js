@@ -13,7 +13,7 @@
 
 import { readFileSync, writeFileSync } from 'fs';
 import { Signer, keccak256, toUtf8Bytes } from 'ethers';
-import { parseAgirailsMd, computeConfigHash, computeConfigHashFromParts, serializeAgirailsMd } from './agirailsmd';
+import { parseAgirailsMd, computeConfigHash, serializeAgirailsMd } from './agirailsmd';
 import { AgentRegistryClient } from '../registry/AgentRegistryClient';
 import { AgentRegistry } from '../protocol/AgentRegistry';
 import { FilebaseClient } from '../storage/FilebaseClient';

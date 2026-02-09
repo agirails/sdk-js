@@ -19,7 +19,7 @@ import {
   signUserOp,
   serializeUserOp,
 } from './UserOpBuilder';
-import { SmartWalletCall, SMART_WALLET_FACTORY, ENTRYPOINT_V06 } from './constants';
+import { SmartWalletCall, SMART_WALLET_FACTORY } from './constants';
 
 const TEST_SIGNER = '0x' + '11'.repeat(20);
 const TEST_SENDER = '0x' + '22'.repeat(20);

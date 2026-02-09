@@ -1217,7 +1217,7 @@ export class ACTPClient {
         })
         .then((result) => {
           if (result) {
-            console.log(
+            sdkLogger.info(
               `[ERC8004] Settlement reported for agent ${agentId}: ${result.txHash}`
             );
           }
@@ -1340,12 +1340,12 @@ export class ACTPClient {
 
       if (onChainState.configHash === ZERO_HASH) {
         if (isTemplate) {
-          console.info('[AGIRAILS] AGIRAILS.md loaded (template mode). Run "actp publish" to register and sync on-chain.');
+          sdkLogger.info('[AGIRAILS] AGIRAILS.md loaded (template mode). Run "actp publish" to register and sync on-chain.');
         } else {
-          console.warn('[AGIRAILS] Config not published on-chain. Run: actp publish');
+          sdkLogger.warn('[AGIRAILS] Config not published on-chain. Run: actp publish');
         }
       } else if (onChainState.configHash !== localHash) {
-        console.warn('[AGIRAILS] Local AGIRAILS.md differs from on-chain. Run: actp diff');
+        sdkLogger.warn('[AGIRAILS] Local AGIRAILS.md differs from on-chain. Run: actp diff');
       }
     } catch {
       // Silently ignore — drift detection is best-effort

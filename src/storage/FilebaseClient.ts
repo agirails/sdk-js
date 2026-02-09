@@ -14,7 +14,7 @@
  * @module storage/FilebaseClient
  */
 
-import { S3Client, PutObjectCommand, GetObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, PutObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
 import {
   StorageError,
   StorageAuthenticationError,
@@ -39,8 +39,6 @@ import {
 import { withRetry, RetryOptions } from '../utils/retry';
 import {
   GatewayCircuitBreaker,
-  CircuitBreakerConfig,
-  globalCircuitBreaker
 } from '../utils/circuitBreaker';
 
 // ============================================================================
@@ -329,6 +327,7 @@ export class FilebaseClient {
           const chunks: Uint8Array[] = [];
           let totalSize = 0;
 
+          // eslint-disable-next-line no-constant-condition
           while (true) {
             const { done, value } = await reader.read();
             if (done) break;
@@ -516,6 +515,7 @@ export class FilebaseClient {
           const chunks: Uint8Array[] = [];
           let totalSize = 0;
 
+          // eslint-disable-next-line no-constant-condition
           while (true) {
             const { done, value } = await reader.read();
             if (done) break;

@@ -14,8 +14,6 @@ import {
   GatewayCircuitBreaker,
   withCircuitBreaker,
   globalCircuitBreaker,
-  CircuitState,
-  CircuitBreakerConfig
 } from './circuitBreaker';
 
 // ============================================================================

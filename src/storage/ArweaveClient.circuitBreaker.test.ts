@@ -14,8 +14,6 @@
 import { ArweaveClient } from './ArweaveClient';
 import {
   ArweaveDownloadError,
-  ArweaveTimeoutError,
-  FileSizeLimitExceededError
 } from '../errors';
 import { ARCHIVE_BUNDLE_TYPE, ArchiveBundle } from './types';
 

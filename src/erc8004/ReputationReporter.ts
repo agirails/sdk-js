@@ -50,6 +50,7 @@ import {
   ERC8004_REPUTATION_ABI,
   ACTP_FEEDBACK_TAGS,
 } from '../types/erc8004';
+import { sdkLogger } from '../utils/Logger';
 
 // ============================================================================
 // Types
@@ -214,9 +215,8 @@ export class ReputationReporter {
       config.registryAddress ?? ERC8004_REPUTATION_REGISTRY[config.network];
 
     if (registryAddress === ethers.ZeroAddress) {
-      console.warn(
-        `[ERC8004] Reputation Registry not deployed on ${config.network}. ` +
-          'Reports will fail.'
+      sdkLogger.warn(
+        `[ERC8004] Reputation Registry not deployed on ${config.network}. Reports will fail.`
       );
     }
 
@@ -257,7 +257,7 @@ export class ReputationReporter {
 
     // Local dedup check
     if (this.reportedTxIds.has(txId)) {
-      console.warn(`[ERC8004] Already reported txId in this session: ${txId}`);
+      sdkLogger.warn(`[ERC8004] Already reported txId in this session: ${txId}`);
       return null;
     }
 
@@ -322,7 +322,7 @@ export class ReputationReporter {
 
     // Local dedup check
     if (this.reportedTxIds.has(txId)) {
-      console.warn(`[ERC8004] Already reported txId in this session: ${txId}`);
+      sdkLogger.warn(`[ERC8004] Already reported txId in this session: ${txId}`);
       return null;
     }
 
@@ -392,9 +392,8 @@ export class ReputationReporter {
         score: Number(summaryValue),
       };
     } catch (error) {
-      console.error(
-        `[ERC8004] getAgentReputation failed for ${agentId}:`,
-        error instanceof Error ? error.message : error
+      sdkLogger.error(
+        `[ERC8004] getAgentReputation failed for ${agentId}: ${error instanceof Error ? error.message : error}`
       );
       return null;
     }
@@ -449,23 +448,20 @@ export class ReputationReporter {
 
     // Check for common error cases
     if (errorMessage.includes('insufficient funds')) {
-      console.error(
-        `[ERC8004] ${method} failed for agent ${agentId}: ` +
-          'Insufficient funds for gas. Signer needs ETH/native token.'
+      sdkLogger.error(
+        `[ERC8004] ${method} failed for agent ${agentId}: Insufficient funds for gas. Signer needs ETH/native token.`
       );
     } else if (errorMessage.includes('cannot be the agent owner')) {
-      console.error(
-        `[ERC8004] ${method} failed for agent ${agentId}: ` +
-          'Caller is agent owner. ERC-8004 requires different address.'
+      sdkLogger.error(
+        `[ERC8004] ${method} failed for agent ${agentId}: Caller is agent owner. ERC-8004 requires different address.`
       );
     } else if (errorMessage.includes('user rejected')) {
-      console.warn(
+      sdkLogger.warn(
         `[ERC8004] ${method} cancelled by user for agent ${agentId}`
       );
     } else {
-      console.error(
-        `[ERC8004] ${method} failed for agent ${agentId} (tx: ${txId}): ` +
-          errorMessage
+      sdkLogger.error(
+        `[ERC8004] ${method} failed for agent ${agentId} (tx: ${txId}): ${errorMessage}`
       );
     }
   }

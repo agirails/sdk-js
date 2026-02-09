@@ -17,7 +17,6 @@ import { AdapterRegistry } from './AdapterRegistry';
 import { IAdapter } from './IAdapter';
 import {
   UnifiedPayParams,
-  UnifiedPayParamsSchema,
   safeValidatePayParams,
 } from '../types/adapter';
 import { ValidationError } from './BaseAdapter';

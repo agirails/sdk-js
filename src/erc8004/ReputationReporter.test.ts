@@ -12,7 +12,6 @@
 
 import {
   ReputationReporter,
-  ReputationReporterConfig,
   IERC8004ReputationRegistry,
 } from './ReputationReporter';
 import { ACTP_FEEDBACK_TAGS } from '../types/erc8004';

@@ -320,7 +320,7 @@ export async function validateEndpointURL(endpoint: string, fieldName: string = 
  * @param fieldName - Field name for error messages
  * @throws {InvalidCIDError} If CID is invalid
  */
-export function validateCID(cid: string, fieldName: string = 'cid'): void {
+export function validateCID(cid: string, _fieldName: string = 'cid'): void {
   if (!cid || typeof cid !== 'string') {
     throw new InvalidCIDError(String(cid), 'CID is required');
   }
@@ -337,7 +337,7 @@ export function validateCID(cid: string, fieldName: string = 'cid'): void {
  * @param fieldName - Field name for error messages
  * @throws {InvalidArweaveTxIdError} If TX ID is invalid
  */
-export function validateArweaveTxId(txId: string, fieldName: string = 'txId'): void {
+export function validateArweaveTxId(txId: string, _fieldName: string = 'txId'): void {
   if (!txId || typeof txId !== 'string') {
     throw new InvalidArweaveTxIdError(String(txId), 'TX ID is required');
   }

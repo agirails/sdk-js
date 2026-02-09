@@ -38,6 +38,7 @@ import {
   ERC8004_IDENTITY_ABI,
   ERC8004_DEFAULT_RPC,
 } from '../types/erc8004';
+import { sdkLogger } from '../utils/Logger';
 
 // ============================================================================
 // Types
@@ -137,7 +138,7 @@ export class ERC8004Bridge {
       config.registryAddress ?? ERC8004_IDENTITY_REGISTRY[config.network];
 
     if (registryAddress === ethers.ZeroAddress) {
-      console.warn(
+      sdkLogger.warn(
         `[ERC8004] Registry not deployed on ${config.network}. Using zero address.`
       );
     }
@@ -327,7 +328,7 @@ export class ERC8004Bridge {
 
       return agentIds;
     } catch (error) {
-      console.warn(`[ERC8004] Failed to get agents for owner ${owner}:`, error);
+      sdkLogger.warn(`[ERC8004] Failed to get agents for owner ${owner}: ${error instanceof Error ? error.message : error}`);
       return [];
     }
   }
@@ -417,7 +418,7 @@ export class ERC8004Bridge {
 
       // Validate URL
       if (!url.startsWith('http://') && !url.startsWith('https://')) {
-        console.warn(`[ERC8004] Invalid agentURI scheme for ${agentId}: ${url}`);
+        sdkLogger.warn(`[ERC8004] Invalid agentURI scheme for ${agentId}: ${url}`);
         return undefined;
       }
 
@@ -434,7 +435,7 @@ export class ERC8004Bridge {
         clearTimeout(timeoutId);
 
         if (!response.ok) {
-          console.warn(
+          sdkLogger.warn(
             `[ERC8004] Metadata fetch failed for ${agentId}: HTTP ${response.status}`
           );
           return undefined;
@@ -454,7 +455,7 @@ export class ERC8004Bridge {
             : error.message
           : 'unknown error';
 
-      console.warn(`[ERC8004] Metadata fetch failed for ${agentId}: ${errorMessage}`);
+      sdkLogger.warn(`[ERC8004] Metadata fetch failed for ${agentId}: ${errorMessage}`);
       return undefined;
     }
   }
