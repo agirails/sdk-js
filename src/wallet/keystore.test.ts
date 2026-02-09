@@ -151,7 +151,7 @@ describe('Keystore Resolution', () => {
 
       const start = Date.now();
       const key1 = await resolvePrivateKey(testDir);
-      const firstCallMs = Date.now() - start;
+      const _firstCallMs = Date.now() - start;
 
       const start2 = Date.now();
       const key2 = await resolvePrivateKey(testDir);

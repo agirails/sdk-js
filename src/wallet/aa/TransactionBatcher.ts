@@ -16,8 +16,6 @@ import { ethers } from 'ethers';
 import { SmartWalletCall } from './constants';
 import { ServiceDescriptor } from '../../types/agent';
 
-const abiCoder = ethers.AbiCoder.defaultAbiCoder();
-
 // ============================================================================
 // ABI fragments — minimal for encoding only
 // ============================================================================

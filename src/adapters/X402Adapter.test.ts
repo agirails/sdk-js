@@ -19,7 +19,6 @@ import {
 } from './X402Adapter';
 import { ValidationError } from './BaseAdapter';
 import {
-  X402Error,
   X402ErrorCode,
   X402_HEADERS,
   X402_PROOF_HEADERS,
@@ -765,7 +764,7 @@ describe('X402Adapter', () => {
         mockResponse(200),
       ]);
 
-      const { platformFeeBps, ...configWithoutBps } = relayConfig;
+      const { platformFeeBps: _platformFeeBps, ...configWithoutBps } = relayConfig;
       const adapterNoBps = new X402Adapter(requesterAddress, {
         ...configWithoutBps,
         fetchFn: mockFetch,

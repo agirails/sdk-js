@@ -13,7 +13,6 @@
 
 import {
   ERC8004Bridge,
-  ERC8004BridgeConfig,
   IERC8004IdentityRegistry,
 } from './ERC8004Bridge';
 import { ERC8004Error, ERC8004ErrorCode } from '../types/erc8004';

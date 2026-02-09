@@ -15,7 +15,6 @@ import {
   canonicalize,
   stripPublishMetadata,
   PUBLISH_METADATA_KEYS,
-  AgirailsMdConfig,
 } from './agirailsmd';
 
 // ============================================================================

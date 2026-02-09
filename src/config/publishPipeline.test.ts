@@ -9,8 +9,7 @@
  */
 
 import { keccak256, toUtf8Bytes } from 'ethers';
-import { publishAgirailsMd, PublishOptions, PENDING_ENDPOINT } from './publishPipeline';
-import { computeConfigHash, parseAgirailsMd } from './agirailsmd';
+import { publishAgirailsMd, PENDING_ENDPOINT } from './publishPipeline';
 import * as fs from 'fs';
 
 // ============================================================================

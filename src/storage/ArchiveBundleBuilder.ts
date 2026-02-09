@@ -15,14 +15,12 @@ import { ValidationError } from '../errors';
 import {
   ArchiveBundle,
   ArchiveChainId,
-  ArchiveFinalState,
   ArchiveParticipants,
   ArchiveReferences,
   ArchiveHashes,
   ArchiveSignatures,
   ArchiveAttestation,
   ArchiveSettlement,
-  EscrowRelease,
   ARCHIVE_BUNDLE_TYPE
 } from './types';
 

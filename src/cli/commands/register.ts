@@ -16,7 +16,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { Command } from 'commander';
 import { Output, ExitCode } from '../utils/output';
-import { loadConfig, updateConfig, getActpDir } from '../utils/config';
+import { loadConfig, updateConfig } from '../utils/config';
 import { resolvePrivateKey } from '../../wallet/keystore';
 
 // ============================================================================

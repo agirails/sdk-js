@@ -8,7 +8,7 @@
  */
 
 import { diff, pull, DiffOptions, PullOptions } from './syncOperations';
-import { computeConfigHash, serializeAgirailsMd } from './agirailsmd';
+import { computeConfigHash } from './agirailsmd';
 import * as fs from 'fs';
 
 // ============================================================================
@@ -61,16 +61,6 @@ capabilities:
 
 const SAMPLE_HASH = computeConfigHash(SAMPLE_MD).configHash;
 
-const SAMPLE_MD_WITH_CONFIG_HASH = `---
-name: test-agent
-version: "1.0.0"
-capabilities:
-  - text-generation
-config_hash: "${SAMPLE_HASH}"
----
-# Test Agent
-`;
-
 // Different content (simulates local edit)
 const EDITED_MD = `---
 name: test-agent
@@ -81,8 +71,6 @@ capabilities:
 ---
 # Test Agent (edited)
 `;
-
-const EDITED_HASH = computeConfigHash(EDITED_MD).configHash;
 
 function defaultDiffOptions(overrides: Partial<DiffOptions> = {}): DiffOptions {
   return {

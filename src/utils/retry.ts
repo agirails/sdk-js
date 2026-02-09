@@ -236,7 +236,6 @@ export async function withRetry<T>(
   } = options;
 
   let lastError: unknown;
-  const startTime = Date.now();
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {

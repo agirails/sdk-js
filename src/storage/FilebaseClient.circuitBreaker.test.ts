@@ -15,8 +15,6 @@ import { FilebaseClient } from './FilebaseClient';
 import {
   StorageError,
   ContentNotFoundError,
-  DownloadTimeoutError,
-  FileSizeLimitExceededError
 } from '../errors';
 
 // ============================================================================
@@ -41,9 +39,6 @@ global.fetch = mockFetch;
 
 // Valid IPFS CID (CIDv1, base32)
 const VALID_CID = 'bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi';
-
-// Default gateway URL used by FilebaseClient
-const DEFAULT_GATEWAY = 'https://ipfs.filebase.io/ipfs/';
 
 // Helper to create mock Response with streaming body
 const createMockResponse = (data: unknown, status = 200, statusText = 'OK') => {
