@@ -103,8 +103,8 @@ export const BASE_SEPOLIA: NetworkConfig = {
     identityRegistry: '0xF64F748C7802a68Cb936a9213881fE74e83FDA97',
     // AIP-7 Archive Treasury - Arweave funding (deployed 2026-01-09)
     archiveTreasury: '0xeB75DE7cF5ce77ab15BB0fFa3a2A79e6aaa554B0',
-    // X402Relay - atomic payment fee splitting (TODO: deploy and set address)
-    // x402Relay: '0x...',
+    // X402Relay - atomic payment fee splitting (deployed 2026-02-09)
+    x402Relay: '0x4DCD02b276Dbeab57c265B72435e90507b6Ac81A',
   },
   eas: {
     // Deployed 2025-11-23 - AIP-4 delivery proof schema
@@ -155,8 +155,8 @@ export const BASE_MAINNET: NetworkConfig = {
     // AIP-7 contracts (redeployed 2026-02-09)
     agentRegistry: '0x6fB222CF3DDdf37Bcb248EE7BBBA42Fb41901de8',
     archiveTreasury: '0x0516C411C0E8d75D17A768022819a0a4FB3cA2f2',
-    // X402Relay - atomic payment fee splitting (TODO: deploy and set address)
-    // x402Relay: '0x...',
+    // X402Relay - atomic payment fee splitting (deployed 2026-02-09)
+    x402Relay: '0x81DFb954A3D58FEc24Fc9c946aC2C71a911609F8',
   },
   eas: {
     // Registered 2026-02-03
