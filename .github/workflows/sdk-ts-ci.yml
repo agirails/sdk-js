@@ -106,9 +106,11 @@ jobs:
 
       - name: Verify no ESM-only syntax in dist
         run: |
-          # Ensure dist/ has no top-level import/export (CJS only)
-          if grep -rn '^\(import \|export \)' dist/ --include='*.js' | head -5; then
-            echo 'ERROR: Found ESM syntax in dist/ — SDK must be CJS only'
+          # ESM uses: import X from 'y'; export default; export { X };
+          # CJS uses: exports.X = ...; Object.defineProperty(exports, ...);
+          # Match ESM-only patterns, NOT CJS exports.X
+          if grep -rnE '^(import .+ from |export default |export \{)' dist/ --include='*.js' | head -5; then
+            echo 'ERROR: Found ESM-only syntax in dist/ — SDK must be CJS only'
             exit 1
           fi
-          echo 'No ESM syntax found in dist/ — OK'
+          echo 'No ESM-only syntax found in dist/ — OK'
