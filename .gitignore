@@ -44,3 +44,5 @@ CLAUDE.md
 .claude/
 deliverables/
 *.png
+docs/OPS-PLAYBOOK.md
+docs/PRODUCTION-SIGNOFF.md

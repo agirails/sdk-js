@@ -21,8 +21,8 @@ const BASE_MAINNET_RPC_URL = process.env.BASE_MAINNET_RPC || 'https://mainnet.ba
 const CDP_CLIENT_KEY = process.env.CDP_API_KEY || '2txciN85t41erCjveqgNnXYyHRcoo5xP';
 
 // Pimlico failover — bundler/paymaster backup if Coinbase CDP is down.
-// Developers can override with their own key via PIMLICO_API_KEY env var.
-const PIMLICO_KEY = process.env.PIMLICO_API_KEY || 'pim_YiHmeAijzTPUvo1UMmXUiN';
+// Set PIMLICO_API_KEY env var to enable Pimlico as a backup provider.
+const PIMLICO_KEY = process.env.PIMLICO_API_KEY;
 
 /**
  * Network configuration
@@ -122,13 +122,13 @@ export const BASE_SEPOLIA: NetworkConfig = {
       // Coinbase CDP bundler — set CDP_API_KEY env var
       coinbase: process.env.CDP_BUNDLER_URL || `https://api.developer.coinbase.com/rpc/v1/base-sepolia/${CDP_CLIENT_KEY}`,
       // Pimlico backup bundler — set PIMLICO_API_KEY env var
-      pimlico: process.env.PIMLICO_BUNDLER_URL || `https://api.pimlico.io/v2/84532/rpc?apikey=${PIMLICO_KEY}`,
+      pimlico: process.env.PIMLICO_BUNDLER_URL || (PIMLICO_KEY ? `https://api.pimlico.io/v2/84532/rpc?apikey=${PIMLICO_KEY}` : undefined),
     },
     paymasterUrls: {
       // Coinbase CDP paymaster — same endpoint as bundler
       coinbase: process.env.CDP_PAYMASTER_URL || `https://api.developer.coinbase.com/rpc/v1/base-sepolia/${CDP_CLIENT_KEY}`,
       // Pimlico failover paymaster
-      pimlico: process.env.PIMLICO_PAYMASTER_URL || `https://api.pimlico.io/v2/84532/rpc?apikey=${PIMLICO_KEY}`,
+      pimlico: process.env.PIMLICO_PAYMASTER_URL || (PIMLICO_KEY ? `https://api.pimlico.io/v2/84532/rpc?apikey=${PIMLICO_KEY}` : undefined),
     },
   },
 };
@@ -179,12 +179,12 @@ export const BASE_MAINNET: NetworkConfig = {
     bundlerUrls: {
       coinbase: process.env.CDP_BUNDLER_URL || `https://api.developer.coinbase.com/rpc/v1/base/${CDP_CLIENT_KEY}`,
       // Pimlico backup bundler — set PIMLICO_API_KEY env var
-      pimlico: process.env.PIMLICO_BUNDLER_URL || `https://api.pimlico.io/v2/8453/rpc?apikey=${PIMLICO_KEY}`,
+      pimlico: process.env.PIMLICO_BUNDLER_URL || (PIMLICO_KEY ? `https://api.pimlico.io/v2/8453/rpc?apikey=${PIMLICO_KEY}` : undefined),
     },
     paymasterUrls: {
       coinbase: process.env.CDP_PAYMASTER_URL || `https://api.developer.coinbase.com/rpc/v1/base/${CDP_CLIENT_KEY}`,
       // Pimlico failover paymaster
-      pimlico: process.env.PIMLICO_PAYMASTER_URL || `https://api.pimlico.io/v2/8453/rpc?apikey=${PIMLICO_KEY}`,
+      pimlico: process.env.PIMLICO_PAYMASTER_URL || (PIMLICO_KEY ? `https://api.pimlico.io/v2/8453/rpc?apikey=${PIMLICO_KEY}` : undefined),
     },
   },
 };
