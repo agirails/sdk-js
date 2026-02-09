@@ -26,6 +26,8 @@ export { StandardAdapter, StandardTransactionParams } from './StandardAdapter';
 export {
   X402Adapter,
   X402AdapterConfig,
+  X402PayParams,
+  X402HttpMethod,
   FetchFunction,
   ApproveFunction,
   RelayPayFunction,
