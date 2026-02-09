@@ -21,7 +21,7 @@ const BASE_MAINNET_RPC_URL = process.env.BASE_MAINNET_RPC || 'https://mainnet.ba
 const CDP_CLIENT_KEY = process.env.CDP_API_KEY || '2txciN85t41erCjveqgNnXYyHRcoo5xP';
 
 // Pimlico failover — bundler/paymaster backup if Coinbase CDP is down.
-// Safe to embed: restricted by origin/IP policy on Pimlico dashboard.
+// Safe to embed: restricted by contract allowlist (AGIRAILS contracts only).
 // Developers can override with their own key via PIMLICO_API_KEY env var.
 const PIMLICO_KEY = process.env.PIMLICO_API_KEY || 'pim_YiHmeAijzTPUvo1UMmXUiN';
 
