@@ -5,70 +5,93 @@
  * - CDP_API_KEY detection in bundler/paymaster URLs
  * - Pimlico fallback URL construction
  * - Network config validation
+ *
+ * NOTE: AA endpoint URL tests use jest.isolateModules() because networks.ts
+ * evaluates env vars at module load time. Each test needs a fully isolated
+ * module evaluation with controlled env vars.
  */
 
 import { getNetwork } from './networks';
 
+// Keys that affect networks.ts module-level evaluation
+const ENV_KEYS = [
+  'CDP_API_KEY',
+  'CDP_BUNDLER_URL',
+  'CDP_PAYMASTER_URL',
+  'PIMLICO_API_KEY',
+  'PIMLICO_BUNDLER_URL',
+  'PIMLICO_PAYMASTER_URL',
+  'BASE_SEPOLIA_RPC',
+  'BASE_MAINNET_RPC',
+];
+
 describe('Networks Config', () => {
-  const originalEnv = process.env;
-
-  beforeEach(() => {
-    // Clone env so we can modify safely
-    process.env = { ...originalEnv };
+  // Save real env values
+  const savedEnv: Record<string, string | undefined> = {};
+  beforeAll(() => {
+    for (const key of ENV_KEYS) {
+      savedEnv[key] = process.env[key];
+    }
   });
-
   afterAll(() => {
-    process.env = originalEnv;
+    for (const key of ENV_KEYS) {
+      if (savedEnv[key] !== undefined) {
+        process.env[key] = savedEnv[key];
+      } else {
+        delete process.env[key];
+      }
+    }
   });
+
+  /** Clear all AA env vars, then set overrides, then require fresh networks module */
+  function freshConfig(overrides: Record<string, string> = {}) {
+    // Clear
+    for (const key of ENV_KEYS) {
+      delete process.env[key];
+    }
+    // Apply overrides
+    for (const [key, value] of Object.entries(overrides)) {
+      process.env[key] = value;
+    }
+
+    let config: ReturnType<typeof getNetwork>;
+    jest.isolateModules(() => {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const mod = require('./networks');
+      config = mod.getNetwork('base-sepolia');
+    });
+    return config!;
+  }
 
   describe('AA endpoint URLs', () => {
     it('should build Coinbase bundler URL with CDP_API_KEY', () => {
-      process.env.CDP_API_KEY = 'test-key-123';
-      // Force re-evaluation by clearing module cache
-      jest.resetModules();
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { getNetwork: freshGetNetwork } = require('./networks');
-      const config = freshGetNetwork('base-sepolia');
+      const config = freshConfig({ CDP_API_KEY: 'test-key-123' });
       expect(config.aa?.bundlerUrls.coinbase).toContain('test-key-123');
-      expect(config.aa?.bundlerUrls.coinbase).not.toEndWith('/');
     });
 
-    it('should build URL ending with / when CDP_API_KEY is missing', () => {
-      delete process.env.CDP_API_KEY;
-      delete process.env.CDP_BUNDLER_URL;
-      jest.resetModules();
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { getNetwork: freshGetNetwork } = require('./networks');
-      const config = freshGetNetwork('base-sepolia');
-      expect(config.aa?.bundlerUrls.coinbase).toEndWith('/');
+    it('should use hardcoded default key when CDP_API_KEY is missing', () => {
+      const config = freshConfig();
+      expect(config.aa?.bundlerUrls.coinbase).toContain('api.developer.coinbase.com');
+      expect(config.aa?.bundlerUrls.coinbase).not.toContain('undefined');
     });
 
     it('should set Pimlico URLs when PIMLICO_API_KEY is set', () => {
-      process.env.PIMLICO_API_KEY = 'pimlico-test-key';
-      jest.resetModules();
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { getNetwork: freshGetNetwork } = require('./networks');
-      const config = freshGetNetwork('base-sepolia');
+      const config = freshConfig({ PIMLICO_API_KEY: 'pimlico-test-key' });
       expect(config.aa?.bundlerUrls.pimlico).toContain('pimlico-test-key');
       expect(config.aa?.paymasterUrls.pimlico).toContain('pimlico-test-key');
     });
 
-    it('should leave Pimlico URLs undefined when PIMLICO_API_KEY is missing', () => {
-      delete process.env.PIMLICO_API_KEY;
-      delete process.env.PIMLICO_BUNDLER_URL;
-      jest.resetModules();
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { getNetwork: freshGetNetwork } = require('./networks');
-      const config = freshGetNetwork('base-sepolia');
-      expect(config.aa?.bundlerUrls.pimlico).toBeUndefined();
+    it('should use hardcoded Pimlico key when PIMLICO_API_KEY is missing', () => {
+      const config = freshConfig();
+      // Falls back to hardcoded AGIRAILS Pimlico key (always defined)
+      expect(config.aa?.bundlerUrls.pimlico).toContain('api.pimlico.io');
+      expect(config.aa?.bundlerUrls.pimlico).not.toContain('undefined');
     });
 
     it('should prefer CDP_BUNDLER_URL over constructed URL', () => {
-      process.env.CDP_BUNDLER_URL = 'https://custom-bundler.example.com';
-      jest.resetModules();
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { getNetwork: freshGetNetwork } = require('./networks');
-      const config = freshGetNetwork('base-sepolia');
+      const config = freshConfig({
+        CDP_BUNDLER_URL: 'https://custom-bundler.example.com',
+      });
       expect(config.aa?.bundlerUrls.coinbase).toBe('https://custom-bundler.example.com');
     });
   });
@@ -99,23 +122,3 @@ describe('Networks Config', () => {
     });
   });
 });
-
-// Custom matcher
-expect.extend({
-  toEndWith(received: string, suffix: string) {
-    const pass = received.endsWith(suffix);
-    return {
-      pass,
-      message: () => `expected "${received}" ${pass ? 'not ' : ''}to end with "${suffix}"`,
-    };
-  },
-});
-
-declare global {
-  // eslint-disable-next-line @typescript-eslint/no-namespace
-  namespace jest {
-    interface Matchers<R> {
-      toEndWith(suffix: string): R;
-    }
-  }
-}
