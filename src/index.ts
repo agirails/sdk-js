@@ -64,6 +64,12 @@ export {
   StandardTransactionParams,
 } from './adapters/StandardAdapter';
 
+export {
+  X402Adapter,
+  X402AdapterConfig,
+  X402PayParams,
+} from './adapters/X402Adapter';
+
 export { AdapterRegistry } from './adapters/AdapterRegistry';
 
 export {
