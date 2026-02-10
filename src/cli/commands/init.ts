@@ -414,7 +414,8 @@ async function runInlineRegistration(
     const { ethers } = await import('ethers');
     const { getNetwork } = await import('../../config/networks');
     const { AutoWalletProvider } = await import('../../wallet/AutoWalletProvider');
-    const { buildRegisterAgentBatch, buildTestnetInitBatch } = await import('../../wallet/aa/TransactionBatcher');
+    const { buildRegisterAgentBatch, buildTestnetInitBatch, buildTestnetMintBatch } = await import('../../wallet/aa/TransactionBatcher');
+    const { sdkLogger } = await import('../../utils/Logger');
 
     // Parse AGIRAILS.md if present
     const agirailsMdPath = path.join(projectRoot, 'AGIRAILS.md');
@@ -479,11 +480,13 @@ async function runInlineRegistration(
 
     const smartWalletAddress = autoWallet.getAddress();
 
-    // Build batch
-    let calls;
+    // Build and submit registration batch
     if (mode === 'testnet') {
-      output.info('Testnet: registering + minting 1000 test USDC in one gasless tx...');
-      calls = buildTestnetInitBatch({
+      // Testnet: try combined batch first, fall back to separate UserOps
+      // Some paymaster configurations reject multi-target batches in simulation
+      output.info('Testnet: registering + minting 1000 test USDC...');
+
+      const combinedCalls = buildTestnetInitBatch({
         agentRegistryAddress: networkConfig.contracts.agentRegistry,
         endpoint,
         serviceDescriptors,
@@ -491,33 +494,102 @@ async function runInlineRegistration(
         recipient: smartWalletAddress,
         mintAmount: '1000000000',
       });
+
+      let receipt;
+      try {
+        const txRequests = combinedCalls.map((c) => ({
+          to: c.target,
+          data: c.data,
+          value: c.value.toString(),
+        }));
+        receipt = await autoWallet.sendBatchTransaction(txRequests);
+      } catch (combinedError) {
+        // Combined batch failed — split into two separate UserOps
+        output.info('Combined batch failed, trying separate transactions...');
+        sdkLogger.warn('Combined testnet batch failed, splitting', {
+          error: combinedError instanceof Error ? combinedError.message : String(combinedError),
+        });
+
+        // Step 1: Register agent only
+        const registerCalls = buildRegisterAgentBatch(
+          networkConfig.contracts.agentRegistry,
+          endpoint,
+          serviceDescriptors
+        );
+        const registerTxs = registerCalls.map((c) => ({
+          to: c.target,
+          data: c.data,
+          value: c.value.toString(),
+        }));
+
+        const registerReceipt = await autoWallet.sendBatchTransaction(registerTxs);
+        if (!registerReceipt.success) {
+          output.warning(`Registration failed (tx: ${registerReceipt.hash}). Run "actp register" later.`);
+          return false;
+        }
+        output.success('Agent registered on AgentRegistry');
+        output.print(`  Tx: ${registerReceipt.hash}`);
+
+        // Step 2: Mint test USDC
+        try {
+          const mintCalls = buildTestnetMintBatch(
+            networkConfig.contracts.usdc,
+            smartWalletAddress,
+            '1000000000'
+          );
+          const mintTxs = mintCalls.map((c) => ({
+            to: c.target,
+            data: c.data,
+            value: c.value.toString(),
+          }));
+          const mintReceipt = await autoWallet.sendBatchTransaction(mintTxs);
+          if (mintReceipt.success) {
+            output.success('Minted 1,000 test USDC to Smart Wallet');
+            output.print(`  Tx: ${mintReceipt.hash}`);
+          } else {
+            output.warning('USDC mint failed. Mint manually: actp faucet');
+          }
+        } catch (mintError) {
+          output.warning('USDC mint failed. Mint manually: actp faucet');
+          sdkLogger.warn('Testnet mint failed', {
+            error: mintError instanceof Error ? mintError.message : String(mintError),
+          });
+        }
+        return true;
+      }
+
+      if (!receipt.success) {
+        output.warning(`Registration failed (tx: ${receipt.hash}). Run "actp register" later.`);
+        return false;
+      }
+
+      output.success('Agent registered on AgentRegistry');
+      output.success('Minted 1,000 test USDC to Smart Wallet');
+      output.print(`  Tx: ${receipt.hash}`);
     } else {
+      // Mainnet: register only (no minting)
       output.info('Registering on AgentRegistry (gasless)...');
-      calls = buildRegisterAgentBatch(
+      const calls = buildRegisterAgentBatch(
         networkConfig.contracts.agentRegistry,
         endpoint,
         serviceDescriptors
       );
+      const txRequests = calls.map((c) => ({
+        to: c.target,
+        data: c.data,
+        value: c.value.toString(),
+      }));
+
+      const receipt = await autoWallet.sendBatchTransaction(txRequests);
+      if (!receipt.success) {
+        output.warning(`Registration failed (tx: ${receipt.hash}). Run "actp register" later.`);
+        return false;
+      }
+
+      output.success('Agent registered on AgentRegistry');
+      output.print(`  Tx: ${receipt.hash}`);
     }
 
-    const txRequests = calls.map((c) => ({
-      to: c.target,
-      data: c.data,
-      value: c.value.toString(),
-    }));
-
-    const receipt = await autoWallet.sendBatchTransaction(txRequests);
-
-    if (!receipt.success) {
-      output.warning(`Registration failed (tx: ${receipt.hash}). Run "actp register" later.`);
-      return false;
-    }
-
-    output.success('Agent registered on AgentRegistry');
-    if (mode === 'testnet') {
-      output.success('Minted 1,000 test USDC to Smart Wallet');
-    }
-    output.print(`  Tx: ${receipt.hash}`);
     return true;
   } catch (error) {
     output.warning(`Registration failed: ${(error as Error).message}`);
