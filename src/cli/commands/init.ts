@@ -431,6 +431,7 @@ async function runInlineRegistration(
       output.info(`Parsed ${serviceDescriptors.length} service(s) from AGIRAILS.md`);
     } else {
       const serviceType = 'general';
+      endpoint = 'https://agirails.io/agent/pending';
       serviceDescriptors = [{
         serviceTypeHash: ethers.keccak256(ethers.toUtf8Bytes(serviceType)),
         serviceType,

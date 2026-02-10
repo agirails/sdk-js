@@ -141,17 +141,27 @@ export class DualNonceManager {
 
   /**
    * Read current ACTP nonce for the requester.
-   * requesterNonces is public on ACTPKernel.
+   * requesterNonces is public on ACTPKernel (added in v2).
+   * Older deployments may not expose this — fall back to 0n.
    */
   private async readActpNonce(): Promise<bigint> {
-    const kernel = new ethers.Contract(
-      this.actpKernelAddress,
-      ACTP_KERNEL_NONCE_ABI,
-      this.provider
-    );
-    const nonce = await kernel.requesterNonces(this.senderAddress);
-    this.cachedActpNonce = nonce;
-    return nonce;
+    try {
+      const kernel = new ethers.Contract(
+        this.actpKernelAddress,
+        ACTP_KERNEL_NONCE_ABI,
+        this.provider
+      );
+      const nonce = await kernel.requesterNonces(this.senderAddress);
+      this.cachedActpNonce = nonce;
+      return nonce;
+    } catch {
+      // Older ACTPKernel deployments don't expose requesterNonces.
+      // Return 0n — registration doesn't need it, and payment batches
+      // will fail at the contract level anyway if nonces are wrong.
+      sdkLogger.warn('requesterNonces not available on ACTPKernel — using 0 (older deployment?)');
+      this.cachedActpNonce = 0n;
+      return 0n;
+    }
   }
 
   /**
