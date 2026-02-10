@@ -757,12 +757,17 @@ describe('Init Command', () => {
   it('should require password for testnet wallet generation', async () => {
     const mockOutput = createMockOutput();
     const originalCwd = process.cwd();
+    const origTTY = process.stdin.isTTY;
 
     try {
       process.chdir(testDir);
+      // Force non-TTY so promptPassword() returns '' immediately
+      (process.stdin as any).isTTY = false;
+      delete process.env.ACTP_KEY_PASSWORD;
 
       await expect(runInit({ mode: 'testnet' }, mockOutput)).rejects.toThrow('Wallet password required');
     } finally {
+      (process.stdin as any).isTTY = origTTY;
       process.chdir(originalCwd);
     }
   });
