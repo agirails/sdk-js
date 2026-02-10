@@ -160,8 +160,9 @@ export class PaymasterClient {
       const json = (await response.json()) as JsonRpcResponse<T>;
 
       if (json.error) {
+        const dataStr = json.error.data ? ` | data: ${JSON.stringify(json.error.data)}` : '';
         throw new Error(
-          `Paymaster RPC error ${json.error.code}: ${json.error.message}`
+          `Paymaster RPC error ${json.error.code}: ${json.error.message}${dataStr}`
         );
       }
 

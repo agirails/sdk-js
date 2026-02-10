@@ -233,8 +233,9 @@ export class BundlerClient {
       const json = (await response.json()) as JsonRpcResponse<T>;
 
       if (json.error) {
+        const dataStr = json.error.data ? ` | data: ${JSON.stringify(json.error.data)}` : '';
         const err = new Error(
-          `Bundler RPC error ${json.error.code}: ${json.error.message}`
+          `Bundler RPC error ${json.error.code}: ${json.error.message}${dataStr}`
         );
         (err as any).code = json.error.code;
         (err as any).data = json.error.data;
