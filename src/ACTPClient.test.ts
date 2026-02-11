@@ -79,7 +79,7 @@ describe('ACTPClient', () => {
             mode: 'testnet',
             requesterAddress,
           })
-        ).rejects.toThrow('privateKey is required for testnet mode');
+        ).rejects.toThrow('No wallet found for testnet mode');
       });
 
       test('throws on mainnet mode without privateKey', async () => {
@@ -88,7 +88,7 @@ describe('ACTPClient', () => {
             mode: 'mainnet',
             requesterAddress,
           })
-        ).rejects.toThrow('privateKey is required for mainnet mode');
+        ).rejects.toThrow('No wallet found for mainnet mode');
       });
 
       test('throws on unknown mode', async () => {
