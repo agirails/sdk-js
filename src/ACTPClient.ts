@@ -1239,7 +1239,7 @@ export class ACTPClient {
    * @example
    * ```typescript
    * // Register a custom x402 adapter
-   * client.registerAdapter(new X402Adapter(client.runtime, requesterAddress));
+   * client.registerAdapter(new X402Adapter(requesterAddress, { expectedNetwork, transferFn }));
    * ```
    */
   registerAdapter(adapter: IAdapter): void {
