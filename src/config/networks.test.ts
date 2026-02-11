@@ -110,6 +110,47 @@ describe('Networks Config', () => {
       expect(config.aa).toBeDefined();
     });
 
+    // Sanity checks: deployed contract addresses must match known deployments
+    it('should have correct AgentRegistry on base-sepolia', () => {
+      const config = getNetwork('base-sepolia');
+      expect(config.contracts.agentRegistry).toBe('0xDd6D66924B43419F484aE981F174b803487AF25A');
+    });
+
+    it('should have correct AgentRegistry on base-mainnet', () => {
+      const config = getNetwork('base-mainnet');
+      expect(config.contracts.agentRegistry).toBe('0x6fB222CF3DDdf37Bcb248EE7BBBA42Fb41901de8');
+    });
+
+    it('should have correct ACTPKernel on base-sepolia', () => {
+      const config = getNetwork('base-sepolia');
+      expect(config.contracts.actpKernel).toBe('0x469CBADbACFFE096270594F0a31f0EEC53753411');
+    });
+
+    it('should have correct ACTPKernel on base-mainnet', () => {
+      const config = getNetwork('base-mainnet');
+      expect(config.contracts.actpKernel).toBe('0x132B9eB321dBB57c828B083844287171BDC92d29');
+    });
+
+    it('should have correct EscrowVault on base-sepolia', () => {
+      const config = getNetwork('base-sepolia');
+      expect(config.contracts.escrowVault).toBe('0x57f888261b629bB380dfb983f5DA6c70Ff2D49E5');
+    });
+
+    it('should have correct EscrowVault on base-mainnet', () => {
+      const config = getNetwork('base-mainnet');
+      expect(config.contracts.escrowVault).toBe('0x6aAF45882c4b0dD34130ecC790bb5Ec6be7fFb99');
+    });
+
+    it('should have correct X402Relay on base-sepolia', () => {
+      const config = getNetwork('base-sepolia');
+      expect(config.contracts.x402Relay).toBe('0x4DCD02b276Dbeab57c265B72435e90507b6Ac81A');
+    });
+
+    it('should have correct X402Relay on base-mainnet', () => {
+      const config = getNetwork('base-mainnet');
+      expect(config.contracts.x402Relay).toBe('0x81DFb954A3D58FEc24Fc9c946aC2C71a911609F8');
+    });
+
     it('should throw on unknown network', () => {
       expect(() => getNetwork('ethereum-mainnet')).toThrow('Unknown network');
     });

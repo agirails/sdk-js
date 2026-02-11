@@ -57,6 +57,9 @@ import { getNetwork } from './config/networks';
 import { IWalletProvider } from './wallet/IWalletProvider';
 import { EOAWalletProvider } from './wallet/EOAWalletProvider';
 import { AutoWalletProvider } from './wallet/AutoWalletProvider';
+import { SmartWalletCall } from './wallet/aa/constants';
+import { buildActivationBatch, ActivationScenario } from './wallet/aa/TransactionBatcher';
+import { loadPendingPublish, deletePendingPublish, PendingPublish } from './config/pendingPublish';
 import { sdkLogger } from './utils/Logger';
 
 // ============================================================================
@@ -74,18 +77,24 @@ import { sdkLogger } from './utils/Logger';
  * @param stateDirectory - The directory path to validate
  * @throws Error if path is unsafe
  */
+/** On-chain agent state from AgentRegistry. */
+interface OnChainAgentState {
+  registeredAt: bigint;
+  configHash: string;
+  listed: boolean;
+}
+
+const ZERO_HASH = '0x' + '0'.repeat(64);
+
 /**
- * Check if an agent is registered on AgentRegistry.
- * Lightweight read-only check — no signer needed.
- *
- * Uses minimal ABI fragment to avoid importing the full AgentRegistry class.
- * Checks registeredAt field of AgentProfile struct (> 0 means registered).
+ * Read the on-chain agent state from AgentRegistry.
+ * Returns registeredAt, configHash, and listed fields.
  */
-async function checkRegistration(
+async function getOnChainAgentState(
   provider: ethers.JsonRpcProvider,
   registryAddress: string,
   agentAddress: string
-): Promise<boolean> {
+): Promise<OnChainAgentState> {
   const contract = new ethers.Contract(
     registryAddress,
     [
@@ -98,7 +107,46 @@ async function checkRegistration(
     provider
   );
   const profile = await contract.getAgent(agentAddress);
-  return profile.registeredAt > 0n;
+  return {
+    registeredAt: profile.registeredAt,
+    configHash: profile.configHash,
+    listed: profile.listed,
+  };
+}
+
+/**
+ * Detect the lazy publish activation scenario.
+ *
+ * Decision matrix:
+ * - A: Not registered + has pending → first-time activation
+ * - B1: Registered + pending hash != on-chain hash + not listed → re-publish + list
+ * - B2: Registered + pending hash != on-chain hash + already listed → re-publish only
+ * - C: Pending hash == on-chain hash → stale pending, delete it
+ * - none: No pending publish file
+ */
+export function detectLazyPublishScenario(
+  onChainState: OnChainAgentState,
+  pendingPublish: PendingPublish | null
+): ActivationScenario {
+  if (!pendingPublish) return 'none';
+
+  const isRegistered = onChainState.registeredAt > 0n;
+  const pendingHash = pendingPublish.configHash;
+  const onChainHash = onChainState.configHash;
+
+  if (!isRegistered) {
+    // Not registered — scenario A: full activation
+    return 'A';
+  }
+
+  // Registered — check if pending hash differs from on-chain
+  if (pendingHash !== onChainHash) {
+    // Config differs — need to publish
+    return onChainState.listed ? 'B2' : 'B1';
+  }
+
+  // Hash matches — stale pending
+  return 'C';
 }
 
 function validateStateDirectory(stateDirectory: string): void {
@@ -520,6 +568,25 @@ export class ACTPClient {
   private readonly walletProvider?: IWalletProvider;
 
   /**
+   * Lazy Publish: Current activation scenario.
+   * Set during create(), consumed during first payACTPBatched().
+   * @internal
+   */
+  private lazyScenario: ActivationScenario = 'none';
+
+  /**
+   * Lazy Publish: Cached pending publish data.
+   * @internal
+   */
+  private pendingPublish: PendingPublish | null = null;
+
+  /**
+   * AgentRegistry address (for lazy activation calls).
+   * @internal
+   */
+  private agentRegistryAddress?: string;
+
+  /**
    * Private constructor - use ACTPClient.create() factory method.
    */
   private constructor(
@@ -530,14 +597,20 @@ export class ACTPClient {
     erc8004Bridge?: ERC8004Bridge,
     reputationReporter?: ReputationReporter,
     walletProvider?: IWalletProvider,
-    contractAddresses?: { usdc: string; actpKernel: string; escrowVault: string }
+    contractAddresses?: { usdc: string; actpKernel: string; escrowVault: string },
+    lazyScenario: ActivationScenario = 'none',
+    pendingPublish: PendingPublish | null = null,
+    agentRegistryAddress?: string,
   ) {
     this.runtime = runtime;
     this.info = info;
     this.easHelper = easHelper;
     this.reputationReporter = reputationReporter;
     this.walletProvider = walletProvider;
-    this.basic = new BasicAdapter(runtime, requesterAddress, easHelper, walletProvider, contractAddresses);
+    this.lazyScenario = lazyScenario;
+    this.pendingPublish = pendingPublish;
+    this.agentRegistryAddress = agentRegistryAddress;
+    this.basic = new BasicAdapter(runtime, requesterAddress, easHelper, walletProvider, contractAddresses, this);
     this.standard = new StandardAdapter(runtime, requesterAddress, easHelper);
 
     // Initialize registry and router
@@ -594,6 +667,9 @@ export class ACTPClient {
     let walletProvider: IWalletProvider | undefined;
     let requesterAddress: string;
     let contractAddresses: { usdc: string; actpKernel: string; escrowVault: string } | undefined;
+    let lazyScenario: ActivationScenario = 'none';
+    let lazyPending: PendingPublish | null = null;
+    let registryAddr: string | undefined;
 
     // If custom runtime provided, use it directly
     if (config.runtime) {
@@ -613,17 +689,18 @@ export class ACTPClient {
       // Initialize runtime based on mode
       switch (config.mode) {
         case 'mock': {
-          // Mock mode: requesterAddress is mandatory
-          if (!config.requesterAddress) {
-            throw new Error('requesterAddress is required for mock mode');
+          // Mock mode: requesterAddress is optional (auto-generate if missing)
+          if (config.requesterAddress) {
+            if (!/^0x[a-fA-F0-9]{40}$/.test(config.requesterAddress)) {
+              throw new Error(
+                `Invalid requesterAddress: "${config.requesterAddress}". ` +
+                  'Must be a valid Ethereum address (0x-prefixed, 40 hex chars)'
+              );
+            }
+            requesterAddress = config.requesterAddress;
+          } else {
+            requesterAddress = ethers.Wallet.createRandom().address;
           }
-          if (!/^0x[a-fA-F0-9]{40}$/.test(config.requesterAddress)) {
-            throw new Error(
-              `Invalid requesterAddress: "${config.requesterAddress}". ` +
-                'Must be a valid Ethereum address (0x-prefixed, 40 hex chars)'
-            );
-          }
-          requesterAddress = config.requesterAddress;
 
           // SECURITY FIX: Enhanced path validation to prevent path traversal attacks
           if (config.stateDirectory) {
@@ -705,43 +782,68 @@ export class ACTPClient {
               },
             });
 
-            // Check AgentRegistry — gasless only for registered agents
+            // Check AgentRegistry + Lazy Publish scenario
             const smartWalletAddress = autoWallet.getAddress();
-            const agentRegistryAddress = config.contracts?.agentRegistry
+            registryAddr = config.contracts?.agentRegistry
               ?? networkConfig.contracts.agentRegistry;
 
-            let isRegistered = false;
-            if (agentRegistryAddress) {
+            // Load pending publish (may be null)
+            try {
+              lazyPending = loadPendingPublish();
+            } catch {
+              // Ignore file read errors
+            }
+
+            let useAutoWallet = false;
+
+            if (registryAddr) {
               try {
-                isRegistered = await checkRegistration(
-                  provider, agentRegistryAddress, smartWalletAddress
+                const onChainState = await getOnChainAgentState(
+                  provider, registryAddr, smartWalletAddress
                 );
+                lazyScenario = detectLazyPublishScenario(onChainState, lazyPending);
+
+                // Scenario C: stale pending — delete immediately
+                if (lazyScenario === 'C') {
+                  deletePendingPublish();
+                  lazyPending = null;
+                  lazyScenario = 'none';
+                }
+
+                // Gate: configHash != ZERO || hasPendingPublish → use AutoWallet
+                const hasOnChainConfig = onChainState.configHash !== ZERO_HASH;
+                const hasPendingPublish = lazyPending !== null;
+
+                if (hasOnChainConfig || hasPendingPublish) {
+                  useAutoWallet = true;
+                }
               } catch {
                 // Registry check failed (e.g. RPC down) — allow AA anyway.
                 // Rationale: don't punish legit registered agents for infra issues.
                 // Paymaster contract allowlist + rate limits prevent abuse.
-                isRegistered = true;
+                useAutoWallet = true;
                 sdkLogger.warn('AgentRegistry check failed, proceeding with AA wallet');
               }
             } else {
               // No registry deployed — skip check (early testnet)
-              isRegistered = true;
+              useAutoWallet = true;
             }
 
-            if (isRegistered) {
+            if (useAutoWallet) {
               walletProvider = autoWallet;
               requesterAddress = smartWalletAddress;
             } else {
-              // Not registered — fall back to EOA with warning
+              // Not published and no pending — fall back to EOA with warning
               sdkLogger.warn(
-                'Agent not registered on AgentRegistry. ' +
+                'Agent not published on AgentRegistry and no pending publish found. ' +
                 'Falling back to EOA wallet (gas not sponsored). ' +
-                'Run "actp register" for gas-free transactions.'
+                'Run "actp publish" for gas-free transactions.'
               );
               walletProvider = new EOAWalletProvider(signer, networkConfig.chainId);
-              // Force signer.address — config.requesterAddress may be the Smart Wallet
-              // address (set by `actp init --wallet auto`), which would be wrong for EOA.
               requesterAddress = signer.address;
+              // Reset since we're not using auto wallet
+              lazyScenario = 'none';
+              lazyPending = null;
             }
           } else {
             // Tier 2: EOA Wallet (backward compatible)
@@ -824,10 +926,11 @@ export class ACTPClient {
       walletTier: walletProvider?.getWalletInfo().tier,
     };
 
-    // Pass wallet provider and contract addresses to constructor
+    // Pass wallet provider, contract addresses, and lazy publish state to constructor
     const client = new ACTPClient(
       runtime, normalizedAddress, info, easHelper,
-      erc8004Bridge, reputationReporter, walletProvider, contractAddresses
+      erc8004Bridge, reputationReporter, walletProvider, contractAddresses,
+      lazyScenario, lazyPending, registryAddr,
     );
 
     // Drift detection: non-blocking check for AGIRAILS.md sync status
@@ -1300,6 +1403,51 @@ export class ACTPClient {
   }
 
   /**
+   * Get activation calls for lazy publish.
+   *
+   * Returns SmartWalletCall[] to prepend to the first payment UserOp,
+   * plus an onSuccess callback that deletes pending-publish.json.
+   *
+   * Returns empty calls if no activation is needed (scenario C/none).
+   * @internal
+   */
+  getActivationCalls(): { calls: SmartWalletCall[]; onSuccess: () => void } {
+    if (this.lazyScenario === 'none' || this.lazyScenario === 'C' || !this.agentRegistryAddress) {
+      return { calls: [], onSuccess: () => {} };
+    }
+
+    const pending = this.pendingPublish;
+    if (!pending) {
+      return { calls: [], onSuccess: () => {} };
+    }
+
+    // Build activation batch params
+    const params: import('./wallet/aa/TransactionBatcher').ActivationBatchParams = {
+      scenario: this.lazyScenario,
+      agentRegistryAddress: this.agentRegistryAddress,
+      cid: pending.cid,
+      configHash: pending.configHash,
+      listed: true,
+    };
+
+    // For scenario A, extract registration params from pending publish
+    if (this.lazyScenario === 'A') {
+      params.endpoint = pending.endpoint;
+      params.serviceDescriptors = pending.serviceDescriptors;
+    }
+
+    const calls = buildActivationBatch(params);
+
+    const onSuccess = () => {
+      deletePendingPublish();
+      this.lazyScenario = 'none';
+      this.pendingPublish = null;
+    };
+
+    return { calls, onSuccess };
+  }
+
+  /**
    * Non-blocking drift detection for AGIRAILS.md config.
    * Checks if local AGIRAILS.md matches on-chain config hash.
    * Logs warnings but never blocks agent operation.
@@ -1313,7 +1461,13 @@ export class ACTPClient {
       // Look for AGIRAILS.md in cwd
       const agirailsMdPath = join(process.cwd(), 'AGIRAILS.md');
       if (!existsSync(agirailsMdPath)) {
-        return; // No local file — nothing to check
+        // No local file — try cached hash from pending-publish.json
+        const { loadPendingPublish: loadPP } = await import('./config/pendingPublish');
+        const pp = loadPP();
+        if (pp) {
+          sdkLogger.info('[AGIRAILS] No AGIRAILS.md found, using cached config hash from pending-publish.json');
+        }
+        return;
       }
 
       const network = config.mode === 'testnet' ? 'base-sepolia' : 'base-mainnet';

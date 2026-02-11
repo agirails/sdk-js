@@ -127,7 +127,9 @@ export interface IWalletProvider {
    * Only available on AA wallets (supportsBatching: true).
    * Handles ACTP nonce management internally via the DualNonceManager mutex.
    *
-   * Returns undefined if batched payments are not supported.
+   * @param params - Payment batch parameters
+   * @param prependCalls - Optional calls to prepend (e.g., lazy publish activation)
+   * @returns undefined if batched payments are not supported.
    */
-  payACTPBatched?(params: BatchedPayParams): Promise<BatchedPayResult>;
+  payACTPBatched?(params: BatchedPayParams, prependCalls?: import('./aa/constants').SmartWalletCall[]): Promise<BatchedPayResult>;
 }

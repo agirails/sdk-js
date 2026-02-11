@@ -34,6 +34,14 @@ export function createRegisterCommand(): Command {
         options.json ? 'json' : options.quiet ? 'quiet' : 'human'
       );
 
+      // Deprecation warning
+      output.warning(
+        'DEPRECATED: "actp register" is deprecated. Use "actp publish" instead.\n' +
+        '  "actp publish" saves config locally. On-chain activation happens\n' +
+        '  automatically on your first payment (lazy publish).'
+      );
+      output.blank();
+
       try {
         await runRegister(options, output);
       } catch (error) {

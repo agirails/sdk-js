@@ -176,7 +176,88 @@ export function extractRegistrationParams(
 }
 
 // ============================================================================
-// Pipeline
+// Prepare Publish (offline — no on-chain calls)
+// ============================================================================
+
+export interface PreparePublishOptions {
+  /** Path to AGIRAILS.md file */
+  path: string;
+  /** Filebase client for IPFS upload */
+  filebaseClient: FilebaseClient;
+  /** Arweave client for permanent storage (optional) */
+  arweaveClient?: ArweaveClient;
+  /** Skip Arweave upload */
+  skipArweave?: boolean;
+  /** Dry run — compute and show but don't execute */
+  dryRun?: boolean;
+}
+
+export interface PreparePublishResult {
+  /** IPFS CID of uploaded AGIRAILS.md */
+  cid: string;
+  /** Canonical config hash (bytes32) */
+  configHash: string;
+  /** Arweave transaction ID (if uploaded) */
+  arweaveTxId?: string;
+  /** Parsed frontmatter */
+  frontmatter: Record<string, unknown>;
+  /** Parsed body */
+  body: string;
+  /** Whether this was a dry run */
+  dryRun: boolean;
+}
+
+/**
+ * Prepare publish — IPFS upload + hash computation only.
+ *
+ * No on-chain calls. Returns the CID and configHash for
+ * saving to pending-publish.json (lazy publish flow).
+ */
+export async function preparePublish(options: PreparePublishOptions): Promise<PreparePublishResult> {
+  const {
+    path,
+    filebaseClient,
+    arweaveClient,
+    skipArweave = false,
+    dryRun = false,
+  } = options;
+
+  // Read and parse
+  const content = readFileSync(path, 'utf-8');
+  const { frontmatter, body } = parseAgirailsMd(content);
+  const { configHash } = computeConfigHash(content);
+
+  if (dryRun) {
+    return { cid: '(dry-run)', configHash, frontmatter, body, dryRun: true };
+  }
+
+  // Upload to IPFS
+  const ipfsResult = await filebaseClient.uploadBinary(
+    Buffer.from(content, 'utf-8'),
+    'text/markdown',
+    { metadata: { type: 'agirails-config', version: '1.0' } }
+  );
+  const cid = ipfsResult.cid;
+
+  // Arweave (optional)
+  let arweaveTxId: string | undefined;
+  if (!skipArweave && arweaveClient) {
+    const arweaveResult = await arweaveClient.uploadJSON(
+      { frontmatter, body, _format: 'agirails.md.v1' },
+      [
+        { name: 'Type', value: 'agent-config' },
+        { name: 'ConfigHash', value: configHash },
+        { name: 'IPFS-CID', value: cid },
+      ]
+    );
+    arweaveTxId = arweaveResult.txId;
+  }
+
+  return { cid, configHash, arweaveTxId, frontmatter, body, dryRun: false };
+}
+
+// ============================================================================
+// Pipeline (legacy — makes on-chain calls)
 // ============================================================================
 
 /**

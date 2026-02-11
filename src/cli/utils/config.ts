@@ -38,7 +38,7 @@ export interface CLIConfig {
   /** AIP-12: Wallet type — 'auto' (Smart Wallet, gasless) or 'eoa' (traditional) */
   wallet?: 'auto' | 'eoa';
 
-  /** AIP-12: Smart Wallet address (set when wallet=auto, used by `actp register`) */
+  /** AIP-12: Smart Wallet address (set when wallet=auto, used by `actp publish`) */
   smartWallet?: string;
 
   /** AIP-12: Whether agent is registered on AgentRegistry */
@@ -83,9 +83,13 @@ export const CONFIG_DEFAULTS: CLIConfig = {
 // ============================================================================
 
 /**
- * Get the .actp directory path
+ * Get the .actp directory path.
+ * Respects ACTP_DIR env var override for custom locations.
  */
 export function getActpDir(projectRoot: string = process.cwd()): string {
+  if (process.env.ACTP_DIR) {
+    return process.env.ACTP_DIR;
+  }
   return path.join(projectRoot, '.actp');
 }
 
@@ -141,6 +145,11 @@ export function loadConfig(projectRoot: string = process.cwd()): CLIConfig {
       console.warn('\x1b[33m%s\x1b[0m', 'WARNING: Private key stored in config file.');
       console.warn('\x1b[33m%s\x1b[0m', '         Consider using ACTP_PRIVATE_KEY environment variable instead.');
       console.warn('\x1b[33m%s\x1b[0m', '         Run: export ACTP_PRIVATE_KEY=<your-key>');
+    }
+
+    // Config migration: strip deprecated `registered` field (lazy publish)
+    if ('registered' in config) {
+      delete (config as unknown as Record<string, unknown>).registered;
     }
 
     return config;

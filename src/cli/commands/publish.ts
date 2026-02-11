@@ -1,8 +1,16 @@
 /**
- * Publish Command - Publish AGIRAILS.md config on-chain
+ * Publish Command — Lazy Publish flow.
  *
- * Reads AGIRAILS.md, computes canonical hash, uploads to IPFS,
- * optionally to Arweave, and records on AgentRegistry.
+ * New flow (no on-chain calls):
+ * 1. Parse AGIRAILS.md → compute configHash
+ * 2. Generate wallet if .actp/keystore.json missing
+ * 3. Upload to IPFS via Filebase
+ * 4. Optionally upload to Arweave
+ * 5. Save pending-publish.json (activation deferred to first payment)
+ * 6. Update AGIRAILS.md frontmatter
+ *
+ * On-chain activation happens automatically during the first payment
+ * via ACTPClient's lazy publish mechanism.
  *
  * @module cli/commands/publish
  */
@@ -10,14 +18,14 @@
 import { Command } from 'commander';
 import { Output, ExitCode } from '../utils/output';
 import { mapError } from '../utils/client';
-import { resolve } from 'path';
-import { readFileSync, existsSync } from 'fs';
-import { ethers } from 'ethers';
-import { computeConfigHash, parseAgirailsMd } from '../../config/agirailsmd';
+import { resolve, join } from 'path';
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
+import { computeConfigHash, serializeAgirailsMd } from '../../config/agirailsmd';
+import { preparePublish, extractRegistrationParams, PENDING_ENDPOINT } from '../../config/publishPipeline';
+import { savePendingPublish, getActpDir } from '../../config/pendingPublish';
 import { FilebaseClient } from '../../storage/FilebaseClient';
 import { ArweaveClient } from '../../storage/ArweaveClient';
-import { getNetwork } from '../../config/networks';
-import { publishAgirailsMd, PENDING_ENDPOINT } from '../../config/publishPipeline';
+import { generateWallet } from '../utils/wallet';
 
 // ============================================================================
 // Command Definition
@@ -25,9 +33,9 @@ import { publishAgirailsMd, PENDING_ENDPOINT } from '../../config/publishPipelin
 
 export function createPublishCommand(): Command {
   const cmd = new Command('publish')
-    .description('Publish AGIRAILS.md config on-chain')
+    .description('Publish AGIRAILS.md config (offline — activates on first payment)')
     .argument('[path]', 'Path to AGIRAILS.md', './AGIRAILS.md')
-    .option('-n, --network <network>', 'Network (base-sepolia | base-mainnet)', 'base-sepolia')
+    .option('-n, --network <network>', 'DEPRECATED: network is auto-detected (accepted but ignored)')
     .option('--skip-arweave', 'Skip permanent Arweave storage (dev mode)')
     .option('--dry-run', 'Show what would happen without executing')
     .option('--json', 'Output as JSON')
@@ -58,7 +66,7 @@ export function createPublishCommand(): Command {
 // ============================================================================
 
 interface PublishCommandOptions {
-  network: string;
+  network?: string;
   skipArweave?: boolean;
   dryRun?: boolean;
 }
@@ -68,6 +76,11 @@ async function runPublish(
   options: PublishCommandOptions,
   output: Output
 ): Promise<void> {
+  // Deprecation warning for --network
+  if (options.network) {
+    output.warning('--network flag is deprecated and ignored. Network is auto-detected at payment time.');
+  }
+
   const resolvedPath = resolve(filePath);
 
   if (!existsSync(resolvedPath)) {
@@ -91,7 +104,6 @@ async function runPublish(
           structuredHash,
           bodyHash,
           path: resolvedPath,
-          network: options.network,
           dryRun: true,
         },
         { quietKey: 'configHash' }
@@ -102,26 +114,22 @@ async function runPublish(
       return;
     }
 
-    // Validate environment
-    const privateKey = process.env.ACTP_PRIVATE_KEY || process.env.PRIVATE_KEY;
-    if (!privateKey) {
-      spinner.stop(false);
-      output.error('Private key required. Set ACTP_PRIVATE_KEY or PRIVATE_KEY env var.');
-      process.exit(ExitCode.INVALID_INPUT);
+    // Ensure .actp directory exists
+    const actpDir = getActpDir();
+    if (!existsSync(actpDir)) {
+      mkdirSync(actpDir, { recursive: true });
     }
 
-    const networkConfig = getNetwork(options.network);
-    if (!networkConfig.contracts.agentRegistry) {
-      spinner.stop(false);
-      output.error(`AgentRegistry not deployed on ${options.network}`);
-      process.exit(ExitCode.ERROR);
+    // Generate wallet if keystore.json doesn't exist
+    const keystorePath = join(actpDir, 'keystore.json');
+    if (!existsSync(keystorePath)) {
+      spinner.stop(true);
+      output.info('No wallet found — generating one...');
+      await generateWallet(actpDir, output);
+      output.blank();
     }
 
-    // Create provider and signer
-    const provider = new ethers.JsonRpcProvider(networkConfig.rpcUrl);
-    const signer = new ethers.Wallet(privateKey, provider);
-
-    // Create Filebase client
+    // Validate Filebase credentials
     const filebaseAccessKey = process.env.FILEBASE_ACCESS_KEY;
     const filebaseSecretKey = process.env.FILEBASE_SECRET_KEY;
     if (!filebaseAccessKey || !filebaseSecretKey) {
@@ -142,64 +150,76 @@ async function runPublish(
       if (arweaveKey) {
         arweaveClient = await ArweaveClient.create({
           privateKey: arweaveKey,
-          rpcUrl: networkConfig.rpcUrl,
+          rpcUrl: 'https://mainnet.base.org', // Only used for Arweave upload
         });
       }
     }
 
     spinner.stop(true);
-    const publishSpinner = output.spinner('Publishing to IPFS + on-chain...');
+    const publishSpinner = output.spinner('Publishing to IPFS...');
 
-    const result = await publishAgirailsMd({
+    // Prepare publish (IPFS + hash, no on-chain)
+    const result = await preparePublish({
       path: resolvedPath,
-      network: options.network,
-      registryAddress: networkConfig.contracts.agentRegistry,
-      signer,
       filebaseClient,
       arweaveClient,
       skipArweave: options.skipArweave || !arweaveClient,
-      gasSettings: {
-        maxFeePerGas: networkConfig.gasSettings.maxFeePerGas,
-        maxPriorityFeePerGas: networkConfig.gasSettings.maxPriorityFeePerGas,
-      },
     });
 
     publishSpinner.stop(true);
 
+    // Extract registration params for pending publish
+    const { frontmatter, body } = result;
+    const regParams = extractRegistrationParams(frontmatter as Record<string, unknown>);
+
+    // Save pending-publish.json
+    savePendingPublish({
+      version: 1,
+      configHash: result.configHash,
+      cid: result.cid,
+      endpoint: regParams.endpoint,
+      serviceDescriptors: regParams.serviceDescriptors,
+      createdAt: new Date().toISOString(),
+    });
+
+    // Update AGIRAILS.md frontmatter
+    const updatedFrontmatter = {
+      ...(frontmatter as Record<string, unknown>),
+      config_hash: result.configHash,
+      config_cid: result.cid,
+      published_at: new Date().toISOString(),
+      ...(result.arweaveTxId ? { arweave_tx: result.arweaveTxId } : {}),
+    };
+    const updatedContent = serializeAgirailsMd(updatedFrontmatter, body);
+    writeFileSync(resolvedPath, updatedContent, 'utf-8');
+
+    // Output results
     output.result(
       {
         configHash: result.configHash,
         cid: result.cid,
-        txHash: result.txHash,
         arweaveTxId: result.arweaveTxId || null,
-        registered: result.registered || false,
-        network: options.network,
+        pendingPublish: true,
       },
       { quietKey: 'configHash' }
     );
 
     output.blank();
-    if (result.registered) {
-      output.success('Agent registered and config published!');
-    } else {
-      output.success('Config published successfully!');
-    }
+    output.success('Config published to IPFS and saved locally.');
+    output.print('');
+    output.print('On-chain activation will happen automatically on your first payment.');
     output.print('');
     output.print('Next steps:');
-    output.print('  - Verify sync:  actp diff');
-    output.print('  - View on-chain: ' + networkConfig.blockExplorer + '/tx/' + result.txHash);
+    output.print('  - Verify config:  actp diff');
+    output.print('  - Make a payment: your first payment activates the agent on-chain');
 
-    // Warn if placeholder endpoint was used during auto-register
-    if (result.registered) {
-      const content = readFileSync(resolvedPath, 'utf-8');
-      const { frontmatter } = parseAgirailsMd(content);
-      if (!frontmatter.endpoint || frontmatter.endpoint === PENDING_ENDPOINT) {
-        output.print('');
-        output.warning('No endpoint in AGIRAILS.md — registered with placeholder URL.');
-        output.print('  Update when your agent is deployed:');
-        output.print('    1. Add "endpoint: https://your-agent.com/webhook" to AGIRAILS.md');
-        output.print('    2. Run: actp publish');
-      }
+    // Warn if placeholder endpoint
+    if (!frontmatter.endpoint || frontmatter.endpoint === PENDING_ENDPOINT) {
+      output.print('');
+      output.warning('No endpoint in AGIRAILS.md — using placeholder URL.');
+      output.print('  Update when your agent is deployed:');
+      output.print('    1. Add "endpoint: https://your-agent.com/webhook" to AGIRAILS.md');
+      output.print('    2. Run: actp publish');
     }
   } catch (error) {
     spinner.stop(false);

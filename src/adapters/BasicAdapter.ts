@@ -23,7 +23,16 @@ import {
   UnifiedPayResult,
 } from '../types/adapter';
 import { IWalletProvider } from '../wallet/IWalletProvider';
+import { SmartWalletCall } from '../wallet/aa/constants';
 import { ethers } from 'ethers';
+
+/**
+ * Interface for lazy publish activation call provider.
+ * ACTPClient implements this to avoid circular dependency.
+ */
+export interface IActivationCallProvider {
+  getActivationCalls(): { calls: SmartWalletCall[]; onSuccess: () => void };
+}
 
 /**
  * Parameters for creating a simple payment.
@@ -126,7 +135,8 @@ export class BasicAdapter extends BaseAdapter implements IAdapter {
     requesterAddress: string,
     private easHelper?: EASHelper,
     private walletProvider?: IWalletProvider,
-    private contractAddresses?: { usdc: string; actpKernel: string; escrowVault: string }
+    private contractAddresses?: { usdc: string; actpKernel: string; escrowVault: string },
+    private activationProvider?: IActivationCallProvider,
   ) {
     super(requesterAddress);
   }
@@ -194,23 +204,45 @@ export class BasicAdapter extends BaseAdapter implements IAdapter {
     }
 
     // ====================================================================
-    // AIP-12: Batched payment via AA wallet (1 UserOp = 3 on-chain calls)
+    // AIP-12: Batched payment via AA wallet (1 UserOp = N on-chain calls)
+    // With lazy publish: activation calls prepended to first payment.
     // ====================================================================
     if (this.walletProvider?.payACTPBatched && this.contractAddresses) {
       const serviceHash = ethers.ZeroHash;
-      const result = await this.walletProvider.payACTPBatched({
-        provider,
-        requester,
-        amount: amount.toString(),
-        deadline,
-        disputeWindow,
-        serviceHash,
-        agentId: agentId || '0',
-        contracts: this.contractAddresses,
-      });
+
+      // Get lazy publish activation calls (if any)
+      let prependCalls: SmartWalletCall[] = [];
+      let onActivationSuccess: (() => void) | undefined;
+
+      if (this.activationProvider) {
+        const activation = this.activationProvider.getActivationCalls();
+        prependCalls = activation.calls;
+        if (prependCalls.length > 0) {
+          onActivationSuccess = activation.onSuccess;
+        }
+      }
+
+      const result = await this.walletProvider.payACTPBatched(
+        {
+          provider,
+          requester,
+          amount: amount.toString(),
+          deadline,
+          disputeWindow,
+          serviceHash,
+          agentId: agentId || '0',
+          contracts: this.contractAddresses,
+        },
+        prependCalls.length > 0 ? prependCalls : undefined,
+      );
 
       if (!result.success) {
         throw new Error(`Batched payment UserOp failed: ${result.hash}`);
+      }
+
+      // Delete pending-publish.json on successful activation
+      if (onActivationSuccess) {
+        onActivationSuccess();
       }
 
       return {

@@ -55,13 +55,13 @@ describe('ACTPClient', () => {
     });
 
     describe('validation', () => {
-      test('throws on missing requesterAddress', async () => {
-        await expect(
-          ACTPClient.create({
-            mode: 'mock',
-            requesterAddress: '',
-          })
-        ).rejects.toThrow('requesterAddress is required');
+      test('auto-generates address when requesterAddress is empty', async () => {
+        const client = await ACTPClient.create({
+          mode: 'mock',
+          requesterAddress: '',
+        });
+        // Empty string is falsy → auto-generates a random address
+        expect(client.getAddress()).toMatch(/^0x[a-f0-9]{40}$/);
       });
 
       test('throws on invalid requesterAddress', async () => {
