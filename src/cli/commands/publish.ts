@@ -123,11 +123,20 @@ async function runPublish(
 
     // Generate wallet if keystore.json doesn't exist
     const keystorePath = join(actpDir, 'keystore.json');
+    let walletAddress = '';
     if (!existsSync(keystorePath)) {
       spinner.stop(true);
       output.info('No wallet found — generating one...');
-      await generateWallet(actpDir, output);
+      walletAddress = await generateWallet(actpDir, output);
       output.blank();
+    } else {
+      // Read address from existing keystore (plaintext field, no decryption)
+      try {
+        const ks = JSON.parse(readFileSync(keystorePath, 'utf-8'));
+        walletAddress = ks.address ? `0x${ks.address.replace(/^0x/, '')}` : '';
+      } catch {
+        // Best-effort address extraction
+      }
     }
 
     // Validate Filebase credentials
@@ -193,13 +202,12 @@ async function runPublish(
         // Existing project: migrate config (strip deprecated `registered`)
         const config = loadConfig(projectRoot);
         saveConfig(config, projectRoot);
-      } else {
-        // Fresh project: bootstrap minimal config
-        const walletAddress = await resolveWalletAddress(projectRoot);
+      } else if (walletAddress) {
+        // Fresh project: bootstrap minimal config using address from keystore
         const bootstrapConfig: CLIConfig = {
           ...CONFIG_DEFAULTS,
           mode: 'testnet', // safe default for new projects
-          address: walletAddress,
+          address: walletAddress.toLowerCase(),
           wallet: 'auto',
           version: '1.0',
         };
@@ -399,17 +407,3 @@ async function activateOnTestnet(
   return receipt.hash;
 }
 
-/**
- * Resolve wallet address from keystore without needing config.json.
- * Used during publish bootstrap for fresh projects.
- */
-async function resolveWalletAddress(projectRoot: string): Promise<string> {
-  const { resolvePrivateKey } = await import('../../wallet/keystore');
-  const { Wallet } = await import('ethers');
-
-  const privateKey = await resolvePrivateKey(projectRoot);
-  if (!privateKey) {
-    return ''; // Will be set later when wallet is created
-  }
-  return new Wallet(privateKey).address;
-}
