@@ -23,6 +23,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { computeConfigHash, serializeAgirailsMd } from '../../config/agirailsmd';
 import { preparePublish, extractRegistrationParams, PENDING_ENDPOINT } from '../../config/publishPipeline';
 import { savePendingPublish, getActpDir } from '../../config/pendingPublish';
+import { addToGitignore, loadConfig, saveConfig, isInitialized } from '../utils/config';
 import { FilebaseClient } from '../../storage/FilebaseClient';
 import { ArweaveClient } from '../../storage/ArweaveClient';
 import { generateWallet } from '../utils/wallet';
@@ -172,15 +173,64 @@ async function runPublish(
     const { frontmatter, body } = result;
     const regParams = extractRegistrationParams(frontmatter as Record<string, unknown>);
 
-    // Save pending-publish.json
-    savePendingPublish({
-      version: 1,
+    const pendingData = {
+      version: 1 as const,
       configHash: result.configHash,
       cid: result.cid,
       endpoint: regParams.endpoint,
       serviceDescriptors: regParams.serviceDescriptors,
       createdAt: new Date().toISOString(),
-    });
+    };
+
+    // Detect mode from config (if initialized)
+    const projectRoot = resolve(filePath, '..');
+    let detectedMode: 'testnet' | 'mainnet' | undefined;
+    try {
+      if (isInitialized(projectRoot)) {
+        const config = loadConfig(projectRoot);
+        if (config.mode === 'testnet' || config.mode === 'mainnet') {
+          detectedMode = config.mode;
+        }
+      }
+    } catch {
+      // Best-effort mode detection
+    }
+
+    // Testnet: immediate on-chain activation during publish
+    let testnetTxHash: string | undefined;
+    if (detectedMode === 'testnet') {
+      const activationSpinner = output.spinner('Activating on testnet...');
+      try {
+        testnetTxHash = await activateOnTestnet(
+          projectRoot, result.configHash, result.cid,
+          regParams.endpoint, regParams.serviceDescriptors, output,
+        );
+        activationSpinner.stop(true);
+        output.success(`Testnet activation: ${testnetTxHash}`);
+      } catch (activationError) {
+        activationSpinner.stop(false);
+        // Save testnet pending as fallback — will activate on first payment
+        savePendingPublish({ ...pendingData, network: 'base-sepolia' });
+        output.warning(
+          `Testnet activation failed: ${(activationError as Error).message}\n` +
+          '  Saved as pending — will activate on first payment.'
+        );
+      }
+    }
+
+    // Always save mainnet pending (lazy — activates on first mainnet payment)
+    savePendingPublish({ ...pendingData, network: 'base-mainnet' });
+
+    // Local setup: migrate config (strip deprecated `registered` field) and ensure .gitignore
+    try {
+      if (isInitialized(projectRoot)) {
+        const config = loadConfig(projectRoot);
+        saveConfig(config, projectRoot); // loadConfig already strips `registered`
+      }
+    } catch {
+      // Config migration is best-effort
+    }
+    addToGitignore(projectRoot);
 
     // Update AGIRAILS.md frontmatter
     const updatedFrontmatter = {
@@ -200,18 +250,26 @@ async function runPublish(
         cid: result.cid,
         arweaveTxId: result.arweaveTxId || null,
         pendingPublish: true,
+        testnetActivated: !!testnetTxHash,
+        ...(testnetTxHash ? { testnetTxHash } : {}),
       },
       { quietKey: 'configHash' }
     );
 
     output.blank();
     output.success('Config published to IPFS and saved locally.');
+
+    if (testnetTxHash) {
+      output.print('');
+      output.success('Testnet: activated on-chain.');
+    }
+
     output.print('');
-    output.print('On-chain activation will happen automatically on your first payment.');
+    output.print('Mainnet: on-chain activation will happen on your first payment.');
     output.print('');
     output.print('Next steps:');
     output.print('  - Verify config:  actp diff');
-    output.print('  - Make a payment: your first payment activates the agent on-chain');
+    output.print('  - Make a payment: your first mainnet payment activates the agent on-chain');
 
     // Warn if placeholder endpoint
     if (!frontmatter.endpoint || frontmatter.endpoint === PENDING_ENDPOINT) {
@@ -225,4 +283,117 @@ async function runPublish(
     spinner.stop(false);
     throw error;
   }
+}
+
+// ============================================================================
+// Testnet Activation
+// ============================================================================
+
+/**
+ * Activate agent on testnet during `actp publish`.
+ *
+ * SPEC v4 Step 3: register + publishConfig + setListed + mint test USDC
+ * in a single gasless UserOp.
+ *
+ * @returns Transaction hash of the UserOp
+ */
+async function activateOnTestnet(
+  projectRoot: string,
+  configHash: string,
+  cid: string,
+  endpoint: string,
+  serviceDescriptors: import('../../types/agent').ServiceDescriptor[],
+  output: Output,
+): Promise<string> {
+  const { resolvePrivateKey } = await import('../../wallet/keystore');
+  const { ethers } = await import('ethers');
+  const { getNetwork } = await import('../../config/networks');
+  const { AutoWalletProvider } = await import('../../wallet/AutoWalletProvider');
+  const { buildActivationBatch, buildTestnetMintBatch } = await import('../../wallet/aa/TransactionBatcher');
+  const { getOnChainAgentState, detectLazyPublishScenario } = await import('../../ACTPClient');
+  type SmartWalletCall = import('../../wallet/aa/constants').SmartWalletCall;
+
+  const privateKey = await resolvePrivateKey(projectRoot);
+  if (!privateKey) {
+    throw new Error('No wallet found. Cannot activate on testnet.');
+  }
+
+  const networkConfig = getNetwork('base-sepolia');
+  if (!networkConfig.aa || !networkConfig.contracts.agentRegistry) {
+    throw new Error('Testnet AA or AgentRegistry not configured.');
+  }
+
+  const provider = new ethers.JsonRpcProvider(networkConfig.rpcUrl);
+  const signer = new ethers.Wallet(privateKey, provider);
+
+  const autoWallet = await AutoWalletProvider.create({
+    signer,
+    provider,
+    chainId: networkConfig.chainId,
+    actpKernelAddress: networkConfig.contracts.actpKernel,
+    bundler: {
+      primaryUrl: networkConfig.aa.bundlerUrls.coinbase,
+      backupUrl: networkConfig.aa.bundlerUrls.pimlico,
+    },
+    paymaster: {
+      primaryUrl: networkConfig.aa.paymasterUrls.coinbase,
+      backupUrl: networkConfig.aa.paymasterUrls.pimlico,
+    },
+  });
+
+  const smartWalletAddress = autoWallet.getAddress();
+  output.info(`Smart Wallet: ${smartWalletAddress}`);
+
+  // Check on-chain state to determine activation scenario
+  const onChainState = await getOnChainAgentState(
+    provider, networkConfig.contracts.agentRegistry, smartWalletAddress
+  );
+  const scenario = detectLazyPublishScenario(onChainState, {
+    version: 1, configHash, cid, endpoint, serviceDescriptors, createdAt: new Date().toISOString(),
+  });
+
+  if (scenario === 'C' || scenario === 'none') {
+    output.info('Testnet: already up-to-date, skipping activation.');
+    return 'already-activated';
+  }
+
+  // Build activation calls
+  const activationCalls = buildActivationBatch({
+    scenario,
+    agentRegistryAddress: networkConfig.contracts.agentRegistry,
+    cid,
+    configHash,
+    listed: true,
+    ...(scenario === 'A' ? { endpoint, serviceDescriptors } : {}),
+  });
+
+  // For scenario A, also mint test USDC
+  let mintCalls: SmartWalletCall[] = [];
+  if (scenario === 'A') {
+    mintCalls = buildTestnetMintBatch(
+      networkConfig.contracts.usdc,
+      smartWalletAddress,
+      '1000000000', // 1000 USDC
+    );
+  }
+
+  const allCalls = [...activationCalls, ...mintCalls];
+  const txRequests = allCalls.map((c) => ({
+    to: c.target,
+    data: c.data,
+    value: c.value.toString(),
+  }));
+
+  output.info(`Submitting ${allCalls.length}-call UserOp...`);
+  const receipt = await autoWallet.sendBatchTransaction(txRequests);
+
+  if (!receipt.success) {
+    throw new Error(`Testnet activation UserOp failed: ${receipt.hash}`);
+  }
+
+  if (scenario === 'A') {
+    output.success('Minted 1,000 test USDC to Smart Wallet');
+  }
+
+  return receipt.hash;
 }

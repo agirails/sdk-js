@@ -78,7 +78,7 @@ import { sdkLogger } from './utils/Logger';
  * @throws Error if path is unsafe
  */
 /** On-chain agent state from AgentRegistry. */
-interface OnChainAgentState {
+export interface OnChainAgentState {
   registeredAt: bigint;
   configHash: string;
   listed: boolean;
@@ -90,7 +90,7 @@ const ZERO_HASH = '0x' + '0'.repeat(64);
  * Read the on-chain agent state from AgentRegistry.
  * Returns registeredAt, configHash, and listed fields.
  */
-async function getOnChainAgentState(
+export async function getOnChainAgentState(
   provider: ethers.JsonRpcProvider,
   registryAddress: string,
   agentAddress: string
@@ -587,6 +587,20 @@ export class ACTPClient {
   private agentRegistryAddress?: string;
 
   /**
+   * Network identifier (e.g. 'base-sepolia', 'base-mainnet').
+   * Used for chain-scoped pending-publish file operations.
+   * @internal
+   */
+  private networkId?: string;
+
+  /**
+   * Whether the pending publish config is stale (AGIRAILS.md changed since last publish).
+   * When true, getActivationCalls() returns empty to prevent stale config going on-chain.
+   * @internal
+   */
+  private pendingIsStale = false;
+
+  /**
    * Private constructor - use ACTPClient.create() factory method.
    */
   private constructor(
@@ -601,6 +615,7 @@ export class ACTPClient {
     lazyScenario: ActivationScenario = 'none',
     pendingPublish: PendingPublish | null = null,
     agentRegistryAddress?: string,
+    networkId?: string,
   ) {
     this.runtime = runtime;
     this.info = info;
@@ -610,6 +625,7 @@ export class ACTPClient {
     this.lazyScenario = lazyScenario;
     this.pendingPublish = pendingPublish;
     this.agentRegistryAddress = agentRegistryAddress;
+    this.networkId = networkId;
     this.basic = new BasicAdapter(runtime, requesterAddress, easHelper, walletProvider, contractAddresses, this);
     this.standard = new StandardAdapter(runtime, requesterAddress, easHelper);
 
@@ -670,6 +686,7 @@ export class ACTPClient {
     let lazyScenario: ActivationScenario = 'none';
     let lazyPending: PendingPublish | null = null;
     let registryAddr: string | undefined;
+    let networkId: string | undefined;
 
     // If custom runtime provided, use it directly
     if (config.runtime) {
@@ -726,6 +743,7 @@ export class ACTPClient {
 
           // Map mode to network config
           const network = config.mode === 'testnet' ? 'base-sepolia' : 'base-mainnet';
+          networkId = network;
           const networkConfig = getNetwork(network);
 
           // Default RPC URL from network config if not provided
@@ -787,9 +805,9 @@ export class ACTPClient {
             registryAddr = config.contracts?.agentRegistry
               ?? networkConfig.contracts.agentRegistry;
 
-            // Load pending publish (may be null)
+            // Load pending publish (may be null) — chain-scoped
             try {
-              lazyPending = loadPendingPublish();
+              lazyPending = loadPendingPublish(network);
             } catch {
               // Ignore file read errors
             }
@@ -805,7 +823,7 @@ export class ACTPClient {
 
                 // Scenario C: stale pending — delete immediately
                 if (lazyScenario === 'C') {
-                  deletePendingPublish();
+                  deletePendingPublish(network);
                   lazyPending = null;
                   lazyScenario = 'none';
                 }
@@ -818,11 +836,15 @@ export class ACTPClient {
                   useAutoWallet = true;
                 }
               } catch {
-                // Registry check failed (e.g. RPC down) — allow AA anyway.
-                // Rationale: don't punish legit registered agents for infra issues.
-                // Paymaster contract allowlist + rate limits prevent abuse.
-                useAutoWallet = true;
-                sdkLogger.warn('AgentRegistry check failed, proceeding with AA wallet');
+                // Registry check failed (e.g. RPC down).
+                // Fail-open only if pending publish exists (agent did `actp publish` → legitimate intent).
+                // Fail-closed otherwise to prevent unregistered agents getting free gas.
+                if (lazyPending) {
+                  useAutoWallet = true;
+                  sdkLogger.warn('AgentRegistry check failed, but pending publish found — proceeding with AA.');
+                } else {
+                  sdkLogger.warn('AgentRegistry check failed and no pending publish — falling back to EOA.');
+                }
               }
             } else {
               // No registry deployed — skip check (early testnet)
@@ -926,12 +948,35 @@ export class ACTPClient {
       walletTier: walletProvider?.getWalletInfo().tier,
     };
 
+    // Staleness check: recompute hash if AGIRAILS.md exists and we have a pending publish
+    let pendingIsStale = false;
+    if (lazyPending && lazyScenario !== 'none' && lazyScenario !== 'C') {
+      try {
+        const mdPath = path.join(process.cwd(), 'AGIRAILS.md');
+        if (fs.existsSync(mdPath)) {
+          const { computeConfigHash } = await import('./config/agirailsmd');
+          const content = fs.readFileSync(mdPath, 'utf-8');
+          const { configHash: currentHash } = computeConfigHash(content);
+          if (currentHash !== lazyPending.configHash) {
+            pendingIsStale = true;
+            sdkLogger.warn(
+              'AGIRAILS.md changed since last publish. Activation skipped. ' +
+              'Run "actp publish" to update.'
+            );
+          }
+        }
+      } catch {
+        // Best-effort: staleness check should not block operation
+      }
+    }
+
     // Pass wallet provider, contract addresses, and lazy publish state to constructor
     const client = new ACTPClient(
       runtime, normalizedAddress, info, easHelper,
       erc8004Bridge, reputationReporter, walletProvider, contractAddresses,
-      lazyScenario, lazyPending, registryAddr,
+      lazyScenario, lazyPending, registryAddr, networkId,
     );
+    client.pendingIsStale = pendingIsStale;
 
     // Drift detection: non-blocking check for AGIRAILS.md sync status
     if (config.mode !== 'mock') {
@@ -1416,6 +1461,11 @@ export class ACTPClient {
       return { calls: [], onSuccess: () => {} };
     }
 
+    // Staleness check: AGIRAILS.md changed since last publish → skip activation
+    if (this.pendingIsStale) {
+      return { calls: [], onSuccess: () => {} };
+    }
+
     const pending = this.pendingPublish;
     if (!pending) {
       return { calls: [], onSuccess: () => {} };
@@ -1439,7 +1489,7 @@ export class ACTPClient {
     const calls = buildActivationBatch(params);
 
     const onSuccess = () => {
-      deletePendingPublish();
+      deletePendingPublish(this.networkId);
       this.lazyScenario = 'none';
       this.pendingPublish = null;
     };
@@ -1463,7 +1513,8 @@ export class ACTPClient {
       if (!existsSync(agirailsMdPath)) {
         // No local file — try cached hash from pending-publish.json
         const { loadPendingPublish: loadPP } = await import('./config/pendingPublish');
-        const pp = loadPP();
+        const driftNetwork = config.mode === 'testnet' ? 'base-sepolia' : 'base-mainnet';
+        const pp = loadPP(driftNetwork);
         if (pp) {
           sdkLogger.info('[AGIRAILS] No AGIRAILS.md found, using cached config hash from pending-publish.json');
         }

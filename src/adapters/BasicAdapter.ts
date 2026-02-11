@@ -240,9 +240,13 @@ export class BasicAdapter extends BaseAdapter implements IAdapter {
         throw new Error(`Batched payment UserOp failed: ${result.hash}`);
       }
 
-      // Delete pending-publish.json on successful activation
+      // Delete pending-publish.json on successful activation (best-effort)
       if (onActivationSuccess) {
-        onActivationSuccess();
+        try {
+          onActivationSuccess();
+        } catch {
+          // Best-effort: activation succeeded, don't crash over cleanup
+        }
       }
 
       return {
