@@ -27,6 +27,7 @@ export function createRegisterCommand(): Command {
   const cmd = new Command('register')
     .description('Register agent on AgentRegistry for gas-free transactions')
     .option('--endpoint <url>', 'Service endpoint URL (overrides AGIRAILS.md)')
+    .option('--force-legacy', 'Bypass deprecation and run legacy registration')
     .option('--json', 'Output as JSON')
     .option('-q, --quiet', 'Minimal output')
     .action(async (options) => {
@@ -41,6 +42,11 @@ export function createRegisterCommand(): Command {
         '  automatically on your first payment (lazy publish).'
       );
       output.blank();
+
+      if (!options.forceLegacy) {
+        output.print('To proceed anyway, use: actp register --force-legacy');
+        return;
+      }
 
       try {
         await runRegister(options, output);

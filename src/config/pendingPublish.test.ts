@@ -4,11 +4,13 @@
  * Tests cover:
  * - save/load roundtrip with BigInt serialization
  * - loadPendingPublish returns null on missing file
- * - deletePendingPublish removes file
+ * - deletePendingPublish removes file and swallows errors
  * - ACTP_DIR env var override
+ * - Chain-scoped (network) pending files
+ * - Legacy fallback migration
  */
 
-import { existsSync, rmSync } from 'fs';
+import { existsSync, rmSync, chmodSync } from 'fs';
 import { join } from 'path';
 import { ethers } from 'ethers';
 import {
@@ -108,6 +110,10 @@ describe('pendingPublish', () => {
     it('should return null when file does not exist', () => {
       expect(loadPendingPublish()).toBeNull();
     });
+
+    it('should return null when network-scoped file does not exist', () => {
+      expect(loadPendingPublish('base-sepolia')).toBeNull();
+    });
   });
 
   describe('deletePendingPublish()', () => {
@@ -123,6 +129,23 @@ describe('pendingPublish', () => {
       // Should not throw
       deletePendingPublish();
     });
+
+    it('should swallow errors on permission issues (Fix 6)', () => {
+      // Create a read-only directory to force unlink errors
+      savePendingPublish(SAMPLE_PENDING);
+      const filePath = getPendingPublishPath();
+      expect(existsSync(filePath)).toBe(true);
+
+      // Make file read-only — unlinkSync may fail on some OSes
+      try {
+        chmodSync(filePath, 0o000);
+        // Should not throw even if unlink fails
+        expect(() => deletePendingPublish()).not.toThrow();
+      } finally {
+        // Restore permissions for cleanup
+        try { chmodSync(filePath, 0o600); } catch { /* ignore */ }
+      }
+    });
   });
 
   describe('ACTP_DIR override', () => {
@@ -136,6 +159,112 @@ describe('pendingPublish', () => {
       const loaded = loadPendingPublish();
       expect(loaded).not.toBeNull();
       expect(loaded!.cid).toBe(SAMPLE_PENDING.cid);
+    });
+  });
+
+  // ========================================================================
+  // Chain-scoped pending-publish (Fix 1)
+  // ========================================================================
+
+  describe('chain-scoped pending publish (Fix 1)', () => {
+    it('should save to network-scoped file when network is set', () => {
+      const pending: PendingPublish = { ...SAMPLE_PENDING, network: 'base-sepolia' };
+      savePendingPublish(pending);
+
+      const scopedPath = getPendingPublishPath('base-sepolia');
+      expect(existsSync(scopedPath)).toBe(true);
+      expect(scopedPath).toContain('pending-publish.base-sepolia.json');
+
+      // Legacy file should NOT exist
+      expect(existsSync(getPendingPublishPath())).toBe(false);
+    });
+
+    it('should load network-scoped file', () => {
+      savePendingPublish({ ...SAMPLE_PENDING, network: 'base-mainnet' });
+
+      const loaded = loadPendingPublish('base-mainnet');
+      expect(loaded).not.toBeNull();
+      expect(loaded!.configHash).toBe(SAMPLE_PENDING.configHash);
+      expect(loaded!.network).toBe('base-mainnet');
+    });
+
+    it('should support testnet and mainnet files coexisting independently', () => {
+      const testnetPending: PendingPublish = {
+        ...SAMPLE_PENDING,
+        configHash: '0x' + 'aa'.repeat(32),
+        network: 'base-sepolia',
+      };
+      const mainnetPending: PendingPublish = {
+        ...SAMPLE_PENDING,
+        configHash: '0x' + 'bb'.repeat(32),
+        network: 'base-mainnet',
+      };
+
+      savePendingPublish(testnetPending);
+      savePendingPublish(mainnetPending);
+
+      const loadedTestnet = loadPendingPublish('base-sepolia');
+      const loadedMainnet = loadPendingPublish('base-mainnet');
+
+      expect(loadedTestnet).not.toBeNull();
+      expect(loadedMainnet).not.toBeNull();
+      expect(loadedTestnet!.configHash).toBe(testnetPending.configHash);
+      expect(loadedMainnet!.configHash).toBe(mainnetPending.configHash);
+    });
+
+    it('should fall back to legacy file when network-scoped file missing', () => {
+      // Save as legacy (no network)
+      savePendingPublish(SAMPLE_PENDING);
+      expect(existsSync(getPendingPublishPath())).toBe(true);
+
+      // Load with network — should fall back to legacy
+      const loaded = loadPendingPublish('base-mainnet');
+      expect(loaded).not.toBeNull();
+      expect(loaded!.configHash).toBe(SAMPLE_PENDING.configHash);
+    });
+
+    it('should prefer network-scoped file over legacy file', () => {
+      // Save both legacy and scoped
+      savePendingPublish(SAMPLE_PENDING); // legacy
+      savePendingPublish({ ...SAMPLE_PENDING, configHash: '0x' + 'cc'.repeat(32), network: 'base-mainnet' });
+
+      const loaded = loadPendingPublish('base-mainnet');
+      expect(loaded!.configHash).toBe('0x' + 'cc'.repeat(32));
+    });
+
+    it('should delete both network-scoped and legacy files on delete', () => {
+      // Save both
+      savePendingPublish(SAMPLE_PENDING); // legacy
+      savePendingPublish({ ...SAMPLE_PENDING, network: 'base-mainnet' });
+
+      expect(existsSync(getPendingPublishPath())).toBe(true);
+      expect(existsSync(getPendingPublishPath('base-mainnet'))).toBe(true);
+
+      deletePendingPublish('base-mainnet');
+      expect(existsSync(getPendingPublishPath('base-mainnet'))).toBe(false);
+      expect(existsSync(getPendingPublishPath())).toBe(false); // legacy also cleaned up
+    });
+
+    it('should only delete legacy file when no network specified', () => {
+      savePendingPublish({ ...SAMPLE_PENDING, network: 'base-sepolia' });
+      savePendingPublish(SAMPLE_PENDING); // legacy
+
+      deletePendingPublish(); // no network
+      expect(existsSync(getPendingPublishPath())).toBe(false);
+      // Network-scoped file should still exist
+      expect(existsSync(getPendingPublishPath('base-sepolia'))).toBe(true);
+    });
+
+    it('should return correct path for network-scoped file', () => {
+      expect(getPendingPublishPath('base-sepolia')).toBe(
+        join(TEST_DIR, 'pending-publish.base-sepolia.json')
+      );
+      expect(getPendingPublishPath('base-mainnet')).toBe(
+        join(TEST_DIR, 'pending-publish.base-mainnet.json')
+      );
+      expect(getPendingPublishPath()).toBe(
+        join(TEST_DIR, 'pending-publish.json')
+      );
     });
   });
 });
