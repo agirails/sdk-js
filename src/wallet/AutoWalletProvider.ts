@@ -191,7 +191,7 @@ export class AutoWalletProvider implements IWalletProvider {
    * Builds approve + createTransaction + linkEscrow as a single UserOp.
    * Manages ACTP nonce inside the mutex queue for concurrent safety.
    */
-  async payACTPBatched(params: BatchedPayParams): Promise<BatchedPayResult> {
+  async payACTPBatched(params: BatchedPayParams, prependCalls?: SmartWalletCall[]): Promise<BatchedPayResult> {
     return this.nonceManager.enqueue(
       async ({ entryPointNonce, actpNonce }) => {
         const batch = buildACTPPayBatch({
@@ -199,7 +199,12 @@ export class AutoWalletProvider implements IWalletProvider {
           actpNonce,
         });
 
-        const receipt = await this.submitUserOp(batch.calls, entryPointNonce);
+        // Combine activation calls (if any) with payment calls
+        const allCalls = prependCalls && prependCalls.length > 0
+          ? [...prependCalls, ...batch.calls]
+          : batch.calls;
+
+        const receipt = await this.submitUserOp(allCalls, entryPointNonce);
 
         return {
           result: {

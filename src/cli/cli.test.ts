@@ -1245,7 +1245,8 @@ describe('AIP-12: Auto-mode Config', () => {
       const loaded = loadConfig(testDir);
 
       expect(loaded.smartWallet).toBe('0x2222222222222222222222222222222222222222');
-      expect(loaded.registered).toBe(true);
+      // registered field is stripped by config migration (lazy publish)
+      expect(loaded.registered).toBeUndefined();
     });
 
     it('should handle config without smartWallet (backward compat)', () => {
@@ -1279,9 +1280,10 @@ describe('AIP-12: Auto-mode Config', () => {
 
       // address should be EOA (not Smart Wallet)
       expect(loaded.address).toBe(eoaAddress);
-      // smartWallet is still available for later registration
+      // smartWallet is still available for later publish
       expect(loaded.smartWallet).toBe(smartWalletAddress);
-      expect(loaded.registered).toBe(false);
+      // registered field is stripped by config migration (lazy publish)
+      expect(loaded.registered).toBeUndefined();
     });
 
     it('should store Smart Wallet as address when registered', () => {
@@ -1299,7 +1301,8 @@ describe('AIP-12: Auto-mode Config', () => {
       const loaded = loadConfig(testDir);
 
       expect(loaded.address).toBe(smartWalletAddress);
-      expect(loaded.registered).toBe(true);
+      // registered field is stripped by config migration (lazy publish)
+      expect(loaded.registered).toBeUndefined();
     });
   });
 });

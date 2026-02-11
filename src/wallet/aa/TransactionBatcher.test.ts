@@ -15,6 +15,9 @@ import {
   buildRegisterAgentBatch,
   buildTestnetMintBatch,
   buildTestnetInitBatch,
+  buildPublishConfigBatch,
+  buildSetListedBatch,
+  buildActivationBatch,
 } from './TransactionBatcher';
 import { ServiceDescriptor } from '../../types/agent';
 
@@ -218,6 +221,137 @@ describe('TransactionBatcher', () => {
       expect(calls).toHaveLength(2);
       expect(calls[0].target).toBe(REGISTRY); // registerAgent
       expect(calls[1].target).toBe(USDC);     // mint
+    });
+  });
+
+  // ==========================================================================
+  // Lazy Publish — Activation Batch Tests
+  // ==========================================================================
+
+  const TEST_SERVICE: ServiceDescriptor = {
+    serviceTypeHash: ethers.keccak256(ethers.toUtf8Bytes('text-generation')),
+    serviceType: 'text-generation',
+    schemaURI: '',
+    minPrice: 0n,
+    maxPrice: 1_000_000_000n,
+    avgCompletionTime: 3600,
+    metadataCID: '',
+  };
+
+  const TEST_CID = 'bafybeiexamplecid123456789';
+  const TEST_HASH = '0x' + 'ab'.repeat(32);
+
+  describe('buildPublishConfigBatch()', () => {
+    it('should produce a single call targeting registry', () => {
+      const calls = buildPublishConfigBatch(REGISTRY, TEST_CID, TEST_HASH);
+      expect(calls).toHaveLength(1);
+      expect(calls[0].target).toBe(REGISTRY);
+      expect(calls[0].value).toBe(0n);
+    });
+
+    it('should encode publishConfig calldata correctly', () => {
+      const calls = buildPublishConfigBatch(REGISTRY, TEST_CID, TEST_HASH);
+      const iface = new ethers.Interface([
+        'function publishConfig(string cid, bytes32 configHash)',
+      ]);
+      const decoded = iface.decodeFunctionData('publishConfig', calls[0].data);
+      expect(decoded[0]).toBe(TEST_CID);
+      expect(decoded[1]).toBe(TEST_HASH);
+    });
+  });
+
+  describe('buildSetListedBatch()', () => {
+    it('should produce a single call targeting registry', () => {
+      const calls = buildSetListedBatch(REGISTRY, true);
+      expect(calls).toHaveLength(1);
+      expect(calls[0].target).toBe(REGISTRY);
+      expect(calls[0].value).toBe(0n);
+    });
+
+    it('should encode setListed(true) correctly', () => {
+      const calls = buildSetListedBatch(REGISTRY, true);
+      const iface = new ethers.Interface(['function setListed(bool listed)']);
+      const decoded = iface.decodeFunctionData('setListed', calls[0].data);
+      expect(decoded[0]).toBe(true);
+    });
+
+    it('should encode setListed(false) correctly', () => {
+      const calls = buildSetListedBatch(REGISTRY, false);
+      const iface = new ethers.Interface(['function setListed(bool listed)']);
+      const decoded = iface.decodeFunctionData('setListed', calls[0].data);
+      expect(decoded[0]).toBe(false);
+    });
+  });
+
+  describe('buildActivationBatch()', () => {
+    it('scenario A: should produce 3 calls (register + publish + list)', () => {
+      const calls = buildActivationBatch({
+        scenario: 'A',
+        agentRegistryAddress: REGISTRY,
+        cid: TEST_CID,
+        configHash: TEST_HASH,
+        endpoint: 'https://agent.example.com',
+        serviceDescriptors: [TEST_SERVICE],
+        listed: true,
+      });
+      expect(calls).toHaveLength(3);
+      // All target the registry
+      expect(calls[0].target).toBe(REGISTRY); // registerAgent
+      expect(calls[1].target).toBe(REGISTRY); // publishConfig
+      expect(calls[2].target).toBe(REGISTRY); // setListed
+    });
+
+    it('scenario A: should throw if missing endpoint or serviceDescriptors', () => {
+      expect(() => buildActivationBatch({
+        scenario: 'A',
+        agentRegistryAddress: REGISTRY,
+        cid: TEST_CID,
+        configHash: TEST_HASH,
+      })).toThrow('Scenario A requires endpoint and serviceDescriptors');
+    });
+
+    it('scenario B1: should produce 2 calls (publish + list)', () => {
+      const calls = buildActivationBatch({
+        scenario: 'B1',
+        agentRegistryAddress: REGISTRY,
+        cid: TEST_CID,
+        configHash: TEST_HASH,
+        listed: true,
+      });
+      expect(calls).toHaveLength(2);
+      expect(calls[0].target).toBe(REGISTRY); // publishConfig
+      expect(calls[1].target).toBe(REGISTRY); // setListed
+    });
+
+    it('scenario B2: should produce 1 call (publish only)', () => {
+      const calls = buildActivationBatch({
+        scenario: 'B2',
+        agentRegistryAddress: REGISTRY,
+        cid: TEST_CID,
+        configHash: TEST_HASH,
+      });
+      expect(calls).toHaveLength(1);
+      expect(calls[0].target).toBe(REGISTRY); // publishConfig
+    });
+
+    it('scenario C: should produce 0 calls', () => {
+      const calls = buildActivationBatch({
+        scenario: 'C',
+        agentRegistryAddress: REGISTRY,
+        cid: TEST_CID,
+        configHash: TEST_HASH,
+      });
+      expect(calls).toHaveLength(0);
+    });
+
+    it('scenario none: should produce 0 calls', () => {
+      const calls = buildActivationBatch({
+        scenario: 'none',
+        agentRegistryAddress: REGISTRY,
+        cid: TEST_CID,
+        configHash: TEST_HASH,
+      });
+      expect(calls).toHaveLength(0);
     });
   });
 });

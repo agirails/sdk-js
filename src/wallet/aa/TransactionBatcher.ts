@@ -154,6 +154,8 @@ export function buildACTPPayBatch(params: ACTPBatchParams): ACTPBatchResult {
  */
 const AGENT_REGISTRY_ABI = [
   'function registerAgent(string endpoint, (bytes32 serviceTypeHash, string serviceType, string schemaURI, uint256 minPrice, uint256 maxPrice, uint256 avgCompletionTime, string metadataCID)[] serviceDescriptors)',
+  'function publishConfig(string cid, bytes32 configHash)',
+  'function setListed(bool listed)',
 ];
 
 /**
@@ -237,4 +239,115 @@ export function buildTestnetInitBatch(params: {
     params.mintAmount
   );
   return [...registerCalls, ...mintCalls];
+}
+
+// ============================================================================
+// Lazy Publish — Activation Batch Builders
+// ============================================================================
+
+/**
+ * Lazy publish activation scenario.
+ *
+ * - 'A': First activation — registerAgent + publishConfig + setListed (3 calls)
+ * - 'B1': Re-publish with listing change — publishConfig + setListed (2 calls)
+ * - 'B2': Re-publish config only — publishConfig (1 call)
+ * - 'C': Stale pending — delete pending-publish.json, no calls
+ * - 'none': No pending publish, normal flow
+ */
+export type ActivationScenario = 'A' | 'B1' | 'B2' | 'C' | 'none';
+
+/**
+ * Parameters for building an activation batch.
+ */
+export interface ActivationBatchParams {
+  /** Activation scenario */
+  scenario: ActivationScenario;
+  /** AgentRegistry contract address */
+  agentRegistryAddress: string;
+  /** IPFS CID of the published AGIRAILS.md */
+  cid: string;
+  /** Canonical config hash (bytes32) */
+  configHash: string;
+  /** Agent endpoint URL (for scenario A registration) */
+  endpoint?: string;
+  /** Service descriptors (for scenario A registration) */
+  serviceDescriptors?: ServiceDescriptor[];
+  /** Whether to set listed=true (for scenarios A, B1) */
+  listed?: boolean;
+}
+
+/**
+ * Build a publishConfig batch call for AgentRegistry.
+ *
+ * @param agentRegistryAddress - AgentRegistry contract address
+ * @param cid - IPFS CID of the uploaded AGIRAILS.md
+ * @param configHash - Canonical config hash (bytes32)
+ */
+export function buildPublishConfigBatch(
+  agentRegistryAddress: string,
+  cid: string,
+  configHash: string
+): SmartWalletCall[] {
+  const iface = new ethers.Interface(AGENT_REGISTRY_ABI);
+  const data = iface.encodeFunctionData('publishConfig', [cid, configHash]);
+  return [{ target: agentRegistryAddress, value: 0n, data }];
+}
+
+/**
+ * Build a setListed batch call for AgentRegistry.
+ *
+ * @param agentRegistryAddress - AgentRegistry contract address
+ * @param listed - Whether to list the agent
+ */
+export function buildSetListedBatch(
+  agentRegistryAddress: string,
+  listed: boolean
+): SmartWalletCall[] {
+  const iface = new ethers.Interface(AGENT_REGISTRY_ABI);
+  const data = iface.encodeFunctionData('setListed', [listed]);
+  return [{ target: agentRegistryAddress, value: 0n, data }];
+}
+
+/**
+ * Build the full activation batch based on scenario.
+ *
+ * Scenario call counts:
+ * - A: registerAgent + publishConfig + setListed = 3 calls
+ * - B1: publishConfig + setListed = 2 calls
+ * - B2: publishConfig = 1 call
+ * - C/none: empty (0 calls)
+ */
+export function buildActivationBatch(params: ActivationBatchParams): SmartWalletCall[] {
+  const { scenario, agentRegistryAddress, cid, configHash } = params;
+
+  switch (scenario) {
+    case 'A': {
+      // First activation: register + publish + list
+      if (!params.endpoint || !params.serviceDescriptors || params.serviceDescriptors.length === 0) {
+        throw new Error('Scenario A requires endpoint and serviceDescriptors');
+      }
+      const registerCalls = buildRegisterAgentBatch(
+        agentRegistryAddress,
+        params.endpoint,
+        params.serviceDescriptors
+      );
+      const publishCalls = buildPublishConfigBatch(agentRegistryAddress, cid, configHash);
+      const listCalls = buildSetListedBatch(agentRegistryAddress, params.listed ?? true);
+      return [...registerCalls, ...publishCalls, ...listCalls];
+    }
+    case 'B1': {
+      // Re-publish with listing: publish + list
+      const publishCalls = buildPublishConfigBatch(agentRegistryAddress, cid, configHash);
+      const listCalls = buildSetListedBatch(agentRegistryAddress, params.listed ?? true);
+      return [...publishCalls, ...listCalls];
+    }
+    case 'B2': {
+      // Re-publish config only
+      return buildPublishConfigBatch(agentRegistryAddress, cid, configHash);
+    }
+    case 'C':
+    case 'none':
+      // Stale or no pending — no activation calls
+      return [];
+  }
 }
