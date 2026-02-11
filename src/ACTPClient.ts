@@ -11,10 +11,9 @@
  *
  * @example
  * ```typescript
- * // Create client in mock mode
+ * // Create client (auto-detects wallet from .actp/keystore.json or env vars)
  * const client = await ACTPClient.create({
  *   mode: 'mock',
- *   requesterAddress: '0x1234...',
  * });
  *
  * // Basic API - simplest approach
@@ -734,11 +733,22 @@ export class ACTPClient {
 
         case 'testnet':
         case 'mainnet': {
-          // Validate required parameters for blockchain modes
+          // Auto-detect private key from keystore / env var if not provided
           if (!config.privateKey) {
-            throw new Error(
-              `privateKey is required for ${config.mode} mode`
-            );
+            const { resolvePrivateKey } = await import('./wallet/keystore');
+            const resolved = await resolvePrivateKey(config.stateDirectory);
+            if (resolved) {
+              config = { ...config, privateKey: resolved };
+            } else {
+              throw new Error(
+                `No wallet found for ${config.mode} mode.\n\n` +
+                'Provide a private key via one of:\n' +
+                '  1. ACTP_KEY_PASSWORD env var + .actp/keystore.json (recommended)\n' +
+                '  2. ACTP_PRIVATE_KEY env var\n' +
+                '  3. privateKey option in ACTPClient.create()\n' +
+                '  4. Run "actp publish" to generate a wallet automatically'
+              );
+            }
           }
 
           // Map mode to network config
@@ -756,7 +766,8 @@ export class ACTPClient {
 
           // Create ethers provider and signer
           const provider = new ethers.JsonRpcProvider(rpcUrl);
-          const signer = new ethers.Wallet(config.privateKey, provider);
+          const privateKey = config.privateKey!; // Guaranteed by auto-detect above
+          const signer = new ethers.Wallet(privateKey, provider);
 
           // ====================================================================
           // AIP-12: Wallet Provider Selection
