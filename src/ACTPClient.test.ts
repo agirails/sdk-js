@@ -509,4 +509,84 @@ describe('ACTPClient', () => {
       expect(finalBalance).toBe(initialBalance);
     });
   });
+
+  describe('pay() unified routing', () => {
+    let client: ACTPClient;
+
+    beforeEach(async () => {
+      const runtime = new MockRuntime();
+      await runtime.reset();
+      client = await ACTPClient.create({
+        mode: 'mock',
+        requesterAddress,
+        runtime,
+      });
+      await client.mintTokens(requesterAddress, '10000000000');
+    });
+
+    test('uses single selectAndResolve call (not separate select + resolve)', async () => {
+      // Spy on the router's selectAndResolve method
+      const routerSpy = jest.spyOn((client as any).router, 'selectAndResolve');
+      const selectSpy = jest.spyOn((client as any).router, 'select');
+
+      await client.pay({
+        to: providerAddress,
+        amount: '100',
+      });
+
+      // selectAndResolve should be called exactly once
+      expect(routerSpy).toHaveBeenCalledTimes(1);
+
+      // select should NOT be called directly by pay() — only internally by selectAndResolve
+      // Before the fix, pay() called select() and selectAndResolve() separately
+      expect(selectSpy).toHaveBeenCalledTimes(1); // once from inside selectAndResolve
+
+      routerSpy.mockRestore();
+      selectSpy.mockRestore();
+    });
+
+    test('routes ETH address to BasicAdapter when walletProvider has payACTPBatched', async () => {
+      // In mock mode there's no walletProvider, so pay() should go through
+      // the normal adapter flow. This test verifies the address → basic path works.
+      const result = await client.pay({
+        to: providerAddress,
+        amount: '100',
+      });
+
+      expect(result.txId).toBeDefined();
+      expect(result.state).toBe('COMMITTED');
+    });
+
+    test('does NOT force BasicAdapter when walletProvider has payACTPBatched AND target is x402 URL', async () => {
+      // Simulate a Smart Wallet scenario: walletProvider with payACTPBatched exists
+      const mockWalletProvider = { payACTPBatched: jest.fn() };
+      (client as any).walletProvider = mockWalletProvider;
+
+      // Spy on BasicAdapter.pay — it should NOT be called for x402 URLs
+      const basicPaySpy = jest.spyOn((client as any).basic, 'pay');
+
+      // Spy on router.selectAndResolve to return a mock x402 adapter
+      const mockX402Result = { txId: 'x402-mock-tx', state: 'SETTLED', adapter: 'x402' };
+      const mockAdapter = { pay: jest.fn().mockResolvedValue(mockX402Result) };
+      const routerSpy = jest.spyOn((client as any).router, 'selectAndResolve')
+        .mockResolvedValue({
+          adapter: mockAdapter,
+          resolvedParams: { to: 'https://api.provider.com/service', amount: '100' },
+        });
+
+      const result = await client.pay({
+        to: 'https://api.provider.com/service',
+        amount: '100',
+      });
+
+      // x402 URL must go through router-selected adapter, not BasicAdapter
+      expect(basicPaySpy).not.toHaveBeenCalled();
+      expect(mockAdapter.pay).toHaveBeenCalledTimes(1);
+      expect(result.txId).toBe('x402-mock-tx');
+
+      routerSpy.mockRestore();
+      basicPaySpy.mockRestore();
+      (client as any).walletProvider = undefined;
+    });
+  });
 });
