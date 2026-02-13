@@ -10,11 +10,24 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { Wallet } from 'ethers';
 
+/** 30-minute TTL for cached private keys */
+const CACHE_TTL_MS = 30 * 60 * 1000;
+
+interface CacheEntry {
+  key: string;
+  address: string;
+  expiresAt: number;
+}
+
 // Cache keyed by resolved keystorePath to support multiple stateDirectories
-const _cache = new Map<string, { key: string; address: string }>();
+const _cache = new Map<string, CacheEntry>();
 
 // Separate cache for env-var-resolved key (no path dependency)
-let _envCache: { key: string; address: string } | null = null;
+let _envCache: CacheEntry | null = null;
+
+function isExpired(entry: CacheEntry): boolean {
+  return Date.now() >= entry.expiresAt;
+}
 
 /**
  * Validate that stateDirectory doesn't escape expected boundaries.
@@ -54,11 +67,11 @@ export async function resolvePrivateKey(
 ): Promise<string | undefined> {
   // 1. Env var (highest priority, backward compat)
   if (process.env.ACTP_PRIVATE_KEY) {
-    if (_envCache) return _envCache.key;
+    if (_envCache && !isExpired(_envCache)) return _envCache.key;
 
     const key = validateRawKey(process.env.ACTP_PRIVATE_KEY, 'ACTP_PRIVATE_KEY env var');
     const address = new Wallet(key).address;
-    _envCache = { key, address };
+    _envCache = { key, address, expiresAt: Date.now() + CACHE_TTL_MS };
     return key;
   }
 
@@ -71,9 +84,10 @@ export async function resolvePrivateKey(
     : path.join(process.cwd(), '.actp');
   const keystorePath = path.resolve(actpDir, 'keystore.json');
 
-  // 3. Cache hit (keyed by resolved path)
+  // 3. Cache hit (keyed by resolved path, with TTL)
   const cached = _cache.get(keystorePath);
-  if (cached) return cached.key;
+  if (cached && !isExpired(cached)) return cached.key;
+  if (cached) _cache.delete(keystorePath); // expired
 
   // 4. Keystore file
   if (!fs.existsSync(keystorePath)) return undefined;
@@ -89,7 +103,7 @@ export async function resolvePrivateKey(
   const keystore = fs.readFileSync(keystorePath, 'utf-8');
   const wallet = await Wallet.fromEncryptedJson(keystore, password);
 
-  _cache.set(keystorePath, { key: wallet.privateKey, address: wallet.address });
+  _cache.set(keystorePath, { key: wallet.privateKey, address: wallet.address, expiresAt: Date.now() + CACHE_TTL_MS });
   return wallet.privateKey;
 }
 
@@ -99,14 +113,16 @@ export async function resolvePrivateKey(
  */
 export function getCachedAddress(stateDirectory?: string): string | undefined {
   // Env var path
-  if (_envCache) return _envCache.address;
+  if (_envCache && !isExpired(_envCache)) return _envCache.address;
 
   // Keystore path — look up by resolved path
   const actpDir = stateDirectory
     ? path.join(stateDirectory, '.actp')
     : path.join(process.cwd(), '.actp');
   const keystorePath = path.resolve(actpDir, 'keystore.json');
-  return _cache.get(keystorePath)?.address;
+  const cached = _cache.get(keystorePath);
+  if (cached && !isExpired(cached)) return cached.address;
+  return undefined;
 }
 
 /**

@@ -14,7 +14,7 @@
  * @module config/pendingPublish
  */
 
-import { readFileSync, writeFileSync, unlinkSync, existsSync, mkdirSync } from 'fs';
+import { readFileSync, writeFileSync, unlinkSync, existsSync, mkdirSync, renameSync, lstatSync } from 'fs';
 import { join } from 'path';
 import { ServiceDescriptor } from '../types/agent';
 
@@ -135,8 +135,15 @@ export function getPendingPublishPath(network?: string): string {
  */
 export function savePendingPublish(pending: PendingPublish): void {
   const dir = getActpDir();
-  if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true });
+
+  // Verify .actp/ is a real directory (not a symlink — symlink attack prevention)
+  if (existsSync(dir)) {
+    const stat = lstatSync(dir);
+    if (!stat.isDirectory() || stat.isSymbolicLink()) {
+      throw new Error(`Security: ${dir} is not a real directory (symlink attack prevention)`);
+    }
+  } else {
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
   }
 
   const serialized: SerializedPendingPublish = {
@@ -150,7 +157,11 @@ export function savePendingPublish(pending: PendingPublish): void {
   };
 
   const filePath = getPendingPublishPath(pending.network);
-  writeFileSync(filePath, JSON.stringify(serialized, null, 2), { mode: 0o600 });
+  const tmpPath = filePath + '.tmp';
+
+  // Atomic write: write to .tmp with restricted mode, then rename
+  writeFileSync(tmpPath, JSON.stringify(serialized, null, 2), { mode: 0o600 });
+  renameSync(tmpPath, filePath);
 }
 
 /**
