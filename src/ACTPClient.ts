@@ -1241,7 +1241,18 @@ export class ACTPClient {
    */
   async pay(params: UnifiedPayParams): Promise<UnifiedPayResult> {
     // Use selectAndResolve to auto-resolve ERC-8004 agent IDs to wallet addresses
-    const { adapter, resolvedParams } = await this.router.selectAndResolve(params);
+    const { resolvedParams } = await this.router.selectAndResolve(params);
+
+    // When a wallet provider with batched support is available (AA/Smart Wallet),
+    // always route to BasicAdapter which has the payACTPBatched path.
+    // StandardAdapter lacks batched support and would send raw txs from the EOA
+    // signer, causing "Requester mismatch" on-chain (msg.sender != Smart Wallet).
+    if (this.walletProvider?.payACTPBatched) {
+      return this.basic.pay(resolvedParams);
+    }
+
+    // Fallback: use router-selected adapter (legacy EOA / mock mode)
+    const { adapter } = await this.router.selectAndResolve(params);
     return adapter.pay(resolvedParams);
   }
 
