@@ -168,10 +168,12 @@ export function extractRegistrationParams(
   }
 
   throw new Error(
-    'AGIRAILS.md must have "services" or "capabilities" in frontmatter for agent registration.\n' +
+    'AGIRAILS.md must have "services" (with type field) or "capabilities" in frontmatter for agent registration.\n' +
     'Add at least one, e.g.:\n' +
-    '  capabilities:\n' +
-    '    - text-generation\n'
+    '  services:\n' +
+    '    - name: my-service\n' +
+    '      type: text-generation\n' +
+    '      price: 1.00\n'
   );
 }
 
