@@ -20,13 +20,66 @@ import { Output, ExitCode } from '../utils/output';
 import { mapError } from '../utils/client';
 import { resolve, join } from 'path';
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
-import { computeConfigHash, serializeAgirailsMd } from '../../config/agirailsmd';
+import { computeConfigHash, serializeAgirailsMd, parseAgirailsMd } from '../../config/agirailsmd';
 import { preparePublish, extractRegistrationParams, PENDING_ENDPOINT } from '../../config/publishPipeline';
 import { savePendingPublish, getActpDir } from '../../config/pendingPublish';
 import { addToGitignore, loadConfig, saveConfig, isInitialized, CLIConfig, CONFIG_DEFAULTS } from '../utils/config';
 import { FilebaseClient } from '../../storage/FilebaseClient';
 import { ArweaveClient } from '../../storage/ArweaveClient';
 import { generateWallet } from '../utils/wallet';
+
+// ============================================================================
+// Publish Proxy (fallback when no Filebase credentials)
+// ============================================================================
+
+const PUBLISH_PROXY_URL = process.env.AGIRAILS_PUBLISH_URL || 'https://api.agirails.io/v1/publish';
+
+/**
+ * Public client key for the AGIRAILS publish proxy.
+ * This is NOT a secret — it's a rate-limited, revocable identifier
+ * (same model as Firebase API keys). Override via AGIRAILS_PUBLISH_KEY.
+ */
+const PUBLISH_CLIENT_KEY = process.env.AGIRAILS_PUBLISH_KEY || 'ag_pub_v1_2026';
+
+/**
+ * Upload AGIRAILS.md content via the AGIRAILS publish proxy API.
+ * Used when FILEBASE_ACCESS_KEY / FILEBASE_SECRET_KEY are not set.
+ *
+ * @param content - Raw AGIRAILS.md file content
+ * @param localConfigHash - Locally computed configHash (for validation)
+ */
+async function publishViaProxy(content: string, localConfigHash: string): Promise<{ cid: string; configHash: string }> {
+  const response = await fetch(PUBLISH_PROXY_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-API-Key': PUBLISH_CLIENT_KEY,
+    },
+    body: JSON.stringify({ content }),
+  });
+
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({ error: response.statusText })) as { error?: string };
+    throw new Error(`Publish proxy error (${response.status}): ${body.error || response.statusText}`);
+  }
+
+  const result = await response.json() as { cid: string; configHash: string };
+  if (!result.cid || !result.configHash) {
+    throw new Error('Publish proxy returned invalid response (missing cid or configHash)');
+  }
+
+  // Validate: proxy's configHash must match locally computed hash
+  // (guards against hash-drift between SDK and API canonicalization logic)
+  if (result.configHash !== localConfigHash) {
+    throw new Error(
+      `Config hash mismatch: proxy returned ${result.configHash.slice(0, 10)}... ` +
+      `but local hash is ${localConfigHash.slice(0, 10)}... — ` +
+      'This may indicate an SDK/API version mismatch. Update your SDK.'
+    );
+  }
+
+  return result;
+}
 
 // ============================================================================
 // Command Definition
@@ -139,53 +192,66 @@ async function runPublish(
       }
     }
 
-    // Validate Filebase credentials
+    // Upload to IPFS: direct (Filebase) or via publish proxy
     const filebaseAccessKey = process.env.FILEBASE_ACCESS_KEY;
     const filebaseSecretKey = process.env.FILEBASE_SECRET_KEY;
-    if (!filebaseAccessKey || !filebaseSecretKey) {
-      spinner.stop(false);
-      output.error('Filebase credentials required. Set FILEBASE_ACCESS_KEY and FILEBASE_SECRET_KEY.');
-      process.exit(ExitCode.INVALID_INPUT);
-    }
-
-    const filebaseClient = new FilebaseClient({
-      accessKey: filebaseAccessKey,
-      secretKey: filebaseSecretKey,
-    });
-
-    // Create Arweave client (optional)
-    let arweaveClient: ArweaveClient | undefined;
-    if (!options.skipArweave) {
-      const arweaveKey = process.env.ARCHIVE_UPLOADER_KEY;
-      if (arweaveKey) {
-        arweaveClient = await ArweaveClient.create({
-          privateKey: arweaveKey,
-          rpcUrl: 'https://mainnet.base.org', // Only used for Arweave upload
-        });
-      }
-    }
+    const useProxy = !filebaseAccessKey || !filebaseSecretKey;
 
     spinner.stop(true);
+
+    if (useProxy) {
+      output.info('No Filebase credentials — using AGIRAILS publish proxy.');
+    }
+
     const publishSpinner = output.spinner('Publishing to IPFS...');
 
-    // Prepare publish (IPFS + hash, no on-chain)
-    const result = await preparePublish({
-      path: resolvedPath,
-      filebaseClient,
-      arweaveClient,
-      skipArweave: options.skipArweave || !arweaveClient,
-    });
+    let cid: string;
+    let arweaveTxId: string | undefined;
+
+    if (useProxy) {
+      // Fallback: upload via AGIRAILS publish proxy API
+      const proxyResult = await publishViaProxy(content, configHash);
+      cid = proxyResult.cid;
+      // Proxy doesn't do Arweave — skip
+    } else {
+      // Direct upload via Filebase S3 + optional Arweave
+      const filebaseClient = new FilebaseClient({
+        accessKey: filebaseAccessKey,
+        secretKey: filebaseSecretKey,
+      });
+
+      let arweaveClient: ArweaveClient | undefined;
+      if (!options.skipArweave) {
+        const arweaveKey = process.env.ARCHIVE_UPLOADER_KEY;
+        if (arweaveKey) {
+          arweaveClient = await ArweaveClient.create({
+            privateKey: arweaveKey,
+            rpcUrl: 'https://mainnet.base.org',
+          });
+        }
+      }
+
+      const prepResult = await preparePublish({
+        path: resolvedPath,
+        filebaseClient,
+        arweaveClient,
+        skipArweave: options.skipArweave || !arweaveClient,
+      });
+
+      cid = prepResult.cid;
+      arweaveTxId = prepResult.arweaveTxId;
+    }
 
     publishSpinner.stop(true);
 
-    // Extract registration params for pending publish
-    const { frontmatter, body } = result;
+    // Parse frontmatter for registration params
+    const { frontmatter, body } = parseAgirailsMd(content);
     const regParams = extractRegistrationParams(frontmatter as Record<string, unknown>);
 
     const pendingData = {
       version: 1 as const,
-      configHash: result.configHash,
-      cid: result.cid,
+      configHash,
+      cid,
       endpoint: regParams.endpoint,
       serviceDescriptors: regParams.serviceDescriptors,
       createdAt: new Date().toISOString(),
@@ -226,7 +292,7 @@ async function runPublish(
     const activationSpinner = output.spinner('Activating on testnet...');
     try {
       testnetTxHash = await activateOnTestnet(
-        projectRoot, result.configHash, result.cid,
+        projectRoot, configHash, cid,
         regParams.endpoint, regParams.serviceDescriptors, output,
       );
       activationSpinner.stop(true);
@@ -251,10 +317,10 @@ async function runPublish(
     // Update AGIRAILS.md frontmatter
     const updatedFrontmatter = {
       ...(frontmatter as Record<string, unknown>),
-      config_hash: result.configHash,
-      config_cid: result.cid,
+      config_hash: configHash,
+      config_cid: cid,
       published_at: new Date().toISOString(),
-      ...(result.arweaveTxId ? { arweave_tx: result.arweaveTxId } : {}),
+      ...(arweaveTxId ? { arweave_tx: arweaveTxId } : {}),
     };
     const updatedContent = serializeAgirailsMd(updatedFrontmatter, body);
     writeFileSync(resolvedPath, updatedContent, 'utf-8');
@@ -262,9 +328,9 @@ async function runPublish(
     // Output results
     output.result(
       {
-        configHash: result.configHash,
-        cid: result.cid,
-        arweaveTxId: result.arweaveTxId || null,
+        configHash,
+        cid,
+        arweaveTxId: arweaveTxId || null,
         pendingPublish: true,
         testnetActivated: !!testnetTxHash,
         ...(testnetTxHash ? { testnetTxHash } : {}),
