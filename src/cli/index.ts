@@ -52,6 +52,8 @@ import { createPublishCommand } from './commands/publish';
 import { createPullCommand } from './commands/pull';
 import { createDiffCommand } from './commands/diff';
 import { createRegisterCommand } from './commands/register';
+import { createDeployEnvCommand } from './commands/deploy-env';
+import { createDeployCheckCommand } from './commands/deploy-check';
 
 // ============================================================================
 // Program Setup
@@ -103,6 +105,10 @@ program.addCommand(createDiffCommand());
 
 // AIP-12: Gas-free registration
 program.addCommand(createRegisterCommand());
+
+// AIP-13: Deployment security
+program.addCommand(createDeployEnvCommand());
+program.addCommand(createDeployCheckCommand());
 
 // ============================================================================
 // Error Handling

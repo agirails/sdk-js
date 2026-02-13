@@ -1391,7 +1391,7 @@ export class Agent extends EventEmitter {
   private async getPrivateKey(): Promise<string | undefined> {
     if (!this.config.wallet || this.config.wallet === 'auto') {
       if (this.network === 'testnet' || this.network === 'mainnet') {
-        return resolvePrivateKey(this.config.stateDirectory);
+        return resolvePrivateKey(this.config.stateDirectory, { network: this.network });
       }
       return undefined;
     }

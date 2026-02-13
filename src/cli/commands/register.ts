@@ -85,7 +85,7 @@ async function runRegister(
   }
 
   // Resolve private key
-  const privateKey = await resolvePrivateKey(projectRoot);
+  const privateKey = await resolvePrivateKey(projectRoot, { network: config.mode });
   if (!privateKey) {
     throw new Error(
       'No wallet found. Run "actp init" first to generate a wallet.'

@@ -320,7 +320,7 @@ async function resolveKeyIfNeeded(
 ): Promise<string | undefined> {
   if (wallet && wallet !== 'auto') return undefined; // explicit wallet, skip auto-detect
   if (network !== 'testnet' && network !== 'mainnet') return undefined;
-  return resolvePrivateKey(stateDirectory);
+  return resolvePrivateKey(stateDirectory, { network });
 }
 
 /**
