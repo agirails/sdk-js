@@ -736,7 +736,7 @@ export class ACTPClient {
           // Auto-detect private key from keystore / env var if not provided
           if (!config.privateKey) {
             const { resolvePrivateKey } = await import('./wallet/keystore');
-            const resolved = await resolvePrivateKey(config.stateDirectory);
+            const resolved = await resolvePrivateKey(config.stateDirectory, { network: config.mode });
             if (resolved) {
               config = { ...config, privateKey: resolved };
             } else {

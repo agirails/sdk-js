@@ -14,6 +14,8 @@ import { Command } from 'commander';
 import {
   saveConfig,
   addToGitignore,
+  addToDockerignore,
+  addToRailwayignore,
   isInitialized,
   getActpDir,
   CLIConfig,
@@ -236,12 +238,24 @@ async function runInit(options: InitOptions, output: Output, cmd?: Command): Pro
     output.info('Minted 10,000 USDC to your address');
   }
 
-  // Add to gitignore
+  // Add to ignore files (AIP-13: gitignore + dockerignore + railwayignore)
   try {
     addToGitignore(projectRoot);
     output.success('Added .actp/ to .gitignore');
   } catch {
     output.warning('Could not update .gitignore (may not exist)');
+  }
+  try {
+    addToDockerignore(projectRoot);
+    output.success('Added .actp/ to .dockerignore');
+  } catch {
+    output.warning('Could not update .dockerignore');
+  }
+  try {
+    addToRailwayignore(projectRoot);
+    output.success('Added .actp/ to .railwayignore');
+  } catch {
+    output.warning('Could not update .railwayignore');
   }
 
   // Output result

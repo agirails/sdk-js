@@ -319,3 +319,71 @@ export function addToGitignore(projectRoot: string = process.cwd()): void {
 
   fs.writeFileSync(gitignorePath, newContent, 'utf-8');
 }
+
+// ============================================================================
+// Ignore File Management (AIP-13)
+// ============================================================================
+
+const IGNORE_ENTRIES = ['.actp/', '.env', '.env.*', 'node_modules/'];
+const IGNORE_HEADER = '# ACTP deployment security (AIP-13)';
+
+/**
+ * Validate that a file path is not a symlink.
+ * Throws if the path exists and is a symlink (security: prevents symlink attacks).
+ */
+function assertNotSymlink(filePath: string): void {
+  try {
+    const stat = fs.lstatSync(filePath);
+    if (stat.isSymbolicLink()) {
+      throw new Error(
+        `Refusing to write ${path.basename(filePath)}: path is a symlink. Remove the symlink and retry.`
+      );
+    }
+  } catch (err) {
+    // Re-throw symlink errors; ENOENT (file doesn't exist) is fine
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+  }
+}
+
+/**
+ * Add standard ignore entries to a file (idempotent).
+ * Creates the file if it doesn't exist.
+ */
+function addIgnoreEntries(filePath: string): void {
+  assertNotSymlink(filePath);
+
+  let content = '';
+  if (fs.existsSync(filePath)) {
+    content = fs.readFileSync(filePath, 'utf-8');
+  }
+
+  // Only add entries that are missing (check each individually)
+  const missingEntries = IGNORE_ENTRIES.filter(entry => !content.includes(entry));
+  if (missingEntries.length === 0) return;
+
+  const newContent =
+    content +
+    (content.length > 0 && !content.endsWith('\n') ? '\n' : '') +
+    IGNORE_HEADER + '\n' +
+    missingEntries.join('\n') + '\n';
+
+  fs.writeFileSync(filePath, newContent, 'utf-8');
+}
+
+/**
+ * Add .actp/ and related entries to .dockerignore (AIP-13).
+ * Creates the file if it doesn't exist. Idempotent.
+ * Throws if .dockerignore is a symlink.
+ */
+export function addToDockerignore(projectRoot: string = process.cwd()): void {
+  addIgnoreEntries(path.join(projectRoot, '.dockerignore'));
+}
+
+/**
+ * Add .actp/ and related entries to .railwayignore (AIP-13).
+ * Creates the file if it doesn't exist. Idempotent.
+ * Throws if .railwayignore is a symlink.
+ */
+export function addToRailwayignore(projectRoot: string = process.cwd()): void {
+  addIgnoreEntries(path.join(projectRoot, '.railwayignore'));
+}

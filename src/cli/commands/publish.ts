@@ -394,7 +394,7 @@ async function activateOnTestnet(
   const { buildActivationBatch, buildTestnetMintBatch } = await import('../../wallet/aa/TransactionBatcher');
   const { getOnChainAgentState, detectLazyPublishScenario } = await import('../../ACTPClient');
 
-  const privateKey = await resolvePrivateKey(projectRoot);
+  const privateKey = await resolvePrivateKey(projectRoot, { network: 'testnet' });
   if (!privateKey) {
     throw new Error('No wallet found. Cannot activate on testnet.');
   }
