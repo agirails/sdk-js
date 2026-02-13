@@ -12,6 +12,8 @@ __tests__/
 
 # Development files
 .actp/
+.serena/
+.claude/
 .tmp-*/
 *.log
 

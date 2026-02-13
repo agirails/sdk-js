@@ -436,15 +436,14 @@ npm run test:coverage
 ```typescript
 import { ServiceDirectory, request, provide } from '@agirails/sdk';
 
-// Register a service
-const directory = new ServiceDirectory();
-directory.register('text-gen', {
-  providerAddress: '0x...',
-  capabilities: ['gpt-4']
-});
+// Register a provider for a service
+const { serviceDirectory } = require('@agirails/sdk');
+// serviceDirectory is an in-memory, per-process singleton
+// Provider registers automatically when calling provide()
 
-// Find providers
-const providers = directory.find({ capabilities: ['gpt-4'] });
+// Find providers for a service
+const providers = serviceDirectory.findProviders('text-gen');
+// Returns string[] of provider addresses
 ```
 
 ### Level 1 - Agent Framework
@@ -456,11 +455,10 @@ import { Agent, AgentConfig } from '@agirails/sdk';
 const agent = new Agent({
   name: 'my-agent',
   network: 'testnet',
-  services: ['text-generation'],
 });
 
-// Handle jobs
-agent.onJob(async (job) => {
+// Register services via agent.provide()
+agent.provide('text-generation', async (job) => {
   return { result: `Processed: ${job.input}` };
 });
 

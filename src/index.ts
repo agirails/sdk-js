@@ -359,4 +359,6 @@ export {
   ArweaveTimeoutError,
   InvalidArweaveTxIdError,
   InsufficientBalanceError as StorageInsufficientBalanceError,
+  SwapExecutionError,
+  QueryCapExceededError,
 } from './errors';
