@@ -3,7 +3,7 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0+-blue.svg)](https://www.typescriptlang.org/)
 [![Node.js](https://img.shields.io/badge/Node.js-18+-green.svg)](https://nodejs.org/)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Tests](https://img.shields.io/badge/tests-1622%20passed-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-1619%20passed-brightgreen.svg)]()
 
 The official TypeScript SDK for the **Agent Commerce Transaction Protocol (ACTP)** - enabling AI agents to transact with each other through blockchain-based escrow.
 
@@ -19,6 +19,9 @@ The official TypeScript SDK for the **Agent Commerce Transaction Protocol (ACTP)
 - **Type-safe**: Complete TypeScript types with strict mode support
 - **Async/Await**: Promise-based API for modern async workflows
 - **Comprehensive Errors**: Structured exception types with error codes and recovery guidance
+- **Keystore Security (AIP-13)**: Fail-closed `ACTP_PRIVATE_KEY` policy, `ACTP_KEYSTORE_BASE64` for CI/CD, 30-min TTL cache
+- **Lazy Publish**: Mainnet activation deferred to first real transaction via `pending-publish.json`
+- **Deployment CLI**: `actp deploy:env` (generate base64 keystore) + `actp deploy:check` (scan for exposed secrets)
 - **Security Built-in**: EIP-712 signing, replay protection, safe nonce management
 - **Configurable Confirmations**: Block confirmation depth configurable per-network (default: 2)
 
@@ -335,13 +338,20 @@ actp simulate fee <amount>
 actp publish [--dry-run]
 
 # Pull config from on-chain registry
-actp pull <agent-id>
+actp pull [--network base-sepolia]
 
 # Compare local config vs on-chain
-actp diff <agent-id>
+actp diff [--network base-sepolia]
+```
 
-# Register agent on AgentRegistry
-actp register
+### Deployment Security (AIP-13)
+
+```bash
+# Generate ACTP_KEYSTORE_BASE64 for CI/CD
+actp deploy:env
+
+# Scan repo for exposed secrets
+actp deploy:check [--fix] [--quiet]
 ```
 
 ### Configuration
@@ -477,10 +487,12 @@ This TypeScript SDK maintains **full parity** with the Python SDK:
 | EIP-712 Signing | Full support | Full support |
 | Level0 API | Full ACTP flow | Full ACTP flow |
 | Level1 Agent API | Complete | Complete |
-| CLI Commands | watch, batch, simulate, publish, pull, diff | watch, batch, simulate |
-| Adapter Routing | ACTP + x402 + ERC-8004 | ACTP only |
-| ERC-8004 Bridge | Identity + Reputation | Not yet |
-| AGIRAILS.md Config | publish/pull/diff/drift detection | Not yet |
+| CLI Commands | watch, batch, simulate, publish, pull, diff, deploy:* | watch, batch, simulate, publish, pull, diff, deploy:* |
+| Adapter Routing | ACTP + x402 + ERC-8004 | ACTP + x402 + ERC-8004 |
+| ERC-8004 Bridge | Identity + Reputation | Identity + Reputation |
+| AGIRAILS.md Config | publish/pull/diff/drift detection | publish/pull/diff |
+| Keystore AIP-13 | Full (30-min TTL cache) | Full (30-min TTL cache) |
+| Lazy Publish | pending-publish lifecycle | pending-publish lifecycle |
 | Nonce Tracking | SecureNonce, ReceivedNonceTracker | SecureNonce, ReceivedNonceTracker |
 | Attestation Tracking | UsedAttestationTracker | UsedAttestationTracker |
 
@@ -629,8 +641,9 @@ DIDs are used internally for:
 
 ```bash
 # Wallet resolution (checked in order):
-ACTP_PRIVATE_KEY=0x...       # Raw private key (takes priority if set)
-ACTP_KEY_PASSWORD=...        # Decrypts .actp/keystore.json (recommended)
+ACTP_PRIVATE_KEY=0x...       # Raw private key (fail-closed on mainnet — see AIP-13)
+ACTP_KEYSTORE_BASE64=...     # Base64 keystore for CI/CD (use actp deploy:env to generate)
+ACTP_KEY_PASSWORD=...        # Decrypts keystore (ACTP_KEYSTORE_BASE64 or .actp/keystore.json)
 
 # Optional
 BASE_SEPOLIA_RPC=...         # Custom RPC for Base Sepolia
