@@ -345,7 +345,8 @@ export class MockStateManager {
       }
 
       // Write to temp file first (pretty-printed for human readability)
-      const json = JSON.stringify(state, null, 2);
+      // BigInt replacer: ethers v6 returns BigInt from contracts; JSON.stringify can't handle them natively
+      const json = JSON.stringify(state, (_, v) => typeof v === 'bigint' ? v.toString() : v, 2);
       fs.writeFileSync(tempPath, json, {
         encoding: 'utf-8',
         mode: 0o644,
