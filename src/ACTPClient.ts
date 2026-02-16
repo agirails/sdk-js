@@ -58,7 +58,7 @@ import { IWalletProvider } from './wallet/IWalletProvider';
 import { EOAWalletProvider } from './wallet/EOAWalletProvider';
 import { AutoWalletProvider } from './wallet/AutoWalletProvider';
 import { SmartWalletCall } from './wallet/aa/constants';
-import { TransactionRequest } from './wallet/IWalletProvider';
+import { SmartWalletRouter, createSmartWalletRouter } from './wallet/SmartWalletRouter';
 import { buildActivationBatch, ActivationScenario } from './wallet/aa/TransactionBatcher';
 import { loadPendingPublish, deletePendingPublish, PendingPublish } from './config/pendingPublish';
 import { sdkLogger } from './utils/Logger';
@@ -601,6 +601,13 @@ export class ACTPClient {
   private readonly contractAddresses?: { usdc: string; actpKernel: string; escrowVault: string };
 
   /**
+   * Smart Wallet router for encoding and sending state transitions via UserOps.
+   * Undefined when wallet provider doesn't support batching (EOA / mock).
+   * @internal
+   */
+  private readonly smartWalletRouter?: SmartWalletRouter;
+
+  /**
    * Whether the pending publish config is stale (AGIRAILS.md changed since last publish).
    * When true, getActivationCalls() returns empty to prevent stale config going on-chain.
    * @internal
@@ -636,6 +643,7 @@ export class ACTPClient {
     this.networkId = networkId;
     this.basic = new BasicAdapter(runtime, requesterAddress, easHelper, walletProvider, contractAddresses, this);
     this.standard = new StandardAdapter(runtime, requesterAddress, easHelper, walletProvider, contractAddresses);
+    this.smartWalletRouter = createSmartWalletRouter(walletProvider, contractAddresses, runtime, easHelper);
 
     // Initialize registry and router
     this.registry = new AdapterRegistry();
@@ -1287,101 +1295,6 @@ export class ACTPClient {
   }
 
   // ==========================================================================
-  // Smart Wallet Routing Helpers
-  // ==========================================================================
-
-  /**
-   * Check if state transitions should route through the wallet provider.
-   * @internal
-   */
-  private shouldRouteViaWallet(): boolean {
-    return !!(this.walletProvider?.payACTPBatched && this.contractAddresses);
-  }
-
-  /**
-   * Encode a transitionState call as a TransactionRequest for Smart Wallet routing.
-   * @internal
-   */
-  private encodeTransitionStateTx(txId: string, stateValue: number, proof: string = '0x'): TransactionRequest {
-    const iface = new ethers.Interface([
-      'function transitionState(bytes32 transactionId, uint8 newState, bytes proof)',
-    ]);
-    return {
-      to: this.contractAddresses!.actpKernel,
-      data: iface.encodeFunctionData('transitionState', [txId, stateValue, proof]),
-    };
-  }
-
-  /**
-   * Encode a SETTLED state transition for Smart Wallet routing.
-   * Mirrors BlockchainRuntime.releaseEscrow() secure settlement flow.
-   * @internal
-   */
-  private encodeSettleTx(txId: string): TransactionRequest {
-    return this.encodeTransitionStateTx(txId, TransactionStateValue.SETTLED, '0x');
-  }
-
-  /**
-   * Validate release preconditions (state + dispute window).
-   * @internal
-   */
-  private async validateReleasePreconditions(txId: string): Promise<void> {
-    const tx = await this.runtime.getTransaction(txId);
-    if (!tx) {
-      throw new Error(`Transaction ${txId} not found`);
-    }
-
-    if (tx.state !== 'DELIVERED') {
-      throw new Error(
-        `Cannot release escrow: transaction ${txId} is in state ${tx.state}, expected DELIVERED.`
-      );
-    }
-
-    if (tx.completedAt !== null && tx.completedAt !== undefined) {
-      const disputeWindowEnds = tx.completedAt + tx.disputeWindow;
-      const now = this.runtime.time.now();
-      if (now < disputeWindowEnds) {
-        const remaining = disputeWindowEnds - now;
-        throw new Error(
-          `Cannot release escrow: dispute window still active for transaction ${txId}. ` +
-            `Window expires in ${remaining} seconds.`
-        );
-      }
-    }
-  }
-
-  /**
-   * Verify/require attestation for wallet-routed release calls.
-   * @internal
-   */
-  private async verifyReleaseAttestation(txId: string, attestationUID?: string): Promise<void> {
-    const runtimeAny = this.runtime as any;
-    const runtimeSupportsAttestationFlag =
-      typeof runtimeAny?.isAttestationRequired === 'function';
-
-    const attestationRequired: boolean = runtimeSupportsAttestationFlag
-      ? Boolean(runtimeAny.isAttestationRequired())
-      : Boolean(this.easHelper);
-
-    if (attestationRequired && !attestationUID) {
-      throw new Error(
-        'Attestation verification is REQUIRED for escrow release. ' +
-          'Provide attestationUID when using Smart Wallet release.'
-      );
-    }
-
-    if (attestationRequired && !this.easHelper) {
-      throw new Error(
-        'Attestation verification is required but EAS helper is not initialized.'
-      );
-    }
-
-    if (attestationUID && this.easHelper) {
-      await this.easHelper.verifyAndRecordForRelease(txId, attestationUID);
-    }
-  }
-
-  // ==========================================================================
   // State Transition Methods
   // ==========================================================================
 
@@ -1404,12 +1317,8 @@ export class ACTPClient {
    * ```
    */
   async startWork(txId: string): Promise<void> {
-    if (this.shouldRouteViaWallet()) {
-      const tx = this.encodeTransitionStateTx(txId, TransactionStateValue.IN_PROGRESS);
-      const receipt = await this.walletProvider!.sendTransaction(tx);
-      if (!receipt.success) {
-        throw new Error(`startWork UserOp failed: ${receipt.hash}`);
-      }
+    if (this.smartWalletRouter?.shouldRoute()) {
+      await this.smartWalletRouter.sendTransition(txId, TransactionStateValue.IN_PROGRESS, '0x', 'startWork');
       return;
     }
     await this.runtime.transitionState(txId, 'IN_PROGRESS');
@@ -1454,22 +1363,17 @@ export class ACTPClient {
       [effectiveDisputeWindow]
     );
 
-    if (this.shouldRouteViaWallet()) {
+    if (this.smartWalletRouter?.shouldRoute()) {
       // When using Smart Wallet, batch startWork + deliver if still COMMITTED
       if (tx.state === 'COMMITTED') {
-        const startWorkTx = this.encodeTransitionStateTx(txId, TransactionStateValue.IN_PROGRESS);
-        const deliverTx = this.encodeTransitionStateTx(txId, TransactionStateValue.DELIVERED, proof);
+        const startWorkTx = this.smartWalletRouter.encodeTransitionStateTx(txId, TransactionStateValue.IN_PROGRESS);
+        const deliverTx = this.smartWalletRouter.encodeTransitionStateTx(txId, TransactionStateValue.DELIVERED, proof);
         const receipt = await this.walletProvider!.sendBatchTransaction([startWorkTx, deliverTx]);
         if (!receipt.success) {
           throw new Error(`deliver (batch) UserOp failed: ${receipt.hash}`);
         }
       } else {
-        // Already IN_PROGRESS, just deliver
-        const deliverTx = this.encodeTransitionStateTx(txId, TransactionStateValue.DELIVERED, proof);
-        const receipt = await this.walletProvider!.sendTransaction(deliverTx);
-        if (!receipt.success) {
-          throw new Error(`deliver UserOp failed: ${receipt.hash}`);
-        }
+        await this.smartWalletRouter.sendTransition(txId, TransactionStateValue.DELIVERED, proof, 'deliver');
       }
       return;
     }
@@ -1506,24 +1410,18 @@ export class ACTPClient {
    * ```
    */
   async release(escrowId: string, attestationUID?: string): Promise<void> {
-    // Support legacy format "escrow-{txId}-{timestamp}".
-    const legacyMatch = escrowId.match(/^escrow-(.+)-\d+$/);
-    const txId = legacyMatch ? legacyMatch[1] : escrowId;
+    const txId = SmartWalletRouter.extractTxId(escrowId);
 
     // Get transaction to find agentId (for reputation reporting)
     const tx = await this.runtime.getTransaction(txId);
     const agentId = tx?.agentId;
 
     // Release escrow (this is the critical operation)
-    if (this.shouldRouteViaWallet()) {
-      await this.validateReleasePreconditions(txId);
-      await this.verifyReleaseAttestation(txId, attestationUID);
-
-      const settleTx = this.encodeSettleTx(txId);
-      const receipt = await this.walletProvider!.sendTransaction(settleTx);
-      if (!receipt.success) {
-        throw new Error(`release UserOp failed: ${receipt.hash}`);
-      }
+    if (this.smartWalletRouter?.shouldRoute()) {
+      // Pass already-fetched tx to avoid double getTransaction RPC call
+      await this.smartWalletRouter.validateReleasePreconditions(tx ?? txId);
+      await this.smartWalletRouter.verifyReleaseAttestation(txId, attestationUID);
+      await this.smartWalletRouter.sendSettle(txId);
     } else {
       await this.runtime.releaseEscrow(escrowId, attestationUID);
     }
