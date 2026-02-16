@@ -1312,17 +1312,72 @@ export class ACTPClient {
   }
 
   /**
-   * Encode a releaseEscrow call as a TransactionRequest for Smart Wallet routing.
+   * Encode a SETTLED state transition for Smart Wallet routing.
+   * Mirrors BlockchainRuntime.releaseEscrow() secure settlement flow.
    * @internal
    */
-  private encodeReleaseEscrowTx(txId: string): TransactionRequest {
-    const iface = new ethers.Interface([
-      'function releaseEscrow(bytes32 transactionId)',
-    ]);
-    return {
-      to: this.contractAddresses!.actpKernel,
-      data: iface.encodeFunctionData('releaseEscrow', [txId]),
-    };
+  private encodeSettleTx(txId: string): TransactionRequest {
+    return this.encodeTransitionStateTx(txId, 5, '0x');
+  }
+
+  /**
+   * Validate release preconditions (state + dispute window).
+   * @internal
+   */
+  private async validateReleasePreconditions(txId: string): Promise<void> {
+    const tx = await this.runtime.getTransaction(txId);
+    if (!tx) {
+      throw new Error(`Transaction ${txId} not found`);
+    }
+
+    if (tx.state !== 'DELIVERED') {
+      throw new Error(
+        `Cannot release escrow: transaction ${txId} is in state ${tx.state}, expected DELIVERED.`
+      );
+    }
+
+    if (tx.completedAt !== null && tx.completedAt !== undefined) {
+      const disputeWindowEnds = tx.completedAt + tx.disputeWindow;
+      const now = this.runtime.time.now();
+      if (now < disputeWindowEnds) {
+        const remaining = disputeWindowEnds - now;
+        throw new Error(
+          `Cannot release escrow: dispute window still active for transaction ${txId}. ` +
+            `Window expires in ${remaining} seconds.`
+        );
+      }
+    }
+  }
+
+  /**
+   * Verify/require attestation for wallet-routed release calls.
+   * @internal
+   */
+  private async verifyReleaseAttestation(txId: string, attestationUID?: string): Promise<void> {
+    const runtimeAny = this.runtime as any;
+    const runtimeSupportsAttestationFlag =
+      typeof runtimeAny?.isAttestationRequired === 'function';
+
+    const attestationRequired: boolean = runtimeSupportsAttestationFlag
+      ? Boolean(runtimeAny.isAttestationRequired())
+      : Boolean(this.easHelper);
+
+    if (attestationRequired && !attestationUID) {
+      throw new Error(
+        'Attestation verification is REQUIRED for escrow release. ' +
+          'Provide attestationUID when using Smart Wallet release.'
+      );
+    }
+
+    if (attestationRequired && !this.easHelper) {
+      throw new Error(
+        'Attestation verification is required but EAS helper is not initialized.'
+      );
+    }
+
+    if (attestationUID && this.easHelper) {
+      await this.easHelper.verifyAndRecordForRelease(txId, attestationUID);
+    }
   }
 
   // ==========================================================================
@@ -1451,8 +1506,9 @@ export class ACTPClient {
    * ```
    */
   async release(escrowId: string, attestationUID?: string): Promise<void> {
-    // In ACTP, escrowId === txId
-    const txId = escrowId;
+    // Support legacy format "escrow-{txId}-{timestamp}".
+    const legacyMatch = escrowId.match(/^escrow-(.+)-\d+$/);
+    const txId = legacyMatch ? legacyMatch[1] : escrowId;
 
     // Get transaction to find agentId (for reputation reporting)
     const tx = await this.runtime.getTransaction(txId);
@@ -1460,8 +1516,11 @@ export class ACTPClient {
 
     // Release escrow (this is the critical operation)
     if (this.shouldRouteViaWallet()) {
-      const releaseTx = this.encodeReleaseEscrowTx(txId);
-      const receipt = await this.walletProvider!.sendTransaction(releaseTx);
+      await this.validateReleasePreconditions(txId);
+      await this.verifyReleaseAttestation(txId, attestationUID);
+
+      const settleTx = this.encodeSettleTx(txId);
+      const receipt = await this.walletProvider!.sendTransaction(settleTx);
       if (!receipt.success) {
         throw new Error(`release UserOp failed: ${receipt.hash}`);
       }

@@ -494,16 +494,70 @@ export class BasicAdapter extends BaseAdapter implements IAdapter {
   }
 
   /**
-   * Encode a releaseEscrow call as a TransactionRequest.
+   * Encode a SETTLED state transition as a TransactionRequest.
+   * Mirrors BlockchainRuntime.releaseEscrow() secure settlement flow.
    */
-  private encodeReleaseEscrowTx(txId: string): TransactionRequest {
-    const iface = new ethers.Interface([
-      'function releaseEscrow(bytes32 transactionId)',
-    ]);
-    return {
-      to: this.contractAddresses!.actpKernel,
-      data: iface.encodeFunctionData('releaseEscrow', [txId]),
-    };
+  private encodeSettleTx(txId: string): TransactionRequest {
+    return this.encodeTransitionStateTx(txId, TransactionStateValue.SETTLED, '0x');
+  }
+
+  /**
+   * Validate release preconditions (state + dispute window).
+   * Keeps Smart Wallet path aligned with runtime.releaseEscrow() checks.
+   */
+  private async validateReleasePreconditions(txId: string): Promise<void> {
+    const tx = await this.runtime.getTransaction(txId);
+    if (!tx) {
+      throw new Error(`Transaction ${txId} not found`);
+    }
+
+    if (tx.state !== 'DELIVERED') {
+      throw new Error(
+        `Cannot release escrow: transaction ${txId} is in state ${tx.state}, expected DELIVERED.`
+      );
+    }
+
+    if (tx.completedAt !== null && tx.completedAt !== undefined) {
+      const disputeWindowEnds = tx.completedAt + tx.disputeWindow;
+      const now = this.runtime.time.now();
+      if (now < disputeWindowEnds) {
+        const remaining = disputeWindowEnds - now;
+        throw new Error(
+          `Cannot release escrow: dispute window still active for transaction ${txId}. ` +
+            `Window expires in ${remaining} seconds.`
+        );
+      }
+    }
+  }
+
+  /**
+   * Verify/require attestation for wallet-routed release calls.
+   */
+  private async verifyReleaseAttestation(txId: string, attestationUID?: string): Promise<void> {
+    const runtimeAny = this.runtime as any;
+    const runtimeSupportsAttestationFlag =
+      typeof runtimeAny?.isAttestationRequired === 'function';
+
+    const attestationRequired: boolean = runtimeSupportsAttestationFlag
+      ? Boolean(runtimeAny.isAttestationRequired())
+      : Boolean(this.easHelper);
+
+    if (attestationRequired && !attestationUID) {
+      throw new Error(
+        'Attestation verification is REQUIRED for escrow release. ' +
+          'Provide attestationUID when using Smart Wallet release.'
+      );
+    }
+
+    if (attestationRequired && !this.easHelper) {
+      throw new Error(
+        'Attestation verification is required but EAS helper is not initialized.'
+      );
+    }
+
+    if (attestationUID && this.easHelper) {
+      await this.easHelper.verifyAndRecordForRelease(txId, attestationUID);
+    }
   }
 
   // ==========================================================================
@@ -577,7 +631,13 @@ export class BasicAdapter extends BaseAdapter implements IAdapter {
    */
   async release(escrowId: string, attestationUID?: string): Promise<void> {
     if (this.shouldRouteViaWallet()) {
-      const tx = this.encodeReleaseEscrowTx(escrowId);
+      const legacyMatch = escrowId.match(/^escrow-(.+)-\d+$/);
+      const txId = legacyMatch ? legacyMatch[1] : escrowId;
+
+      await this.validateReleasePreconditions(txId);
+      await this.verifyReleaseAttestation(txId, attestationUID);
+
+      const tx = this.encodeSettleTx(txId);
       const receipt = await this.walletProvider!.sendTransaction(tx);
       if (!receipt.success) {
         throw new Error(`release UserOp failed: ${receipt.hash}`);
