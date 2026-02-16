@@ -234,6 +234,15 @@ export class StandardAdapter extends BaseAdapter implements IAdapter {
     newState: TransactionState,
     proof?: string
   ): Promise<void> {
+    if (this.shouldRouteViaWallet()) {
+      const stateValue = TransactionStateValue[newState];
+      const tx = this.encodeTransitionStateTx(txId, stateValue, proof ?? '0x');
+      const receipt = await this.walletProvider!.sendTransaction(tx);
+      if (!receipt.success) {
+        throw new Error(`transitionState(${newState}) UserOp failed: ${receipt.hash}`);
+      }
+      return;
+    }
     return this.runtime.transitionState(txId, newState, proof);
   }
 

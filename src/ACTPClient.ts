@@ -40,6 +40,7 @@ import * as fs from 'fs';
 import { ethers } from 'ethers';
 import { MockRuntime } from './runtime/MockRuntime';
 import { MockStateManager } from './runtime/MockStateManager';
+import { TransactionStateValue } from './runtime/types/MockState';
 import { BlockchainRuntime } from './runtime/BlockchainRuntime';
 import { IACTPRuntime, IMockRuntime } from './runtime/IACTPRuntime';
 import { BasicAdapter } from './adapters/BasicAdapter';
@@ -1317,7 +1318,7 @@ export class ACTPClient {
    * @internal
    */
   private encodeSettleTx(txId: string): TransactionRequest {
-    return this.encodeTransitionStateTx(txId, 5, '0x');
+    return this.encodeTransitionStateTx(txId, TransactionStateValue.SETTLED, '0x');
   }
 
   /**
@@ -1404,8 +1405,7 @@ export class ACTPClient {
    */
   async startWork(txId: string): Promise<void> {
     if (this.shouldRouteViaWallet()) {
-      // State 3 = IN_PROGRESS
-      const tx = this.encodeTransitionStateTx(txId, 3);
+      const tx = this.encodeTransitionStateTx(txId, TransactionStateValue.IN_PROGRESS);
       const receipt = await this.walletProvider!.sendTransaction(tx);
       if (!receipt.success) {
         throw new Error(`startWork UserOp failed: ${receipt.hash}`);
@@ -1457,15 +1457,15 @@ export class ACTPClient {
     if (this.shouldRouteViaWallet()) {
       // When using Smart Wallet, batch startWork + deliver if still COMMITTED
       if (tx.state === 'COMMITTED') {
-        const startWorkTx = this.encodeTransitionStateTx(txId, 3); // IN_PROGRESS
-        const deliverTx = this.encodeTransitionStateTx(txId, 4, proof); // DELIVERED
+        const startWorkTx = this.encodeTransitionStateTx(txId, TransactionStateValue.IN_PROGRESS);
+        const deliverTx = this.encodeTransitionStateTx(txId, TransactionStateValue.DELIVERED, proof);
         const receipt = await this.walletProvider!.sendBatchTransaction([startWorkTx, deliverTx]);
         if (!receipt.success) {
           throw new Error(`deliver (batch) UserOp failed: ${receipt.hash}`);
         }
       } else {
         // Already IN_PROGRESS, just deliver
-        const deliverTx = this.encodeTransitionStateTx(txId, 4, proof); // DELIVERED
+        const deliverTx = this.encodeTransitionStateTx(txId, TransactionStateValue.DELIVERED, proof);
         const receipt = await this.walletProvider!.sendTransaction(deliverTx);
         if (!receipt.success) {
           throw new Error(`deliver UserOp failed: ${receipt.hash}`);
