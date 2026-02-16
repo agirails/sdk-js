@@ -15,6 +15,7 @@ import { safeJSONParse, validateServiceName, isValidAddress } from '../utils/sec
 import { Logger } from '../utils/Logger';
 import { ethers } from 'ethers';
 import { resolvePrivateKey } from '../wallet/keystore';
+import { computeDisputeWindowEnds } from '../wallet/SmartWalletRouter';
 
 /**
  * Request a service
@@ -239,7 +240,7 @@ export async function request(
     }
 
     if (tx.state === 'DELIVERED' && tx.escrowId) {
-      const disputeWindowEnd = (tx.completedAt ?? 0) + tx.disputeWindow;
+      const disputeWindowEnd = computeDisputeWindowEnds(tx.completedAt ?? 0, tx.disputeWindow);
       const currentTime = client.runtime.time.now();
 
       if (currentTime >= disputeWindowEnd) {

@@ -624,11 +624,18 @@ describe('ACTPClient', () => {
       } as any);
 
       const sendTransaction = jest.fn().mockResolvedValue({ success: true, hash: '0xabc' });
-      (client as any).walletProvider = {
+      const mockWalletProvider = {
         payACTPBatched: jest.fn(),
         sendTransaction,
       };
+      (client as any).walletProvider = mockWalletProvider;
       (client as any).contractAddresses = contractAddresses;
+      // SmartWalletRouter is constructed in ACTPClient constructor, so we need to set it
+      // when injecting walletProvider after construction for testing
+      const { SmartWalletRouter } = require('./wallet/SmartWalletRouter');
+      (client as any).smartWalletRouter = new SmartWalletRouter(
+        mockWalletProvider, contractAddresses, runtime
+      );
 
       await client.release(result.txId);
 
@@ -668,12 +675,18 @@ describe('ACTPClient', () => {
       } as any);
 
       const sendTransaction = jest.fn().mockResolvedValue({ success: true, hash: '0xabc' });
-      (client as any).walletProvider = {
+      const mockWalletProvider = {
         payACTPBatched: jest.fn(),
         sendTransaction,
       };
+      (client as any).walletProvider = mockWalletProvider;
       (client as any).contractAddresses = contractAddresses;
       (runtime as any).isAttestationRequired = jest.fn().mockReturnValue(true);
+      // SmartWalletRouter is constructed in ACTPClient constructor, so we need to set it
+      const { SmartWalletRouter } = require('./wallet/SmartWalletRouter');
+      (client as any).smartWalletRouter = new SmartWalletRouter(
+        mockWalletProvider, contractAddresses, runtime
+      );
 
       await expect(client.release(result.txId)).rejects.toThrow(
         'Attestation verification is REQUIRED for escrow release'
