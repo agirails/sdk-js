@@ -1179,11 +1179,12 @@ export class ACTPClient {
    * ```
    */
   async getBalance(address: string): Promise<string> {
-    if (!isMockRuntime(this.runtime)) {
-      throw new Error('Runtime does not support getBalance operation');
+    // Both MockRuntime and BlockchainRuntime support getBalance
+    if ('getBalance' in this.runtime && typeof (this.runtime as any).getBalance === 'function') {
+      return (this.runtime as any).getBalance(address);
     }
 
-    return this.runtime.getBalance(address);
+    throw new Error('Runtime does not support getBalance operation');
   }
 
   // ==========================================================================

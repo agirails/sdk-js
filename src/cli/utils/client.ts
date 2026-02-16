@@ -11,7 +11,7 @@
 
 import * as os from 'os';
 import { ACTPClient, ACTPClientConfig } from '../../ACTPClient';
-import { loadConfig, validateConfigForMode } from './config';
+import { loadConfig } from './config';
 
 // ============================================================================
 // Security: Path Sanitization
@@ -54,8 +54,10 @@ export async function createClient(
   // Load configuration
   const config = loadConfig(projectRoot);
 
-  // Validate config for the mode
-  validateConfigForMode(config);
+  // NOTE: We intentionally do NOT call validateConfigForMode() here.
+  // ACTPClient.create() handles keystore resolution (AIP-13) and provides
+  // proper error messages if no credentials are found. Premature validation
+  // would block keystore/env-var-based auth flows.
 
   // Build client config
   const clientConfig: ACTPClientConfig = {
