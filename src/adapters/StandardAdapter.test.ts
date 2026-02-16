@@ -13,6 +13,7 @@
 import { StandardAdapter } from './StandardAdapter';
 import { MockRuntime } from '../runtime/MockRuntime';
 import { ValidationError } from './BaseAdapter';
+import { ethers } from 'ethers';
 
 describe('StandardAdapter', () => {
   let runtime: MockRuntime;
@@ -452,6 +453,85 @@ describe('StandardAdapter', () => {
       // Verify provider got paid
       const providerBalance = await runtime.getBalance(providerAddress);
       expect(providerBalance).toBe('100000000');
+    });
+  });
+
+  describe('smart wallet release routing', () => {
+    const contractAddresses = {
+      usdc: '0x3333333333333333333333333333333333333333',
+      actpKernel: '0x4444444444444444444444444444444444444444',
+      escrowVault: '0x5555555555555555555555555555555555555555',
+    };
+
+    test('routes release() through transitionState(SETTLED) in wallet mode', async () => {
+      const txId = await adapter.createTransaction({
+        provider: providerAddress,
+        amount: '100',
+        disputeWindow: 3600,
+      });
+      await adapter.linkEscrow(txId);
+      await adapter.transitionState(txId, 'IN_PROGRESS');
+      await adapter.transitionState(txId, 'DELIVERED');
+      const deliveredTx = await runtime.getTransaction(txId);
+      jest.spyOn(runtime, 'getTransaction').mockResolvedValue({
+        ...deliveredTx!,
+        state: 'DELIVERED',
+        completedAt: runtime.time.now() - 4000,
+        disputeWindow: 3600,
+      } as any);
+
+      const sendTransaction = jest.fn().mockResolvedValue({ success: true, hash: '0xabc' });
+      const walletAdapter = new StandardAdapter(
+        runtime,
+        requesterAddress,
+        undefined,
+        { payACTPBatched: jest.fn(), sendTransaction } as any,
+        contractAddresses
+      );
+
+      await walletAdapter.release(txId);
+
+      expect(sendTransaction).toHaveBeenCalledTimes(1);
+      const sentTx = sendTransaction.mock.calls[0][0];
+      const iface = new ethers.Interface([
+        'function transitionState(bytes32 transactionId, uint8 newState, bytes proof)',
+      ]);
+      const decoded = iface.decodeFunctionData('transitionState', sentTx.data);
+      expect(decoded[0]).toBe(txId);
+      expect(decoded[1]).toBe(5n);
+    });
+
+    test('requires attestation in wallet mode when runtime mandates it', async () => {
+      const txId = await adapter.createTransaction({
+        provider: providerAddress,
+        amount: '100',
+        disputeWindow: 3600,
+      });
+      await adapter.linkEscrow(txId);
+      await adapter.transitionState(txId, 'IN_PROGRESS');
+      await adapter.transitionState(txId, 'DELIVERED');
+      const deliveredTx = await runtime.getTransaction(txId);
+      jest.spyOn(runtime, 'getTransaction').mockResolvedValue({
+        ...deliveredTx!,
+        state: 'DELIVERED',
+        completedAt: runtime.time.now() - 4000,
+        disputeWindow: 3600,
+      } as any);
+
+      (runtime as any).isAttestationRequired = jest.fn().mockReturnValue(true);
+      const sendTransaction = jest.fn().mockResolvedValue({ success: true, hash: '0xabc' });
+      const walletAdapter = new StandardAdapter(
+        runtime,
+        requesterAddress,
+        undefined,
+        { payACTPBatched: jest.fn(), sendTransaction } as any,
+        contractAddresses
+      );
+
+      await expect(walletAdapter.release(txId)).rejects.toThrow(
+        'Attestation verification is REQUIRED for escrow release'
+      );
+      expect(sendTransaction).not.toHaveBeenCalled();
     });
   });
 });
