@@ -733,6 +733,26 @@ export class BlockchainRuntime implements IACTPRuntime {
   }
 
   /**
+   * Get USDC balance for an address.
+   *
+   * Queries the USDC token contract's balanceOf function on-chain.
+   *
+   * @param address - Address to check balance for
+   * @returns Promise resolving to balance in USDC wei (6 decimals)
+   */
+  async getBalance(address: string): Promise<string> {
+    this.requireInitialized();
+
+    const usdcContract = new ethers.Contract(
+      this.networkConfig.contracts.usdc,
+      ['function balanceOf(address account) view returns (uint256)'],
+      this.provider
+    );
+    const balance = await usdcContract.balanceOf(address);
+    return balance.toString();
+  }
+
+  /**
    * Time interface (uses real blockchain time)
    */
   public readonly time = {
