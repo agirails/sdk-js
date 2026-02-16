@@ -57,6 +57,7 @@ import { IWalletProvider } from './wallet/IWalletProvider';
 import { EOAWalletProvider } from './wallet/EOAWalletProvider';
 import { AutoWalletProvider } from './wallet/AutoWalletProvider';
 import { SmartWalletCall } from './wallet/aa/constants';
+import { TransactionRequest } from './wallet/IWalletProvider';
 import { buildActivationBatch, ActivationScenario } from './wallet/aa/TransactionBatcher';
 import { loadPendingPublish, deletePendingPublish, PendingPublish } from './config/pendingPublish';
 import { sdkLogger } from './utils/Logger';
@@ -593,6 +594,12 @@ export class ACTPClient {
   private networkId?: string;
 
   /**
+   * Contract addresses for Smart Wallet call encoding.
+   * @internal
+   */
+  private readonly contractAddresses?: { usdc: string; actpKernel: string; escrowVault: string };
+
+  /**
    * Whether the pending publish config is stale (AGIRAILS.md changed since last publish).
    * When true, getActivationCalls() returns empty to prevent stale config going on-chain.
    * @internal
@@ -621,12 +628,13 @@ export class ACTPClient {
     this.easHelper = easHelper;
     this.reputationReporter = reputationReporter;
     this.walletProvider = walletProvider;
+    this.contractAddresses = contractAddresses;
     this.lazyScenario = lazyScenario;
     this.pendingPublish = pendingPublish;
     this.agentRegistryAddress = agentRegistryAddress;
     this.networkId = networkId;
     this.basic = new BasicAdapter(runtime, requesterAddress, easHelper, walletProvider, contractAddresses, this);
-    this.standard = new StandardAdapter(runtime, requesterAddress, easHelper);
+    this.standard = new StandardAdapter(runtime, requesterAddress, easHelper, walletProvider, contractAddresses);
 
     // Initialize registry and router
     this.registry = new AdapterRegistry();
@@ -1277,11 +1285,58 @@ export class ACTPClient {
     return this.standard.getStatus(txId);
   }
 
+  // ==========================================================================
+  // Smart Wallet Routing Helpers
+  // ==========================================================================
+
+  /**
+   * Check if state transitions should route through the wallet provider.
+   * @internal
+   */
+  private shouldRouteViaWallet(): boolean {
+    return !!(this.walletProvider?.payACTPBatched && this.contractAddresses);
+  }
+
+  /**
+   * Encode a transitionState call as a TransactionRequest for Smart Wallet routing.
+   * @internal
+   */
+  private encodeTransitionStateTx(txId: string, stateValue: number, proof: string = '0x'): TransactionRequest {
+    const iface = new ethers.Interface([
+      'function transitionState(bytes32 transactionId, uint8 newState, bytes proof)',
+    ]);
+    return {
+      to: this.contractAddresses!.actpKernel,
+      data: iface.encodeFunctionData('transitionState', [txId, stateValue, proof]),
+    };
+  }
+
+  /**
+   * Encode a releaseEscrow call as a TransactionRequest for Smart Wallet routing.
+   * @internal
+   */
+  private encodeReleaseEscrowTx(txId: string): TransactionRequest {
+    const iface = new ethers.Interface([
+      'function releaseEscrow(bytes32 transactionId)',
+    ]);
+    return {
+      to: this.contractAddresses!.actpKernel,
+      data: iface.encodeFunctionData('releaseEscrow', [txId]),
+    };
+  }
+
+  // ==========================================================================
+  // State Transition Methods
+  // ==========================================================================
+
   /**
    * Transition to IN_PROGRESS state (provider starts work).
    *
    * Must be called by provider after accepting the transaction.
    * ACTP requires this explicit transition before delivery.
+   *
+   * When Smart Wallet is active, routes through walletProvider.sendTransaction()
+   * so the Smart Wallet address (msg.sender) matches the transaction party.
    *
    * @param txId - Transaction ID
    * @throws {Error} If transaction not found or wrong state
@@ -1293,6 +1348,15 @@ export class ACTPClient {
    * ```
    */
   async startWork(txId: string): Promise<void> {
+    if (this.shouldRouteViaWallet()) {
+      // State 3 = IN_PROGRESS
+      const tx = this.encodeTransitionStateTx(txId, 3);
+      const receipt = await this.walletProvider!.sendTransaction(tx);
+      if (!receipt.success) {
+        throw new Error(`startWork UserOp failed: ${receipt.hash}`);
+      }
+      return;
+    }
     await this.runtime.transitionState(txId, 'IN_PROGRESS');
   }
 
@@ -1302,6 +1366,8 @@ export class ACTPClient {
    * When no disputeWindowSeconds is provided, uses the transaction's actual
    * disputeWindow from creation time. This ensures consistency and prevents
    * mismatches between transaction creation and delivery.
+   *
+   * When Smart Wallet is active, routes through walletProvider.sendTransaction().
    *
    * @param txId - Transaction ID
    * @param disputeWindowSeconds - Optional dispute window override in seconds.
@@ -1324,11 +1390,6 @@ export class ACTPClient {
       throw new Error(`Transaction ${txId} not found`);
     }
 
-    // First ensure we're in IN_PROGRESS state
-    if (tx.state === 'COMMITTED') {
-      await this.runtime.transitionState(txId, 'IN_PROGRESS');
-    }
-
     // Use provided disputeWindow or fall back to transaction's disputeWindow
     const effectiveDisputeWindow = disputeWindowSeconds ?? tx.disputeWindow;
 
@@ -1338,6 +1399,30 @@ export class ACTPClient {
       [effectiveDisputeWindow]
     );
 
+    if (this.shouldRouteViaWallet()) {
+      // When using Smart Wallet, batch startWork + deliver if still COMMITTED
+      if (tx.state === 'COMMITTED') {
+        const startWorkTx = this.encodeTransitionStateTx(txId, 3); // IN_PROGRESS
+        const deliverTx = this.encodeTransitionStateTx(txId, 4, proof); // DELIVERED
+        const receipt = await this.walletProvider!.sendBatchTransaction([startWorkTx, deliverTx]);
+        if (!receipt.success) {
+          throw new Error(`deliver (batch) UserOp failed: ${receipt.hash}`);
+        }
+      } else {
+        // Already IN_PROGRESS, just deliver
+        const deliverTx = this.encodeTransitionStateTx(txId, 4, proof); // DELIVERED
+        const receipt = await this.walletProvider!.sendTransaction(deliverTx);
+        if (!receipt.success) {
+          throw new Error(`deliver UserOp failed: ${receipt.hash}`);
+        }
+      }
+      return;
+    }
+
+    // Legacy EOA/mock flow
+    if (tx.state === 'COMMITTED') {
+      await this.runtime.transitionState(txId, 'IN_PROGRESS');
+    }
     await this.runtime.transitionState(txId, 'DELIVERED', proof);
   }
 
@@ -1350,6 +1435,8 @@ export class ACTPClient {
    * If ERC-8004 agent ID was set during transaction creation, this method
    * also reports the settlement to the ERC-8004 Reputation Registry.
    * Reputation reporting is non-blocking - failures don't affect settlement.
+   *
+   * When Smart Wallet is active, routes through walletProvider.sendTransaction().
    *
    * @param escrowId - Escrow ID (usually same as txId)
    * @param attestationUID - Optional attestation UID for verification
@@ -1372,7 +1459,15 @@ export class ACTPClient {
     const agentId = tx?.agentId;
 
     // Release escrow (this is the critical operation)
-    await this.runtime.releaseEscrow(escrowId, attestationUID);
+    if (this.shouldRouteViaWallet()) {
+      const releaseTx = this.encodeReleaseEscrowTx(txId);
+      const receipt = await this.walletProvider!.sendTransaction(releaseTx);
+      if (!receipt.success) {
+        throw new Error(`release UserOp failed: ${receipt.hash}`);
+      }
+    } else {
+      await this.runtime.releaseEscrow(escrowId, attestationUID);
+    }
 
     // ERC-8004 REPUTATION: Report settlement if agent ID exists
     // Non-blocking - fire and forget (settlement already succeeded)
