@@ -14,7 +14,7 @@
 
 import { BaseAdapter, ValidationError } from './BaseAdapter';
 import { IACTPRuntime } from '../runtime/IACTPRuntime';
-import { MockTransaction, TransactionState } from '../runtime/types/MockState';
+import { MockTransaction, TransactionState, TransactionStateValue } from '../runtime/types/MockState';
 import { EASHelper } from '../protocol/EASHelper';
 import { IAdapter, TransactionStatus } from './IAdapter';
 import {
@@ -22,6 +22,8 @@ import {
   UnifiedPayParams,
   UnifiedPayResult,
 } from '../types/adapter';
+import { IWalletProvider, TransactionRequest } from '../wallet/IWalletProvider';
+import { ethers } from 'ethers';
 
 /**
  * Parameters for creating a transaction (standard level).
@@ -100,11 +102,15 @@ export class StandardAdapter extends BaseAdapter implements IAdapter {
    * @param runtime - ACTP runtime implementation (MockRuntime or BlockchainRuntime)
    * @param requesterAddress - The requester's Ethereum address
    * @param easHelper - Optional EAS helper for attestation verification (SECURITY FIX C-4)
+   * @param walletProvider - Optional wallet provider for Smart Wallet routing
+   * @param contractAddresses - Optional contract addresses for Smart Wallet call encoding
    */
   constructor(
     private runtime: IACTPRuntime,
     requesterAddress: string,
-    private easHelper?: EASHelper
+    private easHelper?: EASHelper,
+    private walletProvider?: IWalletProvider,
+    private contractAddresses?: { usdc: string; actpKernel: string; escrowVault: string },
   ) {
     super(requesterAddress);
   }
@@ -497,12 +503,63 @@ export class StandardAdapter extends BaseAdapter implements IAdapter {
     };
   }
 
+  // ==========================================================================
+  // Smart Wallet Routing Helpers
+  // ==========================================================================
+
+  /**
+   * Check if state transitions should route through the wallet provider.
+   */
+  private shouldRouteViaWallet(): boolean {
+    return !!(this.walletProvider?.payACTPBatched && this.contractAddresses);
+  }
+
+  /**
+   * Encode a transitionState call as a TransactionRequest.
+   */
+  private encodeTransitionStateTx(txId: string, stateValue: number, proof: string = '0x'): TransactionRequest {
+    const iface = new ethers.Interface([
+      'function transitionState(bytes32 transactionId, uint8 newState, bytes proof)',
+    ]);
+    return {
+      to: this.contractAddresses!.actpKernel,
+      data: iface.encodeFunctionData('transitionState', [txId, stateValue, proof]),
+    };
+  }
+
+  /**
+   * Encode a releaseEscrow call as a TransactionRequest.
+   */
+  private encodeReleaseEscrowTx(txId: string): TransactionRequest {
+    const iface = new ethers.Interface([
+      'function releaseEscrow(bytes32 transactionId)',
+    ]);
+    return {
+      to: this.contractAddresses!.actpKernel,
+      data: iface.encodeFunctionData('releaseEscrow', [txId]),
+    };
+  }
+
+  // ==========================================================================
+  // State Transition Methods
+  // ==========================================================================
+
   /**
    * Transition to IN_PROGRESS state (provider starts work).
+   *
+   * When Smart Wallet is active, routes through walletProvider.sendTransaction().
    *
    * @param txId - Transaction ID
    */
   async startWork(txId: string): Promise<void> {
+    if (this.shouldRouteViaWallet()) {
+      const tx = this.encodeTransitionStateTx(txId, TransactionStateValue.IN_PROGRESS);
+      const receipt = await this.walletProvider!.sendTransaction(tx);
+      if (!receipt.success) {
+        throw new Error(`startWork UserOp failed: ${receipt.hash}`);
+      }
+      return;
+    }
     await this.runtime.transitionState(txId, 'IN_PROGRESS');
   }
 
@@ -510,8 +567,8 @@ export class StandardAdapter extends BaseAdapter implements IAdapter {
    * Transition to DELIVERED state (provider completes work).
    *
    * When no proof is provided, fetches the transaction's actual disputeWindow
-   * and encodes it as proof. This ensures consistency with the dispute window
-   * specified at transaction creation time.
+   * and encodes it as proof. When Smart Wallet is active, routes through
+   * walletProvider.sendTransaction().
    *
    * @param txId - Transaction ID
    * @param proof - Optional delivery proof (ABI-encoded dispute window).
@@ -530,6 +587,14 @@ export class StandardAdapter extends BaseAdapter implements IAdapter {
       deliveryProof = this.encodeDisputeWindowProof(tx.disputeWindow);
     }
 
+    if (this.shouldRouteViaWallet()) {
+      const tx = this.encodeTransitionStateTx(txId, TransactionStateValue.DELIVERED, deliveryProof);
+      const receipt = await this.walletProvider!.sendTransaction(tx);
+      if (!receipt.success) {
+        throw new Error(`deliver UserOp failed: ${receipt.hash}`);
+      }
+      return;
+    }
     await this.runtime.transitionState(txId, 'DELIVERED', deliveryProof);
   }
 
@@ -537,11 +602,21 @@ export class StandardAdapter extends BaseAdapter implements IAdapter {
    * Release escrow funds (EXPLICIT settlement).
    *
    * Wrapper around releaseEscrow() for IAdapter interface.
+   * When Smart Wallet is active, routes through walletProvider.sendTransaction().
    *
    * @param escrowId - Escrow ID (usually same as txId)
    * @param attestationUID - Optional attestation UID for verification
    */
   async release(escrowId: string, attestationUID?: string): Promise<void> {
+    if (this.shouldRouteViaWallet()) {
+      const tx = this.encodeReleaseEscrowTx(escrowId);
+      const receipt = await this.walletProvider!.sendTransaction(tx);
+      if (!receipt.success) {
+        throw new Error(`release UserOp failed: ${receipt.hash}`);
+      }
+      return;
+    }
+
     // Find txId from escrowId (they're usually the same)
     const legacyMatch = escrowId.match(/^escrow-(.+)-\d+$/);
     const txId = legacyMatch ? legacyMatch[1] : escrowId;
