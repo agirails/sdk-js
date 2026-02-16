@@ -64,6 +64,7 @@ export async function createClient(
     mode: config.mode,
     requesterAddress: config.address,
     stateDirectory: projectRoot,
+    wallet: config.wallet === 'auto' ? 'auto' : undefined,
   };
 
   // Create and return client
