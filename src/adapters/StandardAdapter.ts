@@ -12,6 +12,7 @@
  * @module adapters/StandardAdapter
  */
 
+import { ethers } from 'ethers';
 import { BaseAdapter, ValidationError } from './BaseAdapter';
 import { IACTPRuntime } from '../runtime/IACTPRuntime';
 import { MockTransaction, TransactionState, TransactionStateValue } from '../runtime/types/MockState';
@@ -24,6 +25,7 @@ import {
 } from '../types/adapter';
 import { IWalletProvider } from '../wallet/IWalletProvider';
 import { SmartWalletRouter, createSmartWalletRouter, computeDisputeWindowEnds } from '../wallet/SmartWalletRouter';
+import { ServiceHash } from '../utils/Helpers';
 
 /**
  * Parameters for creating a transaction (standard level).
@@ -171,6 +173,27 @@ export class StandardAdapter extends BaseAdapter implements IAdapter {
       );
     }
 
+    // Route through Smart Wallet when available (gasless)
+    if (this.smartWalletRouter?.shouldRoute() && this.walletProvider?.createACTPTransaction && this.contractAddresses) {
+      // Compute serviceHash from serviceDescription (matches BlockchainRuntime.validateServiceHash)
+      const serviceHash = computeServiceHash(params.serviceDescription);
+      const { txId, receipt } = await this.walletProvider.createACTPTransaction({
+        provider,
+        requester,
+        amount: amount.toString(),
+        deadline,
+        disputeWindow,
+        serviceHash,
+        agentId: params.agentId || '0',
+        contracts: { actpKernel: this.contractAddresses.actpKernel },
+      });
+      if (!receipt.success) {
+        throw new Error(`createTransaction UserOp failed: ${receipt.hash}`);
+      }
+      return txId;
+    }
+
+    // Fallback: EOA / mock path
     return this.runtime.createTransaction({
       provider,
       requester,
@@ -204,7 +227,15 @@ export class StandardAdapter extends BaseAdapter implements IAdapter {
       throw new Error(`Transaction ${txId} not found`);
     }
 
-    // Use the transaction's amount (already in correct format)
+    // Route through Smart Wallet when available (gasless)
+    if (this.smartWalletRouter?.shouldRoute() && this.contractAddresses) {
+      await this.smartWalletRouter.sendLinkEscrow(
+        txId, tx.amount, this.contractAddresses.usdc
+      );
+      return txId; // escrowId = txId (ACTP standard)
+    }
+
+    // Fallback: EOA / mock path
     return this.runtime.linkEscrow(txId, tx.amount);
   }
 
@@ -600,4 +631,22 @@ export class StandardAdapter extends BaseAdapter implements IAdapter {
       await this.releaseEscrow(escrowId);
     }
   }
+}
+
+/**
+ * Compute a bytes32 serviceHash from a serviceDescription string.
+ *
+ * Mirrors BlockchainRuntime.validateServiceHash() logic:
+ * - undefined/empty → ZeroHash
+ * - Already a valid bytes32 hash → pass through
+ * - Raw string → keccak256(toUtf8Bytes(description))
+ */
+function computeServiceHash(serviceDescription?: string): string {
+  if (!serviceDescription) {
+    return ethers.ZeroHash;
+  }
+  if (ServiceHash.isValidHash(serviceDescription)) {
+    return serviceDescription;
+  }
+  return ethers.keccak256(ethers.toUtf8Bytes(serviceDescription));
 }
