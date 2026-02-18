@@ -21,6 +21,11 @@ import type { MockTransaction } from '../runtime/types/MockState';
  */
 const ACTP_KERNEL_IFACE = new ethers.Interface([
   'function transitionState(bytes32 transactionId, uint8 newState, bytes proof)',
+  'function linkEscrow(bytes32 txId, address escrowVault, bytes32 escrowId)',
+]);
+
+const ERC20_IFACE = new ethers.Interface([
+  'function approve(address spender, uint256 amount)',
 ]);
 
 /**
@@ -110,6 +115,43 @@ export class SmartWalletRouter {
     const receipt = await this.walletProvider.sendTransaction(tx);
     if (!receipt.success) {
       throw new Error(`release UserOp failed: ${receipt.hash}`);
+    }
+    return receipt;
+  }
+
+  /**
+   * Send a linkEscrow call through the wallet provider as a batched UserOp.
+   *
+   * Encodes USDC.approve(escrowVault, amount) + ACTPKernel.linkEscrow(txId, escrowVault, txId)
+   * and submits them as a single atomic batch.
+   *
+   * @param txId - Transaction ID (bytes32)
+   * @param amount - Amount in USDC wei (string)
+   * @param usdcAddress - USDC contract address
+   * @returns Transaction receipt
+   */
+  async sendLinkEscrow(txId: string, amount: string, usdcAddress: string): Promise<TransactionReceipt> {
+    const amountBn = BigInt(amount);
+
+    const approveData = ERC20_IFACE.encodeFunctionData('approve', [
+      this.contractAddresses.escrowVault,
+      amountBn,
+    ]);
+
+    const linkEscrowData = ACTP_KERNEL_IFACE.encodeFunctionData('linkEscrow', [
+      txId,
+      this.contractAddresses.escrowVault,
+      txId, // escrowId = txId (ACTP standard)
+    ]);
+
+    const txs: TransactionRequest[] = [
+      { to: usdcAddress, data: approveData },
+      { to: this.contractAddresses.actpKernel, data: linkEscrowData },
+    ];
+
+    const receipt = await this.walletProvider.sendBatchTransaction(txs);
+    if (!receipt.success) {
+      throw new Error(`linkEscrow UserOp failed: ${receipt.hash}`);
     }
     return receipt;
   }

@@ -69,6 +69,32 @@ export interface BatchedPayResult {
 }
 
 /**
+ * Parameters for creating an ACTP transaction via Smart Wallet (without escrow).
+ */
+export interface CreateACTPTransactionParams {
+  provider: string;
+  requester: string;
+  amount: string;
+  deadline: number;
+  disputeWindow: number;
+  serviceHash: string;
+  agentId: string;
+  contracts: {
+    actpKernel: string;
+  };
+}
+
+/**
+ * Result of creating an ACTP transaction via Smart Wallet.
+ */
+export interface CreateACTPTransactionResult {
+  /** Pre-computed ACTP transaction ID (bytes32) */
+  txId: string;
+  /** Transaction receipt */
+  receipt: TransactionReceipt;
+}
+
+/**
  * Parameters for batched ACTP payment.
  */
 export interface BatchedPayParams {
@@ -132,4 +158,15 @@ export interface IWalletProvider {
    * @returns undefined if batched payments are not supported.
    */
   payACTPBatched?(params: BatchedPayParams, prependCalls?: import('./aa/constants').SmartWalletCall[]): Promise<BatchedPayResult>;
+
+  /**
+   * Create an ACTP transaction via Smart Wallet (without escrow linking).
+   *
+   * Only available on AA wallets (supportsBatching: true).
+   * Handles ACTP nonce management internally via the DualNonceManager mutex.
+   *
+   * @param params - Transaction creation parameters
+   * @returns Pre-computed txId and transaction receipt
+   */
+  createACTPTransaction?(params: CreateACTPTransactionParams): Promise<CreateACTPTransactionResult>;
 }

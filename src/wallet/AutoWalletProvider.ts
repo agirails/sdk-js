@@ -22,6 +22,8 @@ import {
   WalletInfo,
   BatchedPayParams,
   BatchedPayResult,
+  CreateACTPTransactionParams,
+  CreateACTPTransactionResult,
 } from './IWalletProvider';
 import { computeSmartWalletAddress } from './aa/UserOpBuilder';
 import {
@@ -32,7 +34,7 @@ import { SmartWalletCall } from './aa/constants';
 import { BundlerClient } from './aa/BundlerClient';
 import { PaymasterClient } from './aa/PaymasterClient';
 import { DualNonceManager } from './aa/DualNonceManager';
-import { buildACTPPayBatch } from './aa/TransactionBatcher';
+import { buildACTPPayBatch, computeTransactionId } from './aa/TransactionBatcher';
 import { sdkLogger } from '../utils/Logger';
 
 // ============================================================================
@@ -258,6 +260,51 @@ export class AutoWalletProvider implements IWalletProvider {
         throw new Error('Unable to submit batched ACTP payment after nonce retries');
       },
       false // payACTPBatched controls ACTP nonce cache explicitly
+    );
+  }
+
+  /**
+   * Create an ACTP transaction via Smart Wallet (without escrow linking).
+   *
+   * Encodes just ACTPKernel.createTransaction() as a single-call UserOp.
+   * Pre-computes the txId using the same keccak256 formula as the contract.
+   * Manages ACTP nonce inside the mutex queue for concurrent safety.
+   */
+  async createACTPTransaction(params: CreateACTPTransactionParams): Promise<CreateACTPTransactionResult> {
+    const kernelIface = new ethers.Interface([
+      'function createTransaction(address provider, address requester, uint256 amount, uint256 deadline, uint256 disputeWindow, bytes32 serviceHash, uint256 agentId)',
+    ]);
+
+    return this.nonceManager.enqueue(
+      async ({ entryPointNonce, actpNonce }) => {
+        const txId = computeTransactionId(
+          params.requester,
+          params.provider,
+          params.amount,
+          params.serviceHash,
+          actpNonce
+        );
+
+        const createTxData = kernelIface.encodeFunctionData('createTransaction', [
+          params.provider,
+          params.requester,
+          BigInt(params.amount),
+          params.deadline,
+          params.disputeWindow,
+          params.serviceHash,
+          BigInt(params.agentId || '0'),
+        ]);
+
+        const calls: SmartWalletCall[] = [
+          { target: params.contracts.actpKernel, value: 0n, data: createTxData },
+        ];
+
+        const receipt = await this.submitUserOp(calls, entryPointNonce);
+
+        const result: CreateACTPTransactionResult = { txId, receipt };
+        return { result, success: receipt.success };
+      },
+      true // createTransaction increments ACTP nonce
     );
   }
 
