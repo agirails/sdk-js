@@ -798,33 +798,44 @@ export class ACTPClient {
               );
             }
 
-            // Validate that bundler/paymaster URLs have actual API keys
-            const cdpBundlerUrl = networkConfig.aa.bundlerUrls.coinbase;
-            const hasPimlico = !!networkConfig.aa.bundlerUrls.pimlico;
-            if (cdpBundlerUrl.endsWith('/') && !hasPimlico) {
+            const coinbaseBundlerUrl = networkConfig.aa.bundlerUrls.coinbase;
+            const pimlicoBundlerUrl = networkConfig.aa.bundlerUrls.pimlico;
+            const coinbasePaymasterUrl = networkConfig.aa.paymasterUrls.coinbase;
+            const pimlicoPaymasterUrl = networkConfig.aa.paymasterUrls.pimlico;
+            const bundlerPrimary = coinbaseBundlerUrl ?? pimlicoBundlerUrl;
+            const bundlerBackup = coinbaseBundlerUrl && pimlicoBundlerUrl ? pimlicoBundlerUrl : undefined;
+            const paymasterPrimary = coinbasePaymasterUrl ?? pimlicoPaymasterUrl;
+            const paymasterBackup = coinbasePaymasterUrl && pimlicoPaymasterUrl ? pimlicoPaymasterUrl : undefined;
+
+            if (!bundlerPrimary || !paymasterPrimary) {
               throw new Error(
-                'CDP_API_KEY is required for gas-sponsored transactions.\n\n' +
-                'Set up your API key:\n' +
-                '  1. Visit https://portal.cdp.coinbase.com/\n' +
-                '  2. Create a new API key\n' +
-                '  3. export CDP_API_KEY="your-key-here"\n\n' +
-                'Or set PIMLICO_API_KEY as an alternative bundler/paymaster.\n' +
+                'AA bundler/paymaster endpoints are not configured.\n\n' +
+                'Configure at least one provider:\n' +
+                '  1. export CDP_API_KEY="your-key-here"\n' +
+                '  2. or export PIMLICO_API_KEY="your-key-here"\n' +
+                '  3. or set explicit endpoints via CDP_BUNDLER_URL / CDP_PAYMASTER_URL\n' +
+                '  4. or set explicit endpoints via PIMLICO_BUNDLER_URL / PIMLICO_PAYMASTER_URL\n\n' +
                 'Or use wallet: undefined for traditional EOA transactions (requires ETH for gas).'
               );
             }
+
+            const effectiveKernelAddress = config.contracts?.actpKernel ?? networkConfig.contracts.actpKernel;
+            const isCustomKernel = !!config.contracts?.actpKernel
+              && config.contracts.actpKernel !== networkConfig.contracts.actpKernel;
 
             const autoWallet = await AutoWalletProvider.create({
               signer,
               provider,
               chainId: networkConfig.chainId,
-              actpKernelAddress: config.contracts?.actpKernel ?? networkConfig.contracts.actpKernel,
+              actpKernelAddress: effectiveKernelAddress,
+              actpKernelDeploymentBlock: isCustomKernel ? undefined : networkConfig.actpKernelDeploymentBlock,
               bundler: {
-                primaryUrl: networkConfig.aa.bundlerUrls.coinbase,
-                backupUrl: networkConfig.aa.bundlerUrls.pimlico,
+                primaryUrl: bundlerPrimary,
+                backupUrl: bundlerBackup,
               },
               paymaster: {
-                primaryUrl: networkConfig.aa.paymasterUrls.coinbase,
-                backupUrl: networkConfig.aa.paymasterUrls.pimlico,
+                primaryUrl: paymasterPrimary,
+                backupUrl: paymasterBackup,
               },
             });
 

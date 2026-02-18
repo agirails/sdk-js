@@ -15,15 +15,26 @@ import { ethers } from 'ethers';
 const BASE_SEPOLIA_RPC_URL = process.env.BASE_SEPOLIA_RPC || 'https://sepolia.base.org';
 const BASE_MAINNET_RPC_URL = process.env.BASE_MAINNET_RPC || 'https://mainnet.base.org';
 
-// AGIRAILS CDP Client API Key — safe to embed, cannot access funds/portfolios.
-// Developers can override with their own key via CDP_API_KEY env var.
-// Paymaster policy restricts sponsorship to AGIRAILS contracts only.
-const CDP_CLIENT_KEY = process.env.CDP_API_KEY || '2txciN85t41erCjveqgNnXYyHRcoo5xP';
+// Shared AA keys for out-of-the-box UX (override with env vars in production).
+const CDP_CLIENT_KEY = process.env.CDP_API_KEY?.trim() || '2txciN85t41erCjveqgNnXYyHRcoo5xP';
+const PIMLICO_KEY = process.env.PIMLICO_API_KEY?.trim() || 'pim_YiHmeAijzTPUvo1UMmXUiN';
 
-// Pimlico failover — bundler/paymaster backup if Coinbase CDP is down.
-// Safe to embed: restricted by contract allowlist (AGIRAILS contracts only).
-// Developers can override with their own key via PIMLICO_API_KEY env var.
-const PIMLICO_KEY = process.env.PIMLICO_API_KEY || 'pim_YiHmeAijzTPUvo1UMmXUiN';
+function resolveOverrideUrl(url?: string): string | undefined {
+  const trimmed = url?.trim();
+  return trimmed && trimmed.length > 0 ? trimmed : undefined;
+}
+
+function resolveCoinbaseRpcUrl(networkPath: string, override?: string): string | undefined {
+  const overrideUrl = resolveOverrideUrl(override);
+  if (overrideUrl) return overrideUrl;
+  return `https://api.developer.coinbase.com/rpc/v1/${networkPath}/${CDP_CLIENT_KEY}`;
+}
+
+function resolvePimlicoRpcUrl(chainId: number, override?: string): string | undefined {
+  const overrideUrl = resolveOverrideUrl(override);
+  if (overrideUrl) return overrideUrl;
+  return `https://api.pimlico.io/v2/${chainId}/rpc?apikey=${PIMLICO_KEY}`;
+}
 
 /**
  * Network configuration
@@ -61,6 +72,15 @@ export interface NetworkConfig {
   maxTransactionAmount?: number;
 
   /**
+   * Known deployment block of the ACTPKernel contract.
+   *
+   * Eliminates the O(log N) binary-search over `getCode()` that
+   * DualNonceManager otherwise performs on first nonce derivation.
+   * If undefined, the binary search fallback is used.
+   */
+  actpKernelDeploymentBlock?: number;
+
+  /**
    * AIP-12: Account Abstraction (AA) configuration.
    * EntryPoint v0.6 + CoinbaseSmartWallet.
    */
@@ -71,12 +91,12 @@ export interface NetworkConfig {
     smartWalletFactory: string;
     /** Bundler RPC URLs */
     bundlerUrls: {
-      coinbase: string;
+      coinbase?: string;
       pimlico?: string;
     };
     /** Paymaster RPC URLs (ERC-7677) */
     paymasterUrls: {
-      coinbase: string;
+      coinbase?: string;
       pimlico?: string;
     };
   };
@@ -108,21 +128,18 @@ export const BASE_SEPOLIA: NetworkConfig = {
     maxFeePerGas: ethers.parseUnits('2', 'gwei'),
     maxPriorityFeePerGas: ethers.parseUnits('1', 'gwei')
   },
+  actpKernelDeploymentBlock: 37306493,
   // AIP-12: Account Abstraction
   aa: {
     entryPoint: '0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789',
     smartWalletFactory: '0xBA5ED110eFDBa3D005bfC882d75358ACBbB85842',
     bundlerUrls: {
-      // Coinbase CDP bundler — set CDP_API_KEY env var
-      coinbase: process.env.CDP_BUNDLER_URL || `https://api.developer.coinbase.com/rpc/v1/base-sepolia/${CDP_CLIENT_KEY}`,
-      // Pimlico backup bundler — set PIMLICO_API_KEY env var
-      pimlico: process.env.PIMLICO_BUNDLER_URL || `https://api.pimlico.io/v2/84532/rpc?apikey=${PIMLICO_KEY}`,
+      coinbase: resolveCoinbaseRpcUrl('base-sepolia', process.env.CDP_BUNDLER_URL),
+      pimlico: resolvePimlicoRpcUrl(84532, process.env.PIMLICO_BUNDLER_URL),
     },
     paymasterUrls: {
-      // Coinbase CDP paymaster — same endpoint as bundler
-      coinbase: process.env.CDP_PAYMASTER_URL || `https://api.developer.coinbase.com/rpc/v1/base-sepolia/${CDP_CLIENT_KEY}`,
-      // Pimlico failover paymaster
-      pimlico: process.env.PIMLICO_PAYMASTER_URL || `https://api.pimlico.io/v2/84532/rpc?apikey=${PIMLICO_KEY}`,
+      coinbase: resolveCoinbaseRpcUrl('base-sepolia', process.env.CDP_PAYMASTER_URL),
+      pimlico: resolvePimlicoRpcUrl(84532, process.env.PIMLICO_PAYMASTER_URL),
     },
   },
 };
@@ -158,19 +175,18 @@ export const BASE_MAINNET: NetworkConfig = {
    * Will be removed/increased after formal security audit.
    */
   maxTransactionAmount: 1000,
+  actpKernelDeploymentBlock: 41935749,
   // AIP-12: Account Abstraction
   aa: {
     entryPoint: '0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789',
     smartWalletFactory: '0xBA5ED110eFDBa3D005bfC882d75358ACBbB85842',
     bundlerUrls: {
-      coinbase: process.env.CDP_BUNDLER_URL || `https://api.developer.coinbase.com/rpc/v1/base/${CDP_CLIENT_KEY}`,
-      // Pimlico backup bundler — set PIMLICO_API_KEY env var
-      pimlico: process.env.PIMLICO_BUNDLER_URL || `https://api.pimlico.io/v2/8453/rpc?apikey=${PIMLICO_KEY}`,
+      coinbase: resolveCoinbaseRpcUrl('base', process.env.CDP_BUNDLER_URL),
+      pimlico: resolvePimlicoRpcUrl(8453, process.env.PIMLICO_BUNDLER_URL),
     },
     paymasterUrls: {
-      coinbase: process.env.CDP_PAYMASTER_URL || `https://api.developer.coinbase.com/rpc/v1/base/${CDP_CLIENT_KEY}`,
-      // Pimlico failover paymaster
-      pimlico: process.env.PIMLICO_PAYMASTER_URL || `https://api.pimlico.io/v2/8453/rpc?apikey=${PIMLICO_KEY}`,
+      coinbase: resolveCoinbaseRpcUrl('base', process.env.CDP_PAYMASTER_URL),
+      pimlico: resolvePimlicoRpcUrl(8453, process.env.PIMLICO_PAYMASTER_URL),
     },
   },
 };
@@ -222,6 +238,7 @@ export function getNetwork(network: string): NetworkConfig {
       maxFeePerGas: config.gasSettings.maxFeePerGas,
       maxPriorityFeePerGas: config.gasSettings.maxPriorityFeePerGas
     },
+    actpKernelDeploymentBlock: config.actpKernelDeploymentBlock,
     ...(config.aa ? {
       aa: {
         entryPoint: config.aa.entryPoint,
@@ -272,4 +289,3 @@ export function validateNetworkConfig(config: NetworkConfig): void {
     );
   }
 }
-

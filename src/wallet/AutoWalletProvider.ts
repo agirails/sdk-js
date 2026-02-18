@@ -48,6 +48,8 @@ export interface AutoWalletConfig {
   chainId: number;
   /** ACTPKernel contract address (for ACTP nonce reads) */
   actpKernelAddress: string;
+  /** Known deployment block of ACTPKernel (skips binary search in DualNonceManager) */
+  actpKernelDeploymentBlock?: number;
   /** Bundler configuration */
   bundler: {
     primaryUrl: string;
@@ -99,7 +101,8 @@ export class AutoWalletProvider implements IWalletProvider {
     this.nonceManager = new DualNonceManager(
       config.provider,
       smartWalletAddress,
-      config.actpKernelAddress
+      config.actpKernelAddress,
+      config.actpKernelDeploymentBlock
     );
   }
 
@@ -194,28 +197,67 @@ export class AutoWalletProvider implements IWalletProvider {
   async payACTPBatched(params: BatchedPayParams, prependCalls?: SmartWalletCall[]): Promise<BatchedPayResult> {
     return this.nonceManager.enqueue(
       async ({ entryPointNonce, actpNonce }) => {
-        const batch = buildACTPPayBatch({
-          ...params,
-          actpNonce,
-        });
+        const MAX_NONCE_BUMPS = 12;
+        let candidateNonce = actpNonce;
 
-        // Combine activation calls (if any) with payment calls
-        const allCalls = prependCalls && prependCalls.length > 0
-          ? [...prependCalls, ...batch.calls]
-          : batch.calls;
+        for (let i = 0; i <= MAX_NONCE_BUMPS; i++) {
+          const batch = buildACTPPayBatch({
+            ...params,
+            actpNonce: candidateNonce,
+          });
 
-        const receipt = await this.submitUserOp(allCalls, entryPointNonce);
+          // Combine activation calls (if any) with payment calls
+          const allCalls = prependCalls && prependCalls.length > 0
+            ? [...prependCalls, ...batch.calls]
+            : batch.calls;
 
-        return {
-          result: {
-            txId: batch.txId,
-            hash: receipt.hash,
-            success: receipt.success,
-          },
-          success: receipt.success,
-        };
+          try {
+            const receipt = await this.submitUserOp(allCalls, entryPointNonce);
+
+            if (!receipt.success) {
+              const failed: { result: BatchedPayResult; success: boolean } = {
+                result: {
+                  txId: batch.txId,
+                  hash: receipt.hash,
+                  success: false,
+                },
+                success: false,
+              };
+              return failed;
+            }
+
+            // Keep local nonce cache aligned with the nonce that actually succeeded.
+            this.nonceManager.setCachedActpNonce(candidateNonce + 1n);
+
+            const succeeded: { result: BatchedPayResult; success: boolean } = {
+              result: {
+                txId: batch.txId,
+                hash: receipt.hash,
+                success: receipt.success,
+              },
+              success: receipt.success,
+            };
+            return succeeded;
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            // Bundlers may return either plain revert text or ABI-encoded revert data.
+            const nonceCollision = /Escrow ID already used/i.test(message)
+              || /457363726f7720494420616c72656164792075736564/i.test(message);
+
+            if (!nonceCollision || i === MAX_NONCE_BUMPS) {
+              throw error;
+            }
+
+            candidateNonce += 1n;
+            sdkLogger.warn('ACTP nonce collision detected during batched pay; retrying with incremented nonce', {
+              nextActpNonce: candidateNonce.toString(),
+            });
+          }
+        }
+
+        throw new Error('Unable to submit batched ACTP payment after nonce retries');
       },
-      true // Increment ACTP nonce on success
+      false // payACTPBatched controls ACTP nonce cache explicitly
     );
   }
 

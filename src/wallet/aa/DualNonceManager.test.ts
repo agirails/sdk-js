@@ -189,6 +189,88 @@ describe('DualNonceManager', () => {
       expect(nonce).toBe(10n);
     });
   });
+
+  describe('setCachedActpNonce()', () => {
+    it('should use overridden cached nonce on next enqueue', async () => {
+      const { manager } = createTestManager();
+
+      manager.setCachedActpNonce(42n);
+
+      const nonce = await manager.enqueue(
+        async ({ actpNonce }) => ({ result: actpNonce, success: true }),
+        false
+      );
+
+      expect(nonce).toBe(42n);
+    });
+  });
+
+  describe('event-derived nonce helpers', () => {
+    it('findContractDeploymentBlock() should binary-search and cache deployment block', async () => {
+      const deploymentBlock = 42;
+
+      const provider: any = {
+        getCode: jest.fn(async (_address: string, blockTag: number) => {
+          return blockTag >= deploymentBlock ? '0x1234' : '0x';
+        }),
+      };
+
+      const manager = new (DualNonceManager as any)(
+        provider,
+        '0x' + '11'.repeat(20),
+        '0x' + '22'.repeat(20)
+      ) as any;
+
+      const first = await manager.findContractDeploymentBlock(100);
+      expect(first).toBe(deploymentBlock);
+
+      const callCountAfterFirst = provider.getCode.mock.calls.length;
+      const second = await manager.findContractDeploymentBlock(200);
+      expect(second).toBe(deploymentBlock);
+      expect(provider.getCode.mock.calls.length).toBe(callCountAfterFirst);
+    });
+
+    it('constructor with knownDeploymentBlock seeds cache and skips binary search', async () => {
+      const provider: any = {
+        getCode: jest.fn(async () => '0x1234'),
+      };
+
+      const manager = new (DualNonceManager as any)(
+        provider,
+        '0x' + '11'.repeat(20),
+        '0x' + '22'.repeat(20),
+        12345
+      ) as any;
+
+      expect(manager.cachedKernelDeploymentBlock).toBe(12345);
+
+      const result = await manager.findContractDeploymentBlock(99999);
+      expect(result).toBe(12345);
+      expect(provider.getCode).not.toHaveBeenCalled();
+    });
+
+    it('countRequesterTransactionCreatedEvents() should reduce chunk size on RPC range errors', async () => {
+      const provider: any = {
+        getLogs: jest.fn(async (filter: { fromBlock: number; toBlock: number }) => {
+          const span = Number(filter.toBlock) - Number(filter.fromBlock) + 1;
+          if (span > 1500) {
+            throw new Error('range too large');
+          }
+          return [{}];
+        }),
+      };
+
+      const manager = new (DualNonceManager as any)(
+        provider,
+        '0x' + '11'.repeat(20),
+        '0x' + '22'.repeat(20)
+      ) as any;
+
+      const logs = await manager.countRequesterTransactionCreatedEvents(0, 3999);
+      expect(logs).toHaveLength(4);
+      expect(provider.getLogs.mock.calls.length).toBeGreaterThan(4);
+    });
+  });
 });
 
 function sleep(ms: number): Promise<void> {

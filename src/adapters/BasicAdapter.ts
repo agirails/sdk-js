@@ -330,6 +330,9 @@ export class BasicAdapter extends BaseAdapter implements IAdapter {
     canAccept: boolean;
     canComplete: boolean;
     canDispute: boolean;
+    amount: string;
+    provider: string;
+    requester: string;
   }> {
     const tx = await this.runtime.getTransaction(txId);
 
@@ -344,6 +347,9 @@ export class BasicAdapter extends BaseAdapter implements IAdapter {
       canAccept: tx.state === 'INITIATED' && tx.deadline > now,
       canComplete: tx.state === 'COMMITTED' || tx.state === 'IN_PROGRESS',
       canDispute: tx.state === 'DELIVERED' && tx.completedAt !== null && computeDisputeWindowEnds(tx.completedAt, tx.disputeWindow) > now,
+      amount: this.formatAmount(tx.amount),
+      provider: tx.provider,
+      requester: tx.requester,
     };
   }
 

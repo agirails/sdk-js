@@ -2,8 +2,8 @@
  * Networks Configuration Tests
  *
  * Tests cover:
- * - CDP_API_KEY detection in bundler/paymaster URLs
- * - Pimlico fallback URL construction
+ * - CDP/Pimlico API key detection in bundler/paymaster URLs
+ * - Fallback URL construction when env vars are missing
  * - Network config validation
  *
  * NOTE: AA endpoint URL tests use jest.isolateModules() because networks.ts
@@ -83,7 +83,6 @@ describe('Networks Config', () => {
 
     it('should use hardcoded Pimlico key when PIMLICO_API_KEY is missing', () => {
       const config = freshConfig();
-      // Falls back to hardcoded AGIRAILS Pimlico key (restricted by dashboard policy)
       expect(config.aa?.bundlerUrls.pimlico).toContain('api.pimlico.io');
       expect(config.aa?.bundlerUrls.pimlico).not.toContain('undefined');
     });
@@ -93,6 +92,13 @@ describe('Networks Config', () => {
         CDP_BUNDLER_URL: 'https://custom-bundler.example.com',
       });
       expect(config.aa?.bundlerUrls.coinbase).toBe('https://custom-bundler.example.com');
+    });
+
+    it('should support custom Pimlico URL without PIMLICO_API_KEY', () => {
+      const config = freshConfig({
+        PIMLICO_BUNDLER_URL: 'https://pimlico-custom.example.com/rpc',
+      });
+      expect(config.aa?.bundlerUrls.pimlico).toBe('https://pimlico-custom.example.com/rpc');
     });
   });
 
@@ -153,6 +159,18 @@ describe('Networks Config', () => {
 
     it('should throw on unknown network', () => {
       expect(() => getNetwork('ethereum-mainnet')).toThrow('Unknown network');
+    });
+
+    it('should have actpKernelDeploymentBlock on base-sepolia', () => {
+      const config = getNetwork('base-sepolia');
+      expect(typeof config.actpKernelDeploymentBlock).toBe('number');
+      expect(config.actpKernelDeploymentBlock).toBeGreaterThan(0);
+    });
+
+    it('should have actpKernelDeploymentBlock on base-mainnet', () => {
+      const config = getNetwork('base-mainnet');
+      expect(typeof config.actpKernelDeploymentBlock).toBe('number');
+      expect(config.actpKernelDeploymentBlock).toBeGreaterThan(0);
     });
 
     it('should return deep clone (no global mutation)', () => {
