@@ -47,13 +47,24 @@ import {
 export type FetchFunction = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
 /**
+ * Transaction-like receipt returned by wallet abstractions.
+ *
+ * `success` is optional for backward compatibility with legacy transfer fns
+ * that only return a hash string.
+ */
+export interface TransferReceiptLike {
+  hash: string;
+  success?: boolean;
+}
+
+/**
  * Transfer function for atomic payments (legacy direct transfer).
  *
  * @param to - Recipient address
  * @param amount - Amount in USDC wei (string)
- * @returns Transaction hash as proof
+ * @returns Transaction hash string OR receipt-like object with hash/success
  */
-export type TransferFunction = (to: string, amount: string) => Promise<string>;
+export type TransferFunction = (to: string, amount: string) => Promise<string | TransferReceiptLike>;
 
 /**
  * Approve function for USDC allowance (used with X402Relay).
@@ -649,10 +660,23 @@ export class X402Adapter extends BaseAdapter implements IAdapter {
       }
 
       // Legacy path: direct transfer, no fee
-      const txHash = await this.transferFn(
+      const transferResult = await this.transferFn(
         headers.paymentAddress,
         headers.amount
       );
+
+      const txHash = typeof transferResult === 'string'
+        ? transferResult
+        : transferResult.hash;
+
+      const transferSuccess = typeof transferResult === 'string'
+        ? true
+        : transferResult.success !== false;
+
+      if (!transferSuccess) {
+        throw new Error(`transferFn returned unsuccessful receipt for tx ${txHash}`);
+      }
+
       return { txHash };
     } catch (error) {
       throw new X402Error(

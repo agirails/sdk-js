@@ -276,6 +276,32 @@ describe('X402Adapter', () => {
       expect(capturedAmount).toBe('10000000');
     });
 
+    it('accepts receipt-like transfer result with hash/success', async () => {
+      const receiptTransfer: TransferFunction = async () => ({
+        hash: '0x' + 'c'.repeat(64),
+        success: true,
+      });
+
+      const mockFetch = createMockFetch([
+        mock402Response(providerAddress, '10000000'),
+        mockResponse(200),
+      ]);
+
+      const adapterWithMock = new X402Adapter(requesterAddress, {
+        ...defaultConfig,
+        transferFn: receiptTransfer,
+        fetchFn: mockFetch,
+      });
+
+      const result = await adapterWithMock.pay({
+        to: 'https://api.example.com/service',
+        amount: '10',
+      });
+
+      expect(result.txId).toBe('0x' + 'c'.repeat(64));
+      expect(result.success).toBe(true);
+    });
+
     it('handles free service (200 on initial request)', async () => {
       const mockFetch = createMockFetch([
         mockResponse(200, {}, '{"free": true}'),
@@ -345,6 +371,30 @@ describe('X402Adapter', () => {
       const adapterWithMock = new X402Adapter(requesterAddress, {
         ...defaultConfig,
         transferFn: failingTransfer,
+        fetchFn: mockFetch,
+      });
+
+      await expect(adapterWithMock.pay({
+        to: 'https://api.example.com/service',
+        amount: '10',
+      })).rejects.toMatchObject({
+        code: X402ErrorCode.PAYMENT_FAILED,
+      });
+    });
+
+    it('throws when transferFn returns unsuccessful receipt', async () => {
+      const failedReceiptTransfer: TransferFunction = async () => ({
+        hash: '0x' + 'd'.repeat(64),
+        success: false,
+      });
+
+      const mockFetch = createMockFetch([
+        mock402Response(providerAddress, '10000000'),
+      ]);
+
+      const adapterWithMock = new X402Adapter(requesterAddress, {
+        ...defaultConfig,
+        transferFn: failedReceiptTransfer,
         fetchFn: mockFetch,
       });
 
