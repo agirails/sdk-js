@@ -238,6 +238,7 @@ export function getNetwork(network: string): NetworkConfig {
       maxFeePerGas: config.gasSettings.maxFeePerGas,
       maxPriorityFeePerGas: config.gasSettings.maxPriorityFeePerGas
     },
+    maxTransactionAmount: config.maxTransactionAmount,
     actpKernelDeploymentBlock: config.actpKernelDeploymentBlock,
     ...(config.aa ? {
       aa: {

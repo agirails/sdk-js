@@ -77,6 +77,8 @@ export class DualNonceManager {
   private cachedActpNonce: bigint | undefined;
   /** Cached deployment block for ACTPKernel address */
   private cachedKernelDeploymentBlock: number | undefined;
+  /** Whether the cached deployment block hint has been validated against the chain */
+  private deploymentBlockValidated = false;
 
   constructor(
     provider: ethers.JsonRpcProvider,
@@ -223,10 +225,33 @@ export class DualNonceManager {
 
   /**
    * Find contract deployment block using binary search on getCode().
+   *
+   * If a knownDeploymentBlock was provided at construction, it is validated
+   * once by checking getCode() at that block. On mismatch the cache is
+   * discarded and the full binary search runs as fallback.
    */
   private async findContractDeploymentBlock(latestBlock: number): Promise<number> {
     if (this.cachedKernelDeploymentBlock !== undefined) {
-      return this.cachedKernelDeploymentBlock;
+      // Validate hint on first use: contract must have code at the claimed block.
+      if (!this.deploymentBlockValidated) {
+        this.deploymentBlockValidated = true;
+        const code = await this.provider.getCode(
+          this.actpKernelAddress,
+          this.cachedKernelDeploymentBlock
+        );
+        if (code === '0x') {
+          sdkLogger.warn(
+            'knownDeploymentBlock is invalid (no code at that block) — falling back to binary search',
+            { knownDeploymentBlock: this.cachedKernelDeploymentBlock }
+          );
+          this.cachedKernelDeploymentBlock = undefined;
+          // Fall through to binary search below
+        } else {
+          return this.cachedKernelDeploymentBlock;
+        }
+      } else {
+        return this.cachedKernelDeploymentBlock;
+      }
     }
 
     const codeAtLatest = await this.provider.getCode(this.actpKernelAddress, latestBlock);
@@ -248,6 +273,7 @@ export class DualNonceManager {
     }
 
     this.cachedKernelDeploymentBlock = low;
+    this.deploymentBlockValidated = true; // binary search result is inherently valid
     return low;
   }
 

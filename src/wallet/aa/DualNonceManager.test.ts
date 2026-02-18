@@ -246,7 +246,31 @@ describe('DualNonceManager', () => {
 
       const result = await manager.findContractDeploymentBlock(99999);
       expect(result).toBe(12345);
-      expect(provider.getCode).not.toHaveBeenCalled();
+      // One validation call (getCode at hint block), no binary search
+      expect(provider.getCode).toHaveBeenCalledTimes(1);
+    });
+
+    it('invalid knownDeploymentBlock falls back to binary search', async () => {
+      const realDeploymentBlock = 42;
+      const provider: any = {
+        getCode: jest.fn(async (_address: string, blockTag: number) => {
+          return blockTag >= realDeploymentBlock ? '0x1234' : '0x';
+        }),
+      };
+
+      const manager = new (DualNonceManager as any)(
+        provider,
+        '0x' + '11'.repeat(20),
+        '0x' + '22'.repeat(20),
+        10 // wrong — before real deployment (42), so getCode returns '0x'
+      ) as any;
+
+      // Should validate, find no code at block 10, and fall back to binary search
+      const result = await manager.findContractDeploymentBlock(100);
+      expect(result).toBe(realDeploymentBlock);
+      // First call is validation (getCode at 10), then binary search kicks in
+      expect(provider.getCode.mock.calls[0][1]).toBe(10);
+      expect(provider.getCode.mock.calls.length).toBeGreaterThan(2);
     });
 
     it('countRequesterTransactionCreatedEvents() should reduce chunk size on RPC range errors', async () => {
