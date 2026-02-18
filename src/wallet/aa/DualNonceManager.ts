@@ -29,6 +29,12 @@ const ACTP_KERNEL_NONCE_ABI = [
   'function requesterNonces(address requester) view returns (uint256)',
 ];
 
+const TX_CREATED_EVENT_TOPIC = ethers.id(
+  'TransactionCreated(bytes32,address,address,uint256,bytes32,uint256,uint256,uint256)'
+);
+const INITIAL_LOG_CHUNK_SIZE = 10_000;
+const MIN_LOG_CHUNK_SIZE = 1_000;
+
 // ============================================================================
 // Mutex
 // ============================================================================
@@ -69,15 +75,21 @@ export class DualNonceManager {
 
   /** Locally cached ACTP nonce — undefined means "re-read from chain" */
   private cachedActpNonce: bigint | undefined;
+  /** Cached deployment block for ACTPKernel address */
+  private cachedKernelDeploymentBlock: number | undefined;
 
   constructor(
     provider: ethers.JsonRpcProvider,
     senderAddress: string,
-    actpKernelAddress: string
+    actpKernelAddress: string,
+    knownDeploymentBlock?: number
   ) {
     this.provider = provider;
     this.senderAddress = senderAddress;
     this.actpKernelAddress = actpKernelAddress;
+    if (knownDeploymentBlock !== undefined) {
+      this.cachedKernelDeploymentBlock = knownDeploymentBlock;
+    }
   }
 
   /**
@@ -156,11 +168,39 @@ export class DualNonceManager {
       return nonce;
     } catch {
       // Older ACTPKernel deployments don't expose requesterNonces.
-      // Return 0n — registration doesn't need it, and payment batches
-      // will fail at the contract level anyway if nonces are wrong.
-      sdkLogger.warn('requesterNonces not available on ACTPKernel — using 0 (older deployment?)');
-      this.cachedActpNonce = 0n;
-      return 0n;
+      // Derive nonce from TransactionCreated events for this requester.
+      // Uses deployment-block binary search + chunked logs (avoids block-0 scans).
+      sdkLogger.warn(
+        'requesterNonces not available on ACTPKernel — deriving nonce from events (older deployment?)'
+      );
+
+      try {
+        const latestBlock = await this.provider.getBlockNumber();
+        const deploymentBlock = await this.findContractDeploymentBlock(latestBlock);
+        const events = await this.countRequesterTransactionCreatedEvents(
+          deploymentBlock,
+          latestBlock
+        );
+        const derivedNonce = BigInt(events.length);
+
+        sdkLogger.info('Derived ACTP nonce from TransactionCreated events', {
+          requester: this.senderAddress,
+          events: events.length,
+          fromBlock: deploymentBlock,
+          toBlock: latestBlock,
+          derivedNonce: derivedNonce.toString(),
+        });
+
+        this.cachedActpNonce = derivedNonce;
+        return derivedNonce;
+      } catch (deriveError) {
+        // Last-resort fallback for very old/limited RPCs.
+        sdkLogger.warn('Could not derive ACTP nonce from events — using 0 as last resort', {
+          error: deriveError instanceof Error ? deriveError.message : String(deriveError),
+        });
+        this.cachedActpNonce = 0n;
+        return 0n;
+      }
     }
   }
 
@@ -169,5 +209,93 @@ export class DualNonceManager {
    */
   invalidateCache(): void {
     this.cachedActpNonce = undefined;
+  }
+
+  /**
+   * Override cached ACTP nonce.
+   *
+   * Used when caller deterministically advances nonce (e.g. retrying batched
+   * creation after "Escrow ID already used" simulation failures).
+   */
+  setCachedActpNonce(nonce: bigint): void {
+    this.cachedActpNonce = nonce;
+  }
+
+  /**
+   * Find contract deployment block using binary search on getCode().
+   */
+  private async findContractDeploymentBlock(latestBlock: number): Promise<number> {
+    if (this.cachedKernelDeploymentBlock !== undefined) {
+      return this.cachedKernelDeploymentBlock;
+    }
+
+    const codeAtLatest = await this.provider.getCode(this.actpKernelAddress, latestBlock);
+    if (codeAtLatest === '0x') {
+      throw new Error(`ACTPKernel has no code at latest block ${latestBlock}`);
+    }
+
+    let low = 0;
+    let high = latestBlock;
+
+    while (low < high) {
+      const mid = Math.floor((low + high) / 2);
+      const codeAtMid = await this.provider.getCode(this.actpKernelAddress, mid);
+      if (codeAtMid === '0x') {
+        low = mid + 1;
+      } else {
+        high = mid;
+      }
+    }
+
+    this.cachedKernelDeploymentBlock = low;
+    return low;
+  }
+
+  /**
+   * Count TransactionCreated logs for requester in chunks.
+   *
+   * Chunking avoids RPC range limits on providers that reject very large log windows.
+   */
+  private async countRequesterTransactionCreatedEvents(
+    fromBlock: number,
+    toBlock: number
+  ): Promise<ethers.Log[]> {
+    const requesterTopic = ethers.zeroPadValue(this.senderAddress, 32).toLowerCase();
+    const logs: ethers.Log[] = [];
+
+    let cursor = fromBlock;
+    let chunkSize = INITIAL_LOG_CHUNK_SIZE;
+
+    while (cursor <= toBlock) {
+      const chunkEnd = Math.min(cursor + chunkSize - 1, toBlock);
+
+      try {
+        const chunkLogs = await this.provider.getLogs({
+          address: this.actpKernelAddress,
+          topics: [TX_CREATED_EVENT_TOPIC, null, requesterTopic],
+          fromBlock: cursor,
+          toBlock: chunkEnd,
+        });
+
+        logs.push(...chunkLogs);
+        cursor = chunkEnd + 1;
+      } catch (error) {
+        if (chunkSize <= MIN_LOG_CHUNK_SIZE) {
+          throw error;
+        }
+
+        chunkSize = Math.max(MIN_LOG_CHUNK_SIZE, Math.floor(chunkSize / 2));
+        sdkLogger.warn(
+          'TransactionCreated log scan range too large; reducing chunk size while deriving ACTP nonce',
+          {
+            nextChunkSize: chunkSize,
+            fromBlock: cursor,
+            attemptedToBlock: chunkEnd,
+          }
+        );
+      }
+    }
+
+    return logs;
   }
 }
