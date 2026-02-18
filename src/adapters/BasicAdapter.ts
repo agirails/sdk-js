@@ -34,6 +34,7 @@ import { ethers } from 'ethers';
  */
 export interface IActivationCallProvider {
   getActivationCalls(): { calls: SmartWalletCall[]; onSuccess: () => void };
+  routeUrlPayment?(params: UnifiedPayParams): Promise<UnifiedPayResult>;
 }
 
 /**
@@ -367,6 +368,11 @@ export class BasicAdapter extends BaseAdapter implements IAdapter {
    * @returns Promise resolving to unified payment result
    */
   async pay(params: UnifiedPayParams): Promise<UnifiedPayResult> {
+    // URL recipients (x402/custom HTTP adapters) must be routed via ACTPClient router.
+    if (this.isHttpEndpoint(params.to)) {
+      return this.routeUrlPayment(params);
+    }
+
     // Validate using IAdapter validate()
     this.validate(params);
 
@@ -395,6 +401,25 @@ export class BasicAdapter extends BaseAdapter implements IAdapter {
       deadline: result.deadline,
       erc8004AgentId: params.erc8004AgentId,
     };
+  }
+
+  private isHttpEndpoint(to: string): boolean {
+    try {
+      const url = new URL(to);
+      return url.protocol === 'http:' || url.protocol === 'https:';
+    } catch {
+      return false;
+    }
+  }
+
+  private async routeUrlPayment(params: UnifiedPayParams): Promise<UnifiedPayResult> {
+    if (!this.activationProvider?.routeUrlPayment) {
+      throw new ValidationError(
+        'HTTP(S) recipients require router-based payment flow. ' +
+        'Use client.pay(...) and register X402Adapter for URL payments.'
+      );
+    }
+    return this.activationProvider.routeUrlPayment(params);
   }
 
   /**

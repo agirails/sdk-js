@@ -48,6 +48,7 @@ import { StandardAdapter } from './adapters/StandardAdapter';
 import { AdapterRegistry } from './adapters/AdapterRegistry';
 import { AdapterRouter } from './adapters/AdapterRouter';
 import { IAdapter, TransactionStatus } from './adapters/IAdapter';
+import { ValidationError } from './adapters/BaseAdapter';
 import { UnifiedPayParams, UnifiedPayResult } from './types/adapter';
 import { EASHelper, EASConfig } from './protocol/EASHelper';
 import { ERC8004Bridge } from './erc8004/ERC8004Bridge';
@@ -1291,6 +1292,24 @@ export class ACTPClient {
     // would send raw txs from the EOA signer, causing "Requester mismatch" on-chain.
     if (this.walletProvider?.payACTPBatched && this.basic.canHandle(resolvedParams)) {
       return this.basic.pay(resolvedParams);
+    }
+
+    return adapter.pay(resolvedParams);
+  }
+
+  /**
+   * Route URL recipients through non-basic adapters (e.g. x402).
+   * Used by BasicAdapter to avoid validating URLs as Ethereum addresses.
+   * @internal
+   */
+  async routeUrlPayment(params: UnifiedPayParams): Promise<UnifiedPayResult> {
+    const { adapter, resolvedParams } = await this.router.selectAndResolve(params);
+
+    if (adapter.metadata.id === 'basic') {
+      throw new ValidationError(
+        `No URL-capable adapter found for "${params.to}". ` +
+        'Register X402Adapter and use an HTTPS endpoint.'
+      );
     }
 
     return adapter.pay(resolvedParams);

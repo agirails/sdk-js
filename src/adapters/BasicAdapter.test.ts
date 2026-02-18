@@ -153,6 +153,15 @@ describe('BasicAdapter', () => {
         ).rejects.toThrow('Invalid to address');
       });
 
+      test('throws clear error for URL recipients in standalone mode', async () => {
+        await expect(
+          adapter.pay({
+            to: 'https://api.example.com/pay',
+            amount: '100',
+          })
+        ).rejects.toThrow('HTTP(S) recipients require router-based payment flow');
+      });
+
       test('throws on self-payment', async () => {
         await expect(
           adapter.pay({

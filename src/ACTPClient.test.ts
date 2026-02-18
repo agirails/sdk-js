@@ -719,6 +719,56 @@ describe('ACTPClient', () => {
       basicPaySpy.mockRestore();
       (client as any).walletProvider = undefined;
     });
+
+    test('routes client.basic.pay() HTTPS URL through registered x402 adapter', async () => {
+      const x402Pay = jest.fn().mockResolvedValue({
+        txId: '0x' + 'ab'.repeat(32),
+        escrowId: null,
+        adapter: 'x402',
+        state: 'COMMITTED',
+        success: true,
+        amount: '100.00 USDC',
+        releaseRequired: false,
+        provider: providerAddress.toLowerCase(),
+        requester: requesterAddress.toLowerCase(),
+        deadline: new Date(Date.now() + 60_000).toISOString(),
+      });
+
+      client.registerAdapter({
+        metadata: {
+          id: 'x402',
+          name: 'X402 Mock',
+          usesEscrow: false,
+          supportsDisputes: false,
+          requiresIdentity: false,
+          settlementMode: 'atomic',
+          priority: 40,
+        },
+        pay: x402Pay,
+        canHandle: (p: { to: string }) => typeof p.to === 'string' && p.to.startsWith('https://'),
+        validate: jest.fn(),
+        getStatus: jest.fn(),
+        startWork: jest.fn(),
+        deliver: jest.fn(),
+        release: jest.fn(),
+      } as any);
+
+      const result = await client.basic.pay({
+        to: 'https://api.provider.com/service',
+        amount: '100',
+      });
+
+      expect(x402Pay).toHaveBeenCalledTimes(1);
+      expect(result.adapter).toBe('x402');
+      expect(result.txId).toBe('0x' + 'ab'.repeat(32));
+    });
+
+    test('client.basic.pay() URL throws clear error when no URL-capable adapter is registered', async () => {
+      await expect(client.basic.pay({
+        to: 'https://api.provider.com/service',
+        amount: '100',
+      })).rejects.toThrow('No URL-capable adapter found');
+    });
   });
 
   describe('smart wallet release routing', () => {
