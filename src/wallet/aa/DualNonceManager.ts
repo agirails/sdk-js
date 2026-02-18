@@ -232,22 +232,34 @@ export class DualNonceManager {
    */
   private async findContractDeploymentBlock(latestBlock: number): Promise<number> {
     if (this.cachedKernelDeploymentBlock !== undefined) {
-      // Validate hint on first use: contract must have code at the claimed block.
+      // Validate hint on first use: contract must have code at hint AND
+      // must NOT have code at hint-1. This catches both "too low" (no code)
+      // and "too high" (code existed before hint) misconfigurations.
       if (!this.deploymentBlockValidated) {
         this.deploymentBlockValidated = true;
-        const code = await this.provider.getCode(
-          this.actpKernelAddress,
-          this.cachedKernelDeploymentBlock
-        );
-        if (code === '0x') {
+        const hint = this.cachedKernelDeploymentBlock;
+        const codeAtHint = await this.provider.getCode(this.actpKernelAddress, hint);
+        if (codeAtHint === '0x') {
           sdkLogger.warn(
             'knownDeploymentBlock is invalid (no code at that block) — falling back to binary search',
-            { knownDeploymentBlock: this.cachedKernelDeploymentBlock }
+            { knownDeploymentBlock: hint }
           );
           this.cachedKernelDeploymentBlock = undefined;
           // Fall through to binary search below
+        } else if (hint > 0) {
+          const codeBeforeHint = await this.provider.getCode(this.actpKernelAddress, hint - 1);
+          if (codeBeforeHint !== '0x') {
+            sdkLogger.warn(
+              'knownDeploymentBlock is too high (code exists before it) — falling back to binary search',
+              { knownDeploymentBlock: hint }
+            );
+            this.cachedKernelDeploymentBlock = undefined;
+            // Fall through to binary search below
+          } else {
+            return hint;
+          }
         } else {
-          return this.cachedKernelDeploymentBlock;
+          return hint; // hint === 0, can't check before
         }
       } else {
         return this.cachedKernelDeploymentBlock;

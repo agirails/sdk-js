@@ -231,23 +231,26 @@ describe('DualNonceManager', () => {
     });
 
     it('constructor with knownDeploymentBlock seeds cache and skips binary search', async () => {
+      const deploymentBlock = 12345;
       const provider: any = {
-        getCode: jest.fn(async () => '0x1234'),
+        getCode: jest.fn(async (_address: string, blockTag: number) => {
+          return blockTag >= deploymentBlock ? '0x1234' : '0x';
+        }),
       };
 
       const manager = new (DualNonceManager as any)(
         provider,
         '0x' + '11'.repeat(20),
         '0x' + '22'.repeat(20),
-        12345
+        deploymentBlock
       ) as any;
 
       expect(manager.cachedKernelDeploymentBlock).toBe(12345);
 
       const result = await manager.findContractDeploymentBlock(99999);
       expect(result).toBe(12345);
-      // One validation call (getCode at hint block), no binary search
-      expect(provider.getCode).toHaveBeenCalledTimes(1);
+      // Two validation calls: getCode at hint + getCode at hint-1
+      expect(provider.getCode).toHaveBeenCalledTimes(2);
     });
 
     it('invalid knownDeploymentBlock falls back to binary search', async () => {
@@ -271,6 +274,30 @@ describe('DualNonceManager', () => {
       // First call is validation (getCode at 10), then binary search kicks in
       expect(provider.getCode.mock.calls[0][1]).toBe(10);
       expect(provider.getCode.mock.calls.length).toBeGreaterThan(2);
+    });
+
+    it('too-high knownDeploymentBlock falls back to binary search', async () => {
+      const realDeploymentBlock = 42;
+      const provider: any = {
+        getCode: jest.fn(async (_address: string, blockTag: number) => {
+          return blockTag >= realDeploymentBlock ? '0x1234' : '0x';
+        }),
+      };
+
+      // Hint is 80 — code exists there, but also at block 79 (too high)
+      const manager = new (DualNonceManager as any)(
+        provider,
+        '0x' + '11'.repeat(20),
+        '0x' + '22'.repeat(20),
+        80
+      ) as any;
+
+      const result = await manager.findContractDeploymentBlock(100);
+      expect(result).toBe(realDeploymentBlock);
+      // Calls: getCode(80) = '0x1234', getCode(79) = '0x1234' → too high → binary search
+      expect(provider.getCode.mock.calls[0][1]).toBe(80);
+      expect(provider.getCode.mock.calls[1][1]).toBe(79);
+      expect(provider.getCode.mock.calls.length).toBeGreaterThan(3);
     });
 
     it('countRequesterTransactionCreatedEvents() should reduce chunk size on RPC range errors', async () => {
