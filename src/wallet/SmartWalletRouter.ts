@@ -142,6 +142,7 @@ export class SmartWalletRouter {
     }
 
     // Dispute window check.
+    // Requester is allowed to approve early release before dispute window end.
     // Mock mode: completedAt = delivery timestamp, disputeWindow = duration in seconds.
     // Blockchain mode: completedAt = 0 (V1), disputeWindow = absolute timestamp from chain.
     // Heuristic: if disputeWindow > 1 billion, it's an absolute timestamp (post-2001).
@@ -149,11 +150,17 @@ export class SmartWalletRouter {
       const disputeWindowEnds = computeDisputeWindowEnds(tx.completedAt, tx.disputeWindow);
       const now = this.runtime.time.now();
       if (now < disputeWindowEnds) {
-        const remaining = disputeWindowEnds - now;
-        throw new Error(
-          `Cannot release escrow: dispute window still active for transaction ${txId}. ` +
-            `Window expires in ${remaining} seconds.`
-        );
+        const caller = this.walletProvider.getAddress().toLowerCase();
+        const requester = tx.requester.toLowerCase();
+        const isRequester = caller === requester;
+
+        if (!isRequester) {
+          const remaining = disputeWindowEnds - now;
+          throw new Error(
+            `Cannot release escrow: dispute window still active for transaction ${txId}. ` +
+              `Window expires in ${remaining} seconds.`
+          );
+        }
       }
     }
 

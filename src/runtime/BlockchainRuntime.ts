@@ -630,15 +630,22 @@ export class BlockchainRuntime implements IACTPRuntime {
       );
     }
 
-    // SECURITY FIX (MEDIUM-1): Validate dispute window has elapsed
+    // SECURITY FIX (MEDIUM-1): Validate dispute window has elapsed for non-requesters.
+    // Requester is allowed to approve early release (before dispute window end).
     if (tx.completedAt && tx.disputeWindow) {
       if (DisputeWindow.isActive(tx.completedAt, tx.disputeWindow)) {
-        const remaining = DisputeWindow.remaining(tx.completedAt, tx.disputeWindow);
-        throw new Error(
-          `Cannot release escrow: dispute window still active for transaction ${txId}. ` +
-          `Window expires in ${remaining} seconds. ` +
-          `Wait for dispute window to close before releasing funds.`
-        );
+        const caller = (await this.getAddress()).toLowerCase();
+        const requester = tx.requester.toLowerCase();
+        const isRequester = caller === requester;
+
+        if (!isRequester) {
+          const remaining = DisputeWindow.remaining(tx.completedAt, tx.disputeWindow);
+          throw new Error(
+            `Cannot release escrow: dispute window still active for transaction ${txId}. ` +
+            `Window expires in ${remaining} seconds. ` +
+            `Wait for dispute window to close before releasing funds.`
+          );
+        }
       }
     }
 
