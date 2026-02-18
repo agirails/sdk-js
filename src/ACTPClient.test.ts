@@ -101,6 +101,136 @@ describe('ACTPClient', () => {
         ).rejects.toThrow('Unknown mode: "invalid"');
       });
     });
+
+    describe('wallet mode auto-detection', () => {
+      const privateKey = '0x' + '11'.repeat(32);
+
+      function buildNetworkConfig(overrides: any = {}) {
+        return {
+          name: 'Base Sepolia',
+          chainId: 84532,
+          rpcUrl: 'http://localhost:8545',
+          blockExplorer: 'https://sepolia.basescan.org',
+          contracts: {
+            actpKernel: '0x' + '44'.repeat(20),
+            escrowVault: '0x' + '55'.repeat(20),
+            usdc: '0x' + '66'.repeat(20),
+            eas: '0x' + '77'.repeat(20),
+            easSchemaRegistry: '0x' + '88'.repeat(20),
+            agentRegistry: '0x' + '99'.repeat(20),
+          },
+          eas: {
+            deliverySchemaUID: '0x' + 'aa'.repeat(32),
+          },
+          gasSettings: {
+            maxFeePerGas: 1n,
+            maxPriorityFeePerGas: 1n,
+          },
+          aa: {
+            entryPoint: '0x' + 'ab'.repeat(20),
+            smartWalletFactory: '0x' + 'cd'.repeat(20),
+            bundlerUrls: { coinbase: 'https://bundler.example' },
+            paymasterUrls: { coinbase: 'https://paymaster.example' },
+          },
+          ...overrides,
+        };
+      }
+
+      async function createClientWithMocks(networkConfig: any) {
+        jest.resetModules();
+
+        const autoCreate = jest.fn().mockResolvedValue({
+          getAddress: () => '0x' + 'aa'.repeat(20),
+          getWalletInfo: () => ({
+            address: '0x' + 'aa'.repeat(20),
+            tier: 'auto',
+            supportsBatching: true,
+            gasSponsored: true,
+            chainId: 84532,
+          }),
+          sendTransaction: jest.fn(),
+          sendBatchTransaction: jest.fn(),
+          payACTPBatched: jest.fn(),
+        });
+
+        const eoaCtor = jest.fn().mockImplementation(() => ({
+          getAddress: () => requesterAddress,
+          getWalletInfo: () => ({
+            address: requesterAddress,
+            tier: 'eoa',
+            supportsBatching: false,
+            gasSponsored: false,
+            chainId: 84532,
+          }),
+          sendTransaction: jest.fn(),
+          sendBatchTransaction: jest.fn(),
+        }));
+
+        class MockBlockchainRuntime {
+          readonly maxTransactionAmount = undefined;
+          readonly time = { now: () => Math.floor(Date.now() / 1000) };
+          constructor(_config: any) {}
+          async initialize(): Promise<void> {}
+          getEASHelper() { return undefined; }
+          async createTransaction(): Promise<string> { return '0x' + '1'.repeat(64); }
+          async linkEscrow(): Promise<string> { return '0x' + '1'.repeat(64); }
+          async getTransaction(): Promise<any> { return null; }
+          async transitionState(): Promise<void> {}
+          async releaseEscrow(): Promise<void> {}
+          async getEscrowBalance(): Promise<string> { return '0'; }
+          async getBalance(): Promise<string> { return '0'; }
+        }
+
+        jest.doMock('./config/networks', () => ({
+          getNetwork: jest.fn(() => networkConfig),
+        }));
+        jest.doMock('./wallet/AutoWalletProvider', () => ({
+          AutoWalletProvider: { create: autoCreate },
+        }));
+        jest.doMock('./wallet/EOAWalletProvider', () => ({
+          EOAWalletProvider: eoaCtor,
+        }));
+        jest.doMock('./runtime/BlockchainRuntime', () => ({
+          BlockchainRuntime: MockBlockchainRuntime,
+        }));
+
+        const { ACTPClient: Client } = await import('./ACTPClient');
+
+        const client = await Client.create({
+          mode: 'testnet',
+          privateKey,
+          contracts: { agentRegistry: '' },
+        });
+
+        return { client, autoCreate, eoaCtor };
+      }
+
+      test('defaults to auto when wallet is undefined and AA infra is available', async () => {
+        const { client, autoCreate, eoaCtor } = await createClientWithMocks(
+          buildNetworkConfig()
+        );
+
+        expect(client.info.walletTier).toBe('auto');
+        expect(autoCreate).toHaveBeenCalledTimes(1);
+        expect(eoaCtor).not.toHaveBeenCalled();
+      });
+
+      test('falls back to eoa when wallet is undefined and AA infra is unavailable', async () => {
+        const noAaConfig = buildNetworkConfig({
+          aa: {
+            entryPoint: '0x' + 'ab'.repeat(20),
+            smartWalletFactory: '0x' + 'cd'.repeat(20),
+            bundlerUrls: {},
+            paymasterUrls: {},
+          },
+        });
+        const { client, autoCreate, eoaCtor } = await createClientWithMocks(noAaConfig);
+
+        expect(client.info.walletTier).toBe('eoa');
+        expect(autoCreate).not.toHaveBeenCalled();
+        expect(eoaCtor).toHaveBeenCalledTimes(1);
+      });
+    });
   });
 
   describe('Three-Level API', () => {

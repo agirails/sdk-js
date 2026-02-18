@@ -265,13 +265,16 @@ export interface ACTPClientConfig {
    * AIP-12: Wallet mode.
    *
    * - 'auto': CoinbaseSmartWallet + gas sponsorship (Tier 1, recommended).
-   *           Requires CDP_API_KEY env var. Agent address = Smart Wallet address.
-   * - undefined: EOA wallet from privateKey (Tier 2, backward compatible).
+   *           Requires CDP_API_KEY or PIMLICO_API_KEY env var.
+   *           Agent address = Smart Wallet address.
+   * - 'eoa':  Force EOA wallet from privateKey (Tier 2, requires ETH for gas).
+   * - undefined (default): Auto-detects. Uses 'auto' when AA infrastructure
+   *           (bundler + paymaster) is available, otherwise falls back to EOA.
    *
-   * When 'auto', requesterAddress is derived from the Smart Wallet
-   * and does not need to be provided.
+   * When 'auto' or auto-detected, requesterAddress is derived from the
+   * Smart Wallet and does not need to be provided.
    */
-  wallet?: 'auto';
+  wallet?: 'auto' | 'eoa';
 
   /**
    * Optional: Project root directory for mock state file storage.
@@ -786,6 +789,17 @@ export class ACTPClient {
           const privateKey = config.privateKey!; // Guaranteed by auto-detect above
           const signer = new ethers.Wallet(privateKey, provider);
 
+          // Auto-detect wallet mode: default to 'auto' when a private key is
+          // resolved and AA infrastructure is available (bundler + paymaster).
+          if (config.wallet === undefined && networkConfig.aa) {
+            const bundlerAvailable = !!(networkConfig.aa.bundlerUrls.coinbase || networkConfig.aa.bundlerUrls.pimlico);
+            const paymasterAvailable = !!(networkConfig.aa.paymasterUrls.coinbase || networkConfig.aa.paymasterUrls.pimlico);
+            if (bundlerAvailable && paymasterAvailable) {
+              config = { ...config, wallet: 'auto' };
+              sdkLogger.info('Auto-detected wallet mode: auto (bundler + paymaster available)');
+            }
+          }
+
           // ====================================================================
           // AIP-12: Wallet Provider Selection
           // ====================================================================
@@ -815,7 +829,7 @@ export class ACTPClient {
                 '  2. or export PIMLICO_API_KEY="your-key-here"\n' +
                 '  3. or set explicit endpoints via CDP_BUNDLER_URL / CDP_PAYMASTER_URL\n' +
                 '  4. or set explicit endpoints via PIMLICO_BUNDLER_URL / PIMLICO_PAYMASTER_URL\n\n' +
-                'Or use wallet: undefined for traditional EOA transactions (requires ETH for gas).'
+                "Or use wallet: 'eoa' for traditional EOA transactions (requires ETH for gas)."
               );
             }
 
