@@ -9,11 +9,6 @@
  * - IPFS_CONFIGS preset values
  */
 
-// Mock kubo-rpc-client since it's a peer dependency
-jest.mock('kubo-rpc-client', () => ({
-  create: jest.fn(() => ({})),
-}));
-
 import { IPFSHTTPClientImpl, IPFS_CONFIGS } from './IPFSClient';
 
 describe('IPFSClient Security', () => {

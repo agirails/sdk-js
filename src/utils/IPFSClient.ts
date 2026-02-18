@@ -3,8 +3,21 @@
  * Wrapper around kubo-rpc-client (formerly ipfs-http-client) for AIP-4 delivery proof uploads
  */
 
-import { create, IPFSHTTPClient, Options } from 'kubo-rpc-client';
+import type { KuboRPCClient, Options } from 'kubo-rpc-client';
 import { sdkLogger } from './Logger';
+
+type KuboCreateFn = (options: Options) => KuboRPCClient;
+
+let kuboCreateFnPromise: Promise<KuboCreateFn> | null = null;
+
+async function loadKuboCreateFn(): Promise<KuboCreateFn> {
+  if (!kuboCreateFnPromise) {
+    // Keep native dynamic import so CommonJS build can load ESM-only kubo-rpc-client.
+    const importDynamic = new Function('specifier', 'return import(specifier)') as (specifier: string) => Promise<{ create: KuboCreateFn }>;
+    kuboCreateFnPromise = importDynamic('kubo-rpc-client').then((mod) => mod.create);
+  }
+  return kuboCreateFnPromise;
+}
 
 /**
  * IPFS Client Interface (from DeliveryProofBuilder)
@@ -105,7 +118,8 @@ export const IPFS_CONFIGS = {
  * SECURITY FIX (MEDIUM-3): Now includes URL and size validation
  */
 export class IPFSHTTPClientImpl implements IPFSClient {
-  private client: IPFSHTTPClient;
+  private clientPromise: Promise<KuboRPCClient> | null = null;
+  private clientOptions: Options;
   private config: Required<IPFSClientConfig>;
 
   // SECURITY FIX (MEDIUM-3): Default security settings
@@ -158,7 +172,14 @@ export class IPFSHTTPClientImpl implements IPFSClient {
       options.headers = this.config.headers;
     }
 
-    this.client = create(options);
+    this.clientOptions = options;
+  }
+
+  private async getClient(): Promise<KuboRPCClient> {
+    if (!this.clientPromise) {
+      this.clientPromise = loadKuboCreateFn().then((create) => create(this.clientOptions));
+    }
+    return this.clientPromise;
   }
 
   /**
@@ -222,6 +243,7 @@ export class IPFSHTTPClientImpl implements IPFSClient {
    */
   async add(data: string | Buffer): Promise<string> {
     try {
+      const client = await this.getClient();
       const content = typeof data === 'string' ? Buffer.from(data, 'utf-8') : data;
 
       // SECURITY FIX (MEDIUM-3): Check size before upload
@@ -231,7 +253,7 @@ export class IPFSHTTPClientImpl implements IPFSClient {
         );
       }
 
-      const result = await this.client.add(content, {
+      const result = await client.add(content, {
         cidVersion: 1, // Use CIDv1 (base32)
         hashAlg: 'sha2-256',
         pin: true // Auto-pin on upload
@@ -250,7 +272,8 @@ export class IPFSHTTPClientImpl implements IPFSClient {
    */
   async pin(cid: string): Promise<void> {
     try {
-      await this.client.pin.add(cid);
+      const client = await this.getClient();
+      await client.pin.add(cid);
     } catch (error) {
       throw new Error(`IPFS pin failed: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -267,10 +290,11 @@ export class IPFSHTTPClientImpl implements IPFSClient {
    */
   async get(cid: string): Promise<string> {
     try {
+      const client = await this.getClient();
       const chunks: Uint8Array[] = [];
       let totalLength = 0;
 
-      for await (const chunk of this.client.cat(cid)) {
+      for await (const chunk of client.cat(cid)) {
         totalLength += chunk.length;
 
         // SECURITY FIX (MEDIUM-3): Check size during streaming to prevent DoS
@@ -305,7 +329,8 @@ export class IPFSHTTPClientImpl implements IPFSClient {
    */
   async isOnline(): Promise<boolean> {
     try {
-      await this.client.id();
+      const client = await this.getClient();
+      await client.id();
       return true;
     } catch {
       return false;
@@ -318,7 +343,8 @@ export class IPFSHTTPClientImpl implements IPFSClient {
    */
   async getNodeId(): Promise<string> {
     try {
-      const id = await this.client.id();
+      const client = await this.getClient();
+      const id = await client.id();
       return id.id.toString();
     } catch (error) {
       throw new Error(`Failed to get node ID: ${error instanceof Error ? error.message : String(error)}`);

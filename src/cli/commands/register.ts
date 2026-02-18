@@ -146,6 +146,22 @@ async function runRegister(
     );
   }
 
+  const coinbaseBundlerUrl = networkConfig.aa.bundlerUrls.coinbase;
+  const pimlicoBundlerUrl = networkConfig.aa.bundlerUrls.pimlico;
+  const coinbasePaymasterUrl = networkConfig.aa.paymasterUrls.coinbase;
+  const pimlicoPaymasterUrl = networkConfig.aa.paymasterUrls.pimlico;
+  const bundlerPrimary = coinbaseBundlerUrl ?? pimlicoBundlerUrl;
+  const bundlerBackup = coinbaseBundlerUrl && pimlicoBundlerUrl ? pimlicoBundlerUrl : undefined;
+  const paymasterPrimary = coinbasePaymasterUrl ?? pimlicoPaymasterUrl;
+  const paymasterBackup = coinbasePaymasterUrl && pimlicoPaymasterUrl ? pimlicoPaymasterUrl : undefined;
+
+  if (!bundlerPrimary || !paymasterPrimary) {
+    throw new Error(
+      'AA bundler/paymaster endpoints are not configured.\n' +
+      'Set CDP_API_KEY or PIMLICO_API_KEY (or explicit *_BUNDLER_URL/*_PAYMASTER_URL).'
+    );
+  }
+
   const rpcUrl = networkConfig.rpcUrl;
   const provider = new ethers.JsonRpcProvider(rpcUrl);
   const signer = new ethers.Wallet(privateKey, provider);
@@ -158,12 +174,12 @@ async function runRegister(
     chainId: networkConfig.chainId,
     actpKernelAddress: networkConfig.contracts.actpKernel,
     bundler: {
-      primaryUrl: networkConfig.aa.bundlerUrls.coinbase,
-      backupUrl: networkConfig.aa.bundlerUrls.pimlico,
+      primaryUrl: bundlerPrimary,
+      backupUrl: bundlerBackup,
     },
     paymaster: {
-      primaryUrl: networkConfig.aa.paymasterUrls.coinbase,
-      backupUrl: networkConfig.aa.paymasterUrls.pimlico,
+      primaryUrl: paymasterPrimary,
+      backupUrl: paymasterBackup,
     },
   });
 

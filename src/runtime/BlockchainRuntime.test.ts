@@ -417,6 +417,55 @@ describe('BlockchainRuntime', () => {
       ).rejects.toThrow('is in state COMMITTED, expected DELIVERED');
     });
 
+    it('should allow requester to release escrow before dispute window expires', async () => {
+      mockSigner.getAddress = jest.fn().mockResolvedValue(REQUESTER);
+      jest.spyOn((runtime as any).kernel, 'transitionState').mockResolvedValue(undefined);
+
+      jest.spyOn(runtime, 'getTransaction').mockResolvedValue({
+        id: TX_ID,
+        provider: PROVIDER,
+        requester: REQUESTER,
+        amount: '100000000',
+        state: 'DELIVERED',
+        deadline: Math.floor(Date.now() / 1000) + 86400,
+        disputeWindow: 172800,
+        escrowId: TX_ID,
+        createdAt: Math.floor(Date.now() / 1000) - 60,
+        updatedAt: 0,
+        completedAt: Math.floor(Date.now() / 1000) - 30, // dispute window active
+        serviceDescription: '',
+        deliveryProof: '',
+        events: []
+      });
+
+      await expect(runtime.releaseEscrow(TX_ID)).resolves.toBeUndefined();
+    });
+
+    it('should block non-requester release while dispute window is active', async () => {
+      mockSigner.getAddress = jest.fn().mockResolvedValue(PROVIDER);
+
+      jest.spyOn(runtime, 'getTransaction').mockResolvedValue({
+        id: TX_ID,
+        provider: PROVIDER,
+        requester: REQUESTER,
+        amount: '100000000',
+        state: 'DELIVERED',
+        deadline: Math.floor(Date.now() / 1000) + 86400,
+        disputeWindow: 172800,
+        escrowId: TX_ID,
+        createdAt: Math.floor(Date.now() / 1000) - 60,
+        updatedAt: 0,
+        completedAt: Math.floor(Date.now() / 1000) - 30, // dispute window active
+        serviceDescription: '',
+        deliveryProof: '',
+        events: []
+      });
+
+      await expect(
+        runtime.releaseEscrow(TX_ID)
+      ).rejects.toThrow('dispute window still active');
+    });
+
     it('should require attestationUID when requireAttestation is true', async () => {
       // Create runtime with attestation required
       const secureRuntime = new BlockchainRuntime({

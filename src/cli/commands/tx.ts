@@ -288,8 +288,30 @@ function createTxDeliverCommand(): Command {
 
         const client = await createClient();
 
-        // Transition to DELIVERED
-        await client.standard.transitionState(txId, 'DELIVERED' as TransactionState);
+        const beforeTx = await client.standard.getTransaction(txId);
+        if (!beforeTx) throw new Error(`Transaction not found: ${txId}`);
+
+        const transitionPath: TransactionState[] = [];
+
+        // On-chain lifecycle requires COMMITTED -> IN_PROGRESS -> DELIVERED.
+        // Keep CLI ergonomic by applying the missing intermediate state automatically.
+        if (beforeTx.state === 'COMMITTED') {
+          await client.standard.transitionState(txId, 'IN_PROGRESS' as TransactionState);
+          transitionPath.push('IN_PROGRESS');
+          await client.standard.transitionState(txId, 'DELIVERED' as TransactionState);
+          transitionPath.push('DELIVERED');
+        } else if (beforeTx.state === 'IN_PROGRESS') {
+          await client.standard.transitionState(txId, 'DELIVERED' as TransactionState);
+          transitionPath.push('DELIVERED');
+        } else if (beforeTx.state === 'DELIVERED') {
+          // Idempotent behavior for repeated deliver calls.
+          transitionPath.push('DELIVERED');
+        } else {
+          throw new Error(
+            `Cannot deliver transaction ${txId} from state ${beforeTx.state}. ` +
+              'Expected COMMITTED, IN_PROGRESS, or DELIVERED.'
+          );
+        }
 
         const tx = await client.standard.getTransaction(txId);
         if (!tx) throw new Error('Transaction not found');
@@ -298,6 +320,7 @@ function createTxDeliverCommand(): Command {
           {
             txId,
             state: tx.state,
+            transitionPath,
             completedAt: tx.completedAt
               ? new Date(tx.completedAt * 1000).toISOString()
               : null,
@@ -305,7 +328,11 @@ function createTxDeliverCommand(): Command {
           { quietKey: 'state' }
         );
 
-        output.success('Transaction marked as delivered!');
+        if (beforeTx.state === 'DELIVERED') {
+          output.info('Transaction is already DELIVERED.');
+        } else {
+          output.success('Transaction marked as delivered!');
+        }
         output.info(`Dispute window: ${tx.disputeWindow} seconds`);
         output.print('');
         output.print('After dispute window expires, settle with:');
