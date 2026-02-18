@@ -173,6 +173,16 @@ describe('Networks Config', () => {
       expect(config.actpKernelDeploymentBlock).toBeGreaterThan(0);
     });
 
+    it('should preserve maxTransactionAmount through deep clone', () => {
+      const config = getNetwork('base-mainnet');
+      expect(config.maxTransactionAmount).toBe(1000);
+    });
+
+    it('should have undefined maxTransactionAmount on testnet', () => {
+      const config = getNetwork('base-sepolia');
+      expect(config.maxTransactionAmount).toBeUndefined();
+    });
+
     it('should return deep clone (no global mutation)', () => {
       const config1 = getNetwork('base-sepolia');
       const config2 = getNetwork('base-sepolia');
