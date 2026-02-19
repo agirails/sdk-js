@@ -58,7 +58,7 @@ export interface TransferReceiptLike {
 }
 
 /**
- * Transfer function for atomic payments (legacy direct transfer).
+ * Transfer function for atomic USDC payments.
  *
  * @param to - Recipient address
  * @param amount - Amount in USDC wei (string)
@@ -108,14 +108,15 @@ export interface X402PayParams extends UnifiedPayParams {
 /**
  * Configuration options for X402Adapter.
  *
- * For fee-enabled payments via X402Relay, provide relayAddress + approveFn + relayPayFn.
- * Without relay config, falls back to legacy direct transfer (no platform fee).
+ * Fee collection is required (since v2.6.0). Two modes:
+ * - Relay (preferred): relayAddress + approveFn + relayPayFn — atomic on-chain split
+ * - feeCollector (fallback): feeCollector address — client-side two-transfer split
  */
 export interface X402AdapterConfig {
   /** Expected network for validation (must match server's X-Payment-Network) */
   expectedNetwork: X402Network;
 
-  /** Transfer function for direct atomic payments (legacy fallback) */
+  /** Transfer function for USDC payments (used in feeCollector path for provider + fee transfers) */
   transferFn: TransferFunction;
 
   /** Request timeout in milliseconds (default: 30000) */
@@ -127,9 +128,9 @@ export interface X402AdapterConfig {
   /** Default headers to include in all requests */
   defaultHeaders?: Record<string, string>;
 
-  // --- X402Relay fee-splitting (optional, recommended) ---
+  // --- Fee collection (at least one method required) ---
 
-  /** X402Relay contract address for on-chain fee splitting */
+  /** X402Relay contract address for on-chain fee splitting (preferred) */
   relayAddress?: string;
 
   /** USDC approve function — required when relayAddress is set */
@@ -137,6 +138,9 @@ export interface X402AdapterConfig {
 
   /** Relay payWithFee function — required when relayAddress is set */
   relayPayFn?: RelayPayFunction;
+
+  /** Fee collector address for client-side fee splitting (fallback when relay not available) */
+  feeCollector?: string;
 
   /** Platform fee in basis points (default: 100 = 1%). Read-only display hint. */
   platformFeeBps?: number;
@@ -176,6 +180,7 @@ interface AtomicPaymentRecord {
  *     const tx = await usdcContract.transfer(to, amount);
  *     return tx.hash;
  *   },
+ *   feeCollector: '0x...treasury', // Required: AGIRAILS fee recipient
  * });
  *
  * const result = await adapter.pay({
@@ -613,18 +618,18 @@ export class X402Adapter extends BaseAdapter implements IAdapter {
   }
 
   /**
-   * Execute atomic payment with fee splitting via X402Relay (if configured),
-   * or direct transfer as legacy fallback.
+   * Execute atomic payment with fee splitting.
    *
+   * Priority: relay (atomic, 1 tx) > feeCollector (2 tx) > error
    * Relay flow: approve relay → relay.payWithFee(provider, gross, serviceId)
-   * Legacy flow: transferFn(provider, amount) — no fee extraction
+   * feeCollector flow: transferFn(provider, net) + transferFn(feeCollector, fee)
    */
   private async executeAtomicPayment(headers: X402PaymentHeaders): Promise<{
     txHash: string;
     feeBreakdown?: X402FeeBreakdown;
   }> {
     try {
-      // Relay path: on-chain fee splitting
+      // Relay path: on-chain fee splitting (atomic, preferred)
       if (this.config.relayAddress && this.config.approveFn && this.config.relayPayFn) {
         const grossAmount = headers.amount;
         const feeBps = this.config.platformFeeBps ?? 100;
@@ -659,10 +664,37 @@ export class X402Adapter extends BaseAdapter implements IAdapter {
         };
       }
 
-      // Legacy path: direct transfer, no fee
+      // feeCollector path: client-side fee splitting (non-atomic fallback)
+      if (!this.config.feeCollector) {
+        throw new X402Error(
+          'x402 payment requires fee collection: configure either relayAddress (preferred) or feeCollector. ' +
+          'Since v2.6.0, transferFn-only configs are no longer allowed to prevent zero-fee payments.',
+          X402ErrorCode.PAYMENT_FAILED
+        );
+      }
+
+      const grossAmount = headers.amount;
+      const feeBps = this.config.platformFeeBps ?? 100;
+      const MIN_FEE = 50_000n; // $0.05 USDC
+
+      const grossBig = BigInt(grossAmount);
+
+      // Guard: grossAmount must cover at least the minimum fee
+      if (grossBig <= MIN_FEE) {
+        throw new X402Error(
+          `Payment amount ${grossAmount} too small: must exceed minimum fee of ${MIN_FEE} ($0.05 USDC)`,
+          X402ErrorCode.PAYMENT_FAILED
+        );
+      }
+
+      const bpsFee = (grossBig * BigInt(feeBps)) / 10_000n;
+      const fee = bpsFee > MIN_FEE ? bpsFee : MIN_FEE;
+      const providerNet = grossBig - fee;
+
+      // 1. Transfer net amount to provider
       const transferResult = await this.transferFn(
         headers.paymentAddress,
-        headers.amount
+        providerNet.toString()
       );
 
       const txHash = typeof transferResult === 'string'
@@ -677,8 +709,44 @@ export class X402Adapter extends BaseAdapter implements IAdapter {
         throw new Error(`transferFn returned unsuccessful receipt for tx ${txHash}`);
       }
 
-      return { txHash };
+      // 2. Transfer fee to AGIRAILS treasury
+      // POLICY: best-effort fee collection. If fee transfer fails after provider
+      // is already paid, the payment succeeds with feeTransferFailed=true.
+      // Rationale: failing the entire payment would leave the provider paid but
+      // the requester without service. Fee recovery is handled out-of-band.
+      let feeTransferFailed = false;
+      try {
+        const feeResult = await this.transferFn(
+          this.config.feeCollector,
+          fee.toString()
+        );
+
+        const feeSuccess = typeof feeResult === 'string'
+          ? true
+          : feeResult.success !== false;
+
+        if (!feeSuccess) {
+          feeTransferFailed = true;
+        }
+      } catch {
+        feeTransferFailed = true;
+      }
+
+      return {
+        txHash,
+        feeBreakdown: {
+          grossAmount,
+          // providerNet is always gross - fee (that's what was transferred)
+          providerNet: providerNet.toString(),
+          // platformFee reflects intended fee; feeTransferFailed indicates if it was collected
+          platformFee: fee.toString(),
+          feeBps,
+          estimated: false,
+          feeTransferFailed,
+        },
+      };
     } catch (error) {
+      if (error instanceof X402Error) throw error;
       throw new X402Error(
         `Atomic payment failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
         X402ErrorCode.PAYMENT_FAILED

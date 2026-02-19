@@ -213,17 +213,28 @@ export interface X402FeeBreakdown {
   /** Total amount from the 402 header (USDC wei, 6 decimals) */
   grossAmount: string;
 
-  /** Estimated amount provider received: grossAmount - platformFee */
+  /** Amount provider received: grossAmount - platformFee */
   providerNet: string;
 
-  /** Estimated amount treasury received: max(feeBps%, $0.05) */
+  /**
+   * Intended platform fee: max(feeBps%, $0.05).
+   * Conservation: providerNet + platformFee = grossAmount always holds.
+   * Check feeTransferFailed to know if fee was actually collected.
+   */
   platformFee: string;
 
-  /** Fee rate used for estimate (basis points, e.g. 100 = 1%) */
+  /** Fee rate used (basis points, e.g. 100 = 1%) */
   feeBps: number;
 
-  /** True — this is a client-side estimate, not read from chain */
-  estimated: true;
+  /** true = client-side estimate (relay path), false = exact (feeCollector path) */
+  estimated: boolean;
+
+  /**
+   * true if fee transfer failed after provider was already paid (feeCollector path only).
+   * When true, platformFee shows the intended amount that was NOT collected.
+   * Fee recovery is handled out-of-band.
+   */
+  feeTransferFailed?: boolean;
 }
 
 // ============================================================================

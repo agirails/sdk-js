@@ -90,9 +90,12 @@ describe('X402Adapter', () => {
     return '0x' + 'a'.repeat(64); // Return mock tx hash
   };
 
+  const feeCollectorAddress = '0x4444444444444444444444444444444444444444';
+
   const defaultConfig: X402AdapterConfig = {
     expectedNetwork: 'base-sepolia',
     transferFn: mockTransferFn,
+    feeCollector: feeCollectorAddress,
     requestTimeout: 5000,
   };
 
@@ -246,18 +249,16 @@ describe('X402Adapter', () => {
       expect(result.response?.status).toBe(200);
     });
 
-    it('calls transferFn with correct params', async () => {
-      let capturedTo: string | undefined;
-      let capturedAmount: string | undefined;
+    it('calls transferFn with provider net amount and fee collector', async () => {
+      const calls: Array<{ to: string; amount: string }> = [];
 
       const trackingTransfer: TransferFunction = async (to, amount) => {
-        capturedTo = to;
-        capturedAmount = amount;
+        calls.push({ to, amount });
         return '0x' + 'b'.repeat(64);
       };
 
       const mockFetch = createMockFetch([
-        mock402Response(providerAddress, '10000000'),
+        mock402Response(providerAddress, '10000000'), // $10
         mockResponse(200),
       ]);
 
@@ -272,8 +273,12 @@ describe('X402Adapter', () => {
         amount: '10',
       });
 
-      expect(capturedTo).toBe(providerAddress.toLowerCase());
-      expect(capturedAmount).toBe('10000000');
+      // Two transfers: provider net + fee
+      expect(calls).toHaveLength(2);
+      expect(calls[0].to).toBe(providerAddress.toLowerCase());
+      expect(calls[0].amount).toBe('9900000'); // $10 - 1% = $9.90
+      expect(calls[1].to).toBe(feeCollectorAddress);
+      expect(calls[1].amount).toBe('100000'); // 1% fee = $0.10
     });
 
     it('accepts receipt-like transfer result with hash/success', async () => {
@@ -850,9 +855,9 @@ describe('X402Adapter', () => {
 
     // -- Fallback / error tests --
 
-    it('falls back to legacy (no feeBreakdown) without relay config', async () => {
+    it('uses feeCollector path (with feeBreakdown) without relay config', async () => {
       const mockFetch = createMockFetch([
-        mock402Response(providerAddress, '10000000'),
+        mock402Response(providerAddress, '10000000'), // $10
         mockResponse(200),
       ]);
 
@@ -866,11 +871,34 @@ describe('X402Adapter', () => {
         amount: '10',
       });
 
-      expect(result.feeBreakdown).toBeUndefined();
+      expect(result.feeBreakdown).toBeDefined();
+      expect(result.feeBreakdown!.estimated).toBe(false);
+      expect(result.feeBreakdown!.platformFee).toBe('100000'); // 1% of $10
+      expect(result.feeBreakdown!.providerNet).toBe('9900000');
       expect(result.success).toBe(true);
     });
 
-    it('falls back to legacy when only relayAddress set (missing approveFn)', async () => {
+    it('throws when neither relay nor feeCollector configured', async () => {
+      const mockFetch = createMockFetch([
+        mock402Response(providerAddress, '10000000'),
+      ]);
+
+      const noFeeAdapter = new X402Adapter(requesterAddress, {
+        expectedNetwork: 'base-sepolia',
+        transferFn: mockTransferFn,
+        // no relay, no feeCollector
+        fetchFn: mockFetch,
+      });
+
+      await expect(noFeeAdapter.pay({
+        to: 'https://api.example.com/service',
+        amount: '10',
+      })).rejects.toMatchObject({
+        code: X402ErrorCode.PAYMENT_FAILED,
+      });
+    });
+
+    it('falls back to feeCollector when only relayAddress set (missing approveFn)', async () => {
       const mockFetch = createMockFetch([
         mock402Response(providerAddress, '10000000'),
         mockResponse(200),
@@ -888,7 +916,9 @@ describe('X402Adapter', () => {
         amount: '10',
       });
 
-      expect(result.feeBreakdown).toBeUndefined();
+      // Falls back to feeCollector path — feeBreakdown present with estimated: false
+      expect(result.feeBreakdown).toBeDefined();
+      expect(result.feeBreakdown!.estimated).toBe(false);
     });
 
     it('throws PAYMENT_FAILED when approveFn fails', async () => {
@@ -935,6 +965,79 @@ describe('X402Adapter', () => {
       })).rejects.toMatchObject({
         code: X402ErrorCode.PAYMENT_FAILED,
       });
+    });
+
+    // -- feeCollector path edge cases --
+
+    it('succeeds with feeTransferFailed flag when fee transfer throws', async () => {
+      let callCount = 0;
+      const failOnSecondTransfer: TransferFunction = async (_to, _amount) => {
+        callCount++;
+        if (callCount === 2) throw new Error('Fee transfer reverted');
+        return '0x' + 'e'.repeat(64);
+      };
+
+      const mockFetch = createMockFetch([
+        mock402Response(providerAddress, '10000000'), // $10
+        mockResponse(200),
+      ]);
+
+      const adapterFeeFailure = new X402Adapter(requesterAddress, {
+        ...defaultConfig,
+        transferFn: failOnSecondTransfer,
+        fetchFn: mockFetch,
+      });
+
+      const result = await adapterFeeFailure.pay({
+        to: 'https://api.example.com/service',
+        amount: '10',
+      });
+
+      // Provider got paid, payment succeeds
+      expect(result.success).toBe(true);
+      expect(result.feeBreakdown).toBeDefined();
+      expect(result.feeBreakdown!.feeTransferFailed).toBe(true);
+      // platformFee shows intended fee; feeTransferFailed indicates it wasn't collected
+      expect(result.feeBreakdown!.platformFee).toBe('100000'); // intended 1% of $10
+      // Conservation: providerNet + platformFee = grossAmount always holds
+      expect(
+        BigInt(result.feeBreakdown!.providerNet) + BigInt(result.feeBreakdown!.platformFee)
+      ).toBe(BigInt(result.feeBreakdown!.grossAmount));
+    });
+
+    it('throws when grossAmount is too small to cover minimum fee', async () => {
+      const mockFetch = createMockFetch([
+        mock402Response(providerAddress, '40000'), // $0.04 — less than $0.05 MIN_FEE
+      ]);
+
+      const adapterSmall = new X402Adapter(requesterAddress, {
+        ...defaultConfig,
+        fetchFn: mockFetch,
+      });
+
+      await expect(adapterSmall.pay({
+        to: 'https://api.example.com/service',
+        amount: '0.04',
+      })).rejects.toMatchObject({
+        code: X402ErrorCode.PAYMENT_FAILED,
+      });
+    });
+
+    it('error message mentions v2.6.0 migration when no fee config', async () => {
+      const mockFetch = createMockFetch([
+        mock402Response(providerAddress, '10000000'),
+      ]);
+
+      const noFeeAdapter = new X402Adapter(requesterAddress, {
+        expectedNetwork: 'base-sepolia',
+        transferFn: mockTransferFn,
+        fetchFn: mockFetch,
+      });
+
+      await expect(noFeeAdapter.pay({
+        to: 'https://api.example.com/service',
+        amount: '10',
+      })).rejects.toThrow(/v2\.6\.0/);
     });
   });
 });
