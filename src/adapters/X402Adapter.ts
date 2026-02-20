@@ -709,12 +709,9 @@ export class X402Adapter extends BaseAdapter implements IAdapter {
         throw new Error(`transferFn returned unsuccessful receipt for tx ${txHash}`);
       }
 
-      // 2. Transfer fee to AGIRAILS treasury
-      // POLICY: best-effort fee collection. If fee transfer fails after provider
-      // is already paid, the payment succeeds with feeTransferFailed=true.
-      // Rationale: failing the entire payment would leave the provider paid but
-      // the requester without service. Fee recovery is handled out-of-band.
-      let feeTransferFailed = false;
+      // 2. Transfer fee to AGIRAILS treasury (fail-closed).
+      // If fee transfer fails after provider is paid, we surface PAYMENT_FAILED
+      // and abort proof submission to avoid silent under-collection.
       try {
         const feeResult = await this.transferFn(
           this.config.feeCollector,
@@ -726,10 +723,17 @@ export class X402Adapter extends BaseAdapter implements IAdapter {
           : feeResult.success !== false;
 
         if (!feeSuccess) {
-          feeTransferFailed = true;
+          throw new X402Error(
+            `Fee transfer failed after provider payment tx ${txHash}; refusing to continue with unpaid platform fee`,
+            X402ErrorCode.PAYMENT_FAILED
+          );
         }
-      } catch {
-        feeTransferFailed = true;
+      } catch (error) {
+        if (error instanceof X402Error) throw error;
+        throw new X402Error(
+          `Fee transfer failed after provider payment tx ${txHash}; refusing to continue with unpaid platform fee`,
+          X402ErrorCode.PAYMENT_FAILED
+        );
       }
 
       return {
@@ -738,11 +742,10 @@ export class X402Adapter extends BaseAdapter implements IAdapter {
           grossAmount,
           // providerNet is always gross - fee (that's what was transferred)
           providerNet: providerNet.toString(),
-          // platformFee reflects intended fee; feeTransferFailed indicates if it was collected
+          // platformFee reflects the fee that was collected when payment succeeds.
           platformFee: fee.toString(),
           feeBps,
           estimated: false,
-          feeTransferFailed,
         },
       };
     } catch (error) {

@@ -118,7 +118,7 @@ export const BASE_SEPOLIA: NetworkConfig = {
     easSchemaRegistry: '0x4200000000000000000000000000000000000020',
     agentRegistry: '0xDd6D66924B43419F484aE981F174b803487AF25A',
     identityRegistry: '0xF64F748C7802a68Cb936a9213881fE74e83FDA97',
-    archiveTreasury: '0xeB75DE7cF5ce77ab15BB0fFa3a2A79e6aaa554B0',
+    archiveTreasury: '0xACB672de092beaAE2cd286dD61Cb2352AF7159F1',
     x402Relay: '0x4DCD02b276Dbeab57c265B72435e90507b6Ac81A',
   },
   eas: {

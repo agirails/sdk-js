@@ -969,7 +969,7 @@ describe('X402Adapter', () => {
 
     // -- feeCollector path edge cases --
 
-    it('succeeds with feeTransferFailed flag when fee transfer throws', async () => {
+    it('fails-closed when fee transfer throws', async () => {
       let callCount = 0;
       const failOnSecondTransfer: TransferFunction = async (_to, _amount) => {
         callCount++;
@@ -988,21 +988,14 @@ describe('X402Adapter', () => {
         fetchFn: mockFetch,
       });
 
-      const result = await adapterFeeFailure.pay({
+      await expect(adapterFeeFailure.pay({
         to: 'https://api.example.com/service',
         amount: '10',
+      })).rejects.toMatchObject({
+        code: X402ErrorCode.PAYMENT_FAILED,
       });
 
-      // Provider got paid, payment succeeds
-      expect(result.success).toBe(true);
-      expect(result.feeBreakdown).toBeDefined();
-      expect(result.feeBreakdown!.feeTransferFailed).toBe(true);
-      // platformFee shows intended fee; feeTransferFailed indicates it wasn't collected
-      expect(result.feeBreakdown!.platformFee).toBe('100000'); // intended 1% of $10
-      // Conservation: providerNet + platformFee = grossAmount always holds
-      expect(
-        BigInt(result.feeBreakdown!.providerNet) + BigInt(result.feeBreakdown!.platformFee)
-      ).toBe(BigInt(result.feeBreakdown!.grossAmount));
+      expect(callCount).toBe(2); // provider transfer attempted, then fee transfer attempted
     });
 
     it('throws when grossAmount is too small to cover minimum fee', async () => {

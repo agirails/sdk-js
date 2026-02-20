@@ -217,9 +217,8 @@ export interface X402FeeBreakdown {
   providerNet: string;
 
   /**
-   * Intended platform fee: max(feeBps%, $0.05).
+   * Platform fee: max(feeBps%, $0.05).
    * Conservation: providerNet + platformFee = grossAmount always holds.
-   * Check feeTransferFailed to know if fee was actually collected.
    */
   platformFee: string;
 
@@ -229,11 +228,7 @@ export interface X402FeeBreakdown {
   /** true = client-side estimate (relay path), false = exact (feeCollector path) */
   estimated: boolean;
 
-  /**
-   * true if fee transfer failed after provider was already paid (feeCollector path only).
-   * When true, platformFee shows the intended amount that was NOT collected.
-   * Fee recovery is handled out-of-band.
-   */
+  /** @deprecated Legacy best-effort mode only. Not set by current SDK behavior. */
   feeTransferFailed?: boolean;
 }
 
