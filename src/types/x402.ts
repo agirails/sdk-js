@@ -132,8 +132,15 @@ export enum X402ErrorCode {
   /** Server's network doesn't match client's expected network */
   NETWORK_MISMATCH = 'NETWORK_MISMATCH',
 
-  /** Failed to create ACTP transaction or link escrow */
+  /** Payment execution failed (transfer error, relay error, or config issue) */
   PAYMENT_FAILED = 'PAYMENT_FAILED',
+
+  /**
+   * Provider was paid but fee transfer failed. DO NOT RETRY — the provider
+   * already received funds. The `providerPaidTxHash` property on the error
+   * contains the on-chain tx hash for reconciliation.
+   */
+  PROVIDER_PAID_FEE_FAILED = 'PROVIDER_PAID_FEE_FAILED',
 
   /** Retry request with proof headers failed */
   RETRY_FAILED = 'RETRY_FAILED',
@@ -173,12 +180,20 @@ export class X402Error extends Error {
    * @param code - Error code for programmatic handling
    * @param response - Optional HTTP response that triggered the error
    */
+  /**
+   * When code is PROVIDER_PAID_FEE_FAILED, this contains the tx hash of the
+   * successful provider payment. Callers MUST NOT retry when this is set.
+   */
+  public readonly providerPaidTxHash?: string;
+
   constructor(
     message: string,
     public readonly code: X402ErrorCode,
-    public readonly response?: Response
+    public readonly response?: Response,
+    options?: { providerPaidTxHash?: string }
   ) {
     super(message);
+    this.providerPaidTxHash = options?.providerPaidTxHash;
 
     // Maintains proper stack trace in V8 environments
     if (Error.captureStackTrace) {

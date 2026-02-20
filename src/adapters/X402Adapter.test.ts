@@ -969,7 +969,7 @@ describe('X402Adapter', () => {
 
     // -- feeCollector path edge cases --
 
-    it('fails-closed when fee transfer throws', async () => {
+    it('throws PROVIDER_PAID_FEE_FAILED (not PAYMENT_FAILED) when fee transfer throws', async () => {
       let callCount = 0;
       const failOnSecondTransfer: TransferFunction = async (_to, _amount) => {
         callCount++;
@@ -992,10 +992,41 @@ describe('X402Adapter', () => {
         to: 'https://api.example.com/service',
         amount: '10',
       })).rejects.toMatchObject({
-        code: X402ErrorCode.PAYMENT_FAILED,
+        code: X402ErrorCode.PROVIDER_PAID_FEE_FAILED,
+        providerPaidTxHash: '0x' + 'e'.repeat(64),
       });
 
       expect(callCount).toBe(2); // provider transfer attempted, then fee transfer attempted
+    });
+
+    it('throws PROVIDER_PAID_FEE_FAILED when fee transfer returns { success: false }', async () => {
+      let callCount = 0;
+      const feeReturnsFalse: TransferFunction = async (_to, _amount) => {
+        callCount++;
+        if (callCount === 2) return { hash: '0x' + 'f'.repeat(64), success: false };
+        return '0x' + 'e'.repeat(64);
+      };
+
+      const mockFetch = createMockFetch([
+        mock402Response(providerAddress, '10000000'), // $10
+        mockResponse(200),
+      ]);
+
+      const adapter = new X402Adapter(requesterAddress, {
+        ...defaultConfig,
+        transferFn: feeReturnsFalse,
+        fetchFn: mockFetch,
+      });
+
+      await expect(adapter.pay({
+        to: 'https://api.example.com/service',
+        amount: '10',
+      })).rejects.toMatchObject({
+        code: X402ErrorCode.PROVIDER_PAID_FEE_FAILED,
+        providerPaidTxHash: '0x' + 'e'.repeat(64),
+      });
+
+      expect(callCount).toBe(2);
     });
 
     it('throws when grossAmount is too small to cover minimum fee', async () => {

@@ -341,7 +341,7 @@ export class X402Adapter extends BaseAdapter implements IAdapter {
       );
     }
 
-    // Step 6: ATOMIC PAYMENT - via relay (with fee) or direct transfer (legacy)
+    // Step 6: ATOMIC PAYMENT - via relay (with on-chain fee) or feeCollector (two transfers)
     const { txHash, feeBreakdown } = await this.executeAtomicPayment(paymentHeaders);
 
     // Step 7: Retry with proof (same method/headers/body + payment proof)
@@ -692,6 +692,9 @@ export class X402Adapter extends BaseAdapter implements IAdapter {
       const providerNet = grossBig - fee;
 
       // 1. Transfer net amount to provider
+      // NOTE: If transferFn returns a bare hash string (no { hash, success } object),
+      // we treat it as success. Integrators SHOULD return { hash, success } to enable
+      // detection of reverted/dropped transactions.
       const transferResult = await this.transferFn(
         headers.paymentAddress,
         providerNet.toString()
@@ -710,8 +713,9 @@ export class X402Adapter extends BaseAdapter implements IAdapter {
       }
 
       // 2. Transfer fee to AGIRAILS treasury (fail-closed).
-      // If fee transfer fails after provider is paid, we surface PAYMENT_FAILED
-      // and abort proof submission to avoid silent under-collection.
+      // IMPORTANT: Provider is already paid at this point. If fee transfer fails,
+      // we throw PROVIDER_PAID_FEE_FAILED (NOT PAYMENT_FAILED) so callers know
+      // NOT to retry — retrying would double-pay the provider.
       try {
         const feeResult = await this.transferFn(
           this.config.feeCollector,
@@ -724,15 +728,19 @@ export class X402Adapter extends BaseAdapter implements IAdapter {
 
         if (!feeSuccess) {
           throw new X402Error(
-            `Fee transfer failed after provider payment tx ${txHash}; refusing to continue with unpaid platform fee`,
-            X402ErrorCode.PAYMENT_FAILED
+            `Fee transfer failed after provider payment tx ${txHash}. DO NOT RETRY — provider already paid.`,
+            X402ErrorCode.PROVIDER_PAID_FEE_FAILED,
+            undefined,
+            { providerPaidTxHash: txHash }
           );
         }
       } catch (error) {
         if (error instanceof X402Error) throw error;
         throw new X402Error(
-          `Fee transfer failed after provider payment tx ${txHash}; refusing to continue with unpaid platform fee`,
-          X402ErrorCode.PAYMENT_FAILED
+          `Fee transfer failed after provider payment tx ${txHash}. DO NOT RETRY — provider already paid.`,
+          X402ErrorCode.PROVIDER_PAID_FEE_FAILED,
+          undefined,
+          { providerPaidTxHash: txHash }
         );
       }
 
