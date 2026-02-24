@@ -168,7 +168,10 @@ describe('stripPublishMetadata', () => {
     expect(PUBLISH_METADATA_KEYS).toContain('config_cid');
     expect(PUBLISH_METADATA_KEYS).toContain('arweave_tx');
     expect(PUBLISH_METADATA_KEYS).toContain('template_source');
-    expect(PUBLISH_METADATA_KEYS).toHaveLength(5);
+    expect(PUBLISH_METADATA_KEYS).toContain('wallet');
+    expect(PUBLISH_METADATA_KEYS).toContain('agent_id');
+    expect(PUBLISH_METADATA_KEYS).toContain('did');
+    expect(PUBLISH_METADATA_KEYS).toHaveLength(8);
   });
 });
 

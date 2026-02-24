@@ -67,6 +67,9 @@ export interface CLIConfig {
 
   /** Budget cap in USDC */
   budget?: number;
+
+  /** Identity pointer: filename of the {slug}.md identity file (e.g. "code-reviewer.md") */
+  identity?: string;
 }
 
 /**
@@ -386,4 +389,31 @@ export function addToDockerignore(projectRoot: string = process.cwd()): void {
  */
 export function addToRailwayignore(projectRoot: string = process.cwd()): void {
   addIgnoreEntries(path.join(projectRoot, '.railwayignore'));
+}
+
+// ============================================================================
+// Identity File Resolution
+// ============================================================================
+
+/**
+ * Resolve the absolute path to the agent's {slug}.md identity file.
+ *
+ * Reads the `identity` pointer from config.json. Returns null if
+ * no pointer is set or if the file doesn't exist on disk.
+ *
+ * @param projectRoot - Project root directory
+ * @returns Absolute path to the identity file, or null
+ */
+export function resolveIdentityPath(projectRoot: string = process.cwd()): string | null {
+  try {
+    const config = loadConfig(projectRoot);
+    if (!config.identity) return null;
+
+    const identityPath = path.join(projectRoot, config.identity);
+    if (!fs.existsSync(identityPath)) return null;
+
+    return identityPath;
+  } catch {
+    return null;
+  }
 }

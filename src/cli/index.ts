@@ -54,6 +54,8 @@ import { createDiffCommand } from './commands/diff';
 import { createRegisterCommand } from './commands/register';
 import { createDeployEnvCommand } from './commands/deploy-env';
 import { createDeployCheckCommand } from './commands/deploy-check';
+import { createTestCommand } from './commands/test';
+import { createClaimCommand } from './commands/claim';
 
 // ============================================================================
 // Program Setup
@@ -109,6 +111,10 @@ program.addCommand(createRegisterCommand());
 // AIP-13: Deployment security
 program.addCommand(createDeployEnvCommand());
 program.addCommand(createDeployCheckCommand());
+
+// Phase 1: Agent identity
+program.addCommand(createTestCommand());
+program.addCommand(createClaimCommand());
 
 // ============================================================================
 // Error Handling

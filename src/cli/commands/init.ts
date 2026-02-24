@@ -89,17 +89,43 @@ async function runInit(options: InitOptions, output: Output, cmd?: Command): Pro
     );
   }
 
-  // ── AGIRAILS.md pre-fill ──────────────────────────────────────────────
-  const agirailsMdPath = path.join(projectRoot, 'AGIRAILS.md');
+  // ── {slug}.md pre-fill (Phase 1: identity file takes priority) ──────
+  let identityFilename: string | undefined;
   let mdConfig: Record<string, unknown> | null = null;
 
-  if (fs.existsSync(agirailsMdPath)) {
+  // 1. Check for existing {slug}.md files in project root (*.md, skip AGIRAILS.md/README.md/CHANGELOG.md)
+  const mdFiles = fs.readdirSync(projectRoot).filter(
+    f => f.endsWith('.md') && !['AGIRAILS.md', 'README.md', 'CHANGELOG.md', 'SCRATCHPAD.md'].includes(f)
+  );
+
+  for (const mdFile of mdFiles) {
     try {
-      const { parseAgirailsMd } = await import('../../config/agirailsmd');
-      const parsed = parseAgirailsMd(fs.readFileSync(agirailsMdPath, 'utf-8'));
-      mdConfig = parsed.frontmatter;
+      const { parseAgirailsMdV4 } = await import('../../config/agirailsmdV4');
+      const content = fs.readFileSync(path.join(projectRoot, mdFile), 'utf-8');
+      const v4 = parseAgirailsMdV4(content);
+      if (v4.name && v4.services.length > 0) {
+        // Valid identity file found
+        identityFilename = mdFile;
+        mdConfig = { name: v4.name, network: v4.network, services: v4.services, price: v4.pricing.base };
+        output.info(`Found identity file: ${mdFile}`);
+        break;
+      }
     } catch {
-      output.warning('Found AGIRAILS.md but could not parse it — ignoring');
+      // Not a valid v4 identity file — skip
+    }
+  }
+
+  // 2. Fallback: check AGIRAILS.md (v3 onboarding manual)
+  if (!mdConfig) {
+    const agirailsMdPath = path.join(projectRoot, 'AGIRAILS.md');
+    if (fs.existsSync(agirailsMdPath)) {
+      try {
+        const { parseAgirailsMd } = await import('../../config/agirailsmd');
+        const parsed = parseAgirailsMd(fs.readFileSync(agirailsMdPath, 'utf-8'));
+        mdConfig = parsed.frontmatter;
+      } catch {
+        output.warning('Found AGIRAILS.md but could not parse it — ignoring');
+      }
     }
   }
 
@@ -122,9 +148,10 @@ async function runInit(options: InitOptions, output: Output, cmd?: Command): Pro
       options.intent = String(mdConfig.intent);
     }
 
-    // capabilities → service (first capability)
-    if (!isExplicit('service') && Array.isArray(mdConfig.capabilities) && mdConfig.capabilities.length > 0) {
-      options.service = String(mdConfig.capabilities[0]);
+    // capabilities/services → service (first entry)
+    const caps = mdConfig.capabilities || mdConfig.services;
+    if (!isExplicit('service') && Array.isArray(caps) && caps.length > 0) {
+      options.service = String(caps[0]);
     }
 
     // price
@@ -137,7 +164,8 @@ async function runInit(options: InitOptions, output: Output, cmd?: Command): Pro
     if (mdConfig.network) lines.push(`  Mode: ${options.mode}`);
     if (mdConfig.name) lines.push(`  Agent: ${String(mdConfig.name)}`);
     if (mdConfig.intent) lines.push(`  Intent: ${options.intent || mdConfig.intent}`);
-    if (Array.isArray(mdConfig.capabilities)) lines.push(`  Capabilities: ${mdConfig.capabilities.join(', ')}`);
+    const logCaps = mdConfig.capabilities || mdConfig.services;
+    if (Array.isArray(logCaps)) lines.push(`  Capabilities: ${logCaps.join(', ')}`);
     if (mdConfig.price != null) lines.push(`  Price: $${mdConfig.price} USDC`);
 
     output.info('Found AGIRAILS.md \u2014 using config from file');
@@ -212,11 +240,15 @@ async function runInit(options: InitOptions, output: Output, cmd?: Command): Pro
     // AGIRAILS.md-derived values (stored for downstream use)
     ...(mdConfig && mdConfig.name ? { agentName: String(mdConfig.name) } : {}),
     ...(mdConfig && mdConfig.intent ? { intent: String(mdConfig.intent) as 'earn' | 'pay' | 'both' } : {}),
-    ...(mdConfig && Array.isArray(mdConfig.capabilities) ? { capabilities: mdConfig.capabilities.map(String) } : {}),
+    ...(mdConfig && Array.isArray(mdConfig.capabilities ?? mdConfig.services)
+      ? { capabilities: ((mdConfig.capabilities ?? mdConfig.services) as unknown[]).map(String) }
+      : {}),
     ...(mdConfig && mdConfig.price != null ? { price: Number(mdConfig.price) } : {}),
     ...(mdConfig && mdConfig.concurrency != null ? { concurrency: Number(mdConfig.concurrency) } : {}),
     ...(mdConfig && mdConfig.payment_mode ? { paymentMode: String(mdConfig.payment_mode) as 'actp' | 'x402' | 'both' } : {}),
     ...(mdConfig && mdConfig.budget != null ? { budget: Number(mdConfig.budget) } : {}),
+    // Phase 1: identity pointer to {slug}.md
+    ...(identityFilename ? { identity: identityFilename } : {}),
   };
 
   // Save configuration

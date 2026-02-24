@@ -24,9 +24,12 @@ import { computeConfigHash, serializeAgirailsMd, parseAgirailsMd } from '../../c
 import { preparePublish, extractRegistrationParams, PENDING_ENDPOINT } from '../../config/publishPipeline';
 import { savePendingPublish, getActpDir } from '../../config/pendingPublish';
 import { addToGitignore, loadConfig, saveConfig, isInitialized, CLIConfig, CONFIG_DEFAULTS } from '../utils/config';
+import { ethers } from 'ethers';
 import { FilebaseClient } from '../../storage/FilebaseClient';
 import { ArweaveClient } from '../../storage/ArweaveClient';
 import { generateWallet } from '../utils/wallet';
+import { parseAgirailsMdV4 } from '../../config/agirailsmdV4';
+import { checkSlug, upsertAgent } from '../../api/agirailsApp';
 
 // ============================================================================
 // Publish Proxy (fallback when no Filebase credentials)
@@ -88,7 +91,7 @@ async function publishViaProxy(content: string, localConfigHash: string): Promis
 export function createPublishCommand(): Command {
   const cmd = new Command('publish')
     .description('Publish AGIRAILS.md config (offline — activates on first payment)')
-    .argument('[path]', 'Path to AGIRAILS.md', './AGIRAILS.md')
+    .argument('[path]', 'Path to AGIRAILS.md or {slug}.md')
     .option('-n, --network <network>', 'DEPRECATED: network is auto-detected (accepted but ignored)')
     .option('--skip-arweave', 'Skip permanent Arweave storage (dev mode)')
     .option('--dry-run', 'Show what would happen without executing')
@@ -135,10 +138,28 @@ async function runPublish(
     output.warning('--network flag is deprecated and ignored. Network is auto-detected at payment time.');
   }
 
-  const resolvedPath = resolve(filePath);
+  // Resolve file path: explicit arg > identity pointer > ./AGIRAILS.md fallback
+  let effectivePath = filePath;
+  if (!effectivePath) {
+    const { resolveIdentityPath } = await import('../utils/config');
+    const identityPath = resolveIdentityPath();
+    if (identityPath) {
+      effectivePath = identityPath;
+    } else if (existsSync(resolve('./AGIRAILS.md'))) {
+      effectivePath = './AGIRAILS.md';
+    } else {
+      output.error(
+        'No file to publish. Provide a path, or create a {slug}.md identity file.\n' +
+        'Usage: actp publish [path]'
+      );
+      process.exit(ExitCode.INVALID_INPUT);
+    }
+  }
+
+  const resolvedPath = resolve(effectivePath);
 
   if (!existsSync(resolvedPath)) {
-    output.error(`File not found: ${filePath}`);
+    output.error(`File not found: ${effectivePath}`);
     process.exit(ExitCode.INVALID_INPUT);
   }
 
@@ -166,6 +187,38 @@ async function runPublish(
       output.blank();
       output.success('Dry run complete. No changes made.');
       return;
+    }
+
+    // ================================================================
+    // Phase 1: Slug check (pre-chain, no auth, only on first publish)
+    // ================================================================
+    let v4Config: ReturnType<typeof parseAgirailsMdV4> | undefined;
+    try {
+      v4Config = parseAgirailsMdV4(content);
+    } catch {
+      // Not a v4 file — skip slug check (backward compatible with v3 AGIRAILS.md)
+    }
+
+    if (v4Config && !v4Config.agent_id) {
+      // First publish — check slug availability
+      const slugSpinner = output.spinner(`Checking slug availability: ${v4Config.slug}...`);
+      try {
+        const slugResult = await checkSlug(v4Config.slug);
+        if (!slugResult.available) {
+          slugSpinner.stop(false);
+          const hint = slugResult.suggestion
+            ? `\nRename your file to "${slugResult.suggestion}.md" and update the slug field, then retry.`
+            : '';
+          throw new Error(`Slug "${v4Config.slug}" is already taken on agirails.app.${hint}`);
+        }
+        slugSpinner.stop(true);
+        output.success(`Slug "${v4Config.slug}" is available.`);
+      } catch (slugErr) {
+        if ((slugErr as Error).message.includes('already taken')) throw slugErr;
+        slugSpinner.stop(false);
+        // Non-fatal: slug check API failure doesn't block publish
+        output.warning(`Slug check failed: ${(slugErr as Error).message}. Proceeding.`);
+      }
     }
 
     // Ensure .actp directory exists
@@ -257,7 +310,7 @@ async function runPublish(
       createdAt: new Date().toISOString(),
     };
 
-    const projectRoot = resolve(filePath, '..');
+    const projectRoot = resolve(resolvedPath, '..');
 
     // ================================================================
     // Local setup: bootstrap or migrate config, ensure .gitignore
@@ -314,6 +367,41 @@ async function runPublish(
     // Always save mainnet pending (lazy — activates on first mainnet payment)
     savePendingPublish({ ...pendingData, network: 'base-mainnet' });
 
+    // ================================================================
+    // Phase 1: API upsert to agirails.app (post-chain, non-blocking)
+    // ================================================================
+    if (v4Config && walletAddress) {
+      const apiSpinner = output.spinner('Syncing with agirails.app...');
+      try {
+        const upsertMessage = `agirails-publish:${v4Config.slug}:${configHash}`;
+        const { resolvePrivateKey: resolveKey } = await import('../../wallet/keystore');
+        const privKey = await resolveKey(projectRoot, { network: 'testnet' });
+        if (privKey) {
+          const signer = new ethers.Wallet(privKey);
+          const sig = await signer.signMessage(upsertMessage);
+          await upsertAgent({
+            slug: v4Config.slug,
+            agentId: v4Config.agent_id || '',
+            wallet: walletAddress,
+            configCid: cid,
+            configHash,
+            signature: sig,
+            message: upsertMessage,
+          });
+          apiSpinner.stop(true);
+          output.success(`Profile live at: agirails.app/a/${v4Config.slug}`);
+        } else {
+          apiSpinner.stop(false);
+          output.info('Skipped agirails.app sync (no wallet key for signing).');
+        }
+      } catch (apiErr) {
+        apiSpinner.stop(false);
+        // Non-blocking — agent is already on-chain
+        output.warning(`agirails.app sync failed: ${(apiErr as Error).message}`);
+        output.print('  Agent is on-chain. Retry with: actp publish');
+      }
+    }
+
     // Update AGIRAILS.md frontmatter
     const updatedFrontmatter = {
       ...(frontmatter as Record<string, unknown>),
@@ -324,6 +412,21 @@ async function runPublish(
     };
     const updatedContent = serializeAgirailsMd(updatedFrontmatter, body);
     writeFileSync(resolvedPath, updatedContent, 'utf-8');
+
+    // Update identity pointer in config.json if this is a {slug}.md file
+    if (v4Config) {
+      try {
+        const { basename } = await import('path');
+        const config = loadConfig(projectRoot);
+        const filename = basename(resolvedPath);
+        if (config.identity !== filename) {
+          config.identity = filename;
+          saveConfig(config, projectRoot);
+        }
+      } catch {
+        // Best-effort — config might not exist yet
+      }
+    }
 
     // Output results
     output.result(

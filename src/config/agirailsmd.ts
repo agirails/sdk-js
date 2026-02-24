@@ -61,6 +61,9 @@ export const PUBLISH_METADATA_KEYS = [
   'config_cid',
   'arweave_tx',
   'template_source',
+  'wallet',
+  'agent_id',
+  'did',
 ] as const;
 
 /**
