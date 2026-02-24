@@ -369,8 +369,13 @@ async function runPublish(
 
     // ================================================================
     // Phase 1: API upsert to agirails.app (post-chain, non-blocking)
+    // Requires agent_id — skipped on first publish (agent_id assigned
+    // on-chain, written back to YAML, available on re-publish).
+    // NOTE: agirails.app API routes (check-slug, claim, upsert with
+    // ownerOf verification) are not yet deployed. This code is
+    // forward-compatible — will work once API routes exist.
     // ================================================================
-    if (v4Config && walletAddress) {
+    if (v4Config && v4Config.agent_id && walletAddress) {
       const apiSpinner = output.spinner('Syncing with agirails.app...');
       try {
         const upsertMessage = `agirails-publish:${v4Config.slug}:${configHash}`;
@@ -381,7 +386,7 @@ async function runPublish(
           const sig = await signer.signMessage(upsertMessage);
           await upsertAgent({
             slug: v4Config.slug,
-            agentId: v4Config.agent_id || '',
+            agentId: v4Config.agent_id,
             wallet: walletAddress,
             configCid: cid,
             configHash,
@@ -400,6 +405,8 @@ async function runPublish(
         output.warning(`agirails.app sync failed: ${(apiErr as Error).message}`);
         output.print('  Agent is on-chain. Retry with: actp publish');
       }
+    } else if (v4Config && !v4Config.agent_id) {
+      output.info('First publish — agirails.app sync will happen on re-publish (after agent_id is assigned).');
     }
 
     // Update AGIRAILS.md frontmatter

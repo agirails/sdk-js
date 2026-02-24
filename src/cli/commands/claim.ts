@@ -86,13 +86,20 @@ async function runClaim(
       );
     }
 
-    const agentId = agentIdArg || config.agentName;
-    if (!agentId) {
+    // agent-id is required — it's an ERC-8004 token ID, not an agent name.
+    // config.agentName is a human-readable string, NOT a valid token ID.
+    if (!agentIdArg) {
       throw new Error(
-        'No agent ID specified.\n' +
+        'Agent ID required.\n' +
+        'The agent-id is the ERC-8004 token ID (numeric), not the agent name.\n' +
+        'Find it in your {slug}.md under agent_id, or on-chain via ownerOf.\n' +
         'Usage: actp claim <agent-id>'
       );
     }
+
+    // NOTE: agirails.app claim API routes (/api/v1/agents/claim/challenge,
+    // /api/v1/agents/claim) are not yet deployed. This code is forward-
+    // compatible — will work once the routes exist.
 
     // Step 1: Get challenge from dashboard
     const { challenge } = await getClaimChallenge(walletAddress);
@@ -102,7 +109,7 @@ async function runClaim(
 
     // Step 3: Submit claim
     const result = await claimAgent({
-      agentId: agentId || '',
+      agentId: agentIdArg,
       wallet: walletAddress,
       signature,
       challenge,

@@ -19,7 +19,7 @@ import { resolve, basename, dirname, join } from 'path';
 import { ethers } from 'ethers';
 import { pull } from '../../config/syncOperations';
 import { getNetwork } from '../../config/networks';
-import { isInitialized, loadConfig, saveConfig, resolveIdentityPath } from '../utils/config';
+import { isInitialized, loadConfig, saveConfig, CONFIG_DEFAULTS, resolveIdentityPath } from '../utils/config';
 
 // ============================================================================
 // Command Definition
@@ -158,18 +158,18 @@ async function runPull(
       }
     }
 
-    // Update identity pointer in config.json
+    // Update identity pointer in config.json (bootstrap if needed for new-machine pull)
     if (result.written) {
       try {
         const projectRoot = dirname(finalPath);
-        if (isInitialized(projectRoot)) {
-          const config = loadConfig(projectRoot);
-          const filename = basename(finalPath);
-          if (config.identity !== filename) {
-            config.identity = filename;
-            saveConfig(config, projectRoot);
-            output.info(`Updated identity pointer → ${filename}`);
-          }
+        const filename = basename(finalPath);
+        const config = isInitialized(projectRoot)
+          ? loadConfig(projectRoot)
+          : { ...CONFIG_DEFAULTS, address: agentAddress };
+        if (config.identity !== filename) {
+          config.identity = filename;
+          saveConfig(config, projectRoot);
+          output.info(`Updated identity pointer → ${filename}`);
         }
       } catch {
         // Best-effort
