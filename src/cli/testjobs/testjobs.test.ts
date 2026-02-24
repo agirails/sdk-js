@@ -200,6 +200,19 @@ describe('renderReceipt', () => {
     jest.restoreAllMocks();
   });
 
+  test('JSON mode handles zero amount (feePercent 0% branch)', () => {
+    const output = new Output('json');
+    const lines: string[] = [];
+    jest.spyOn(console, 'log').mockImplementation((msg: string) => { lines.push(msg); });
+
+    renderReceipt({ ...receiptData, amountWei: 0n }, output);
+
+    const json = JSON.parse(lines[0]);
+    expect(json.feePercent).toBe('0%');
+
+    jest.restoreAllMocks();
+  });
+
   test('human mode shows short txId without truncation', () => {
     const output = new Output('human');
     const lines: string[] = [];

@@ -428,3 +428,16 @@ describe('validateAgirailsMdV4', () => {
     );
   });
 });
+
+// ============================================================================
+// parseAgirailsMdV4 — edge cases (branch coverage)
+// ============================================================================
+
+describe('parseAgirailsMdV4 — edge cases', () => {
+  test('non-numeric pricing field returns undefined (NaN branch)', () => {
+    const md = `---\nname: Test\nservices:\n  - testing\npricing:\n  base: 5.00\n  min_price: not-a-number\n---\nbody`;
+    const config = parseAgirailsMdV4(md);
+    // min_price falls back to base when NaN
+    expect(config.pricing.min_price).toBe(5.0);
+  });
+});
