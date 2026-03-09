@@ -11,8 +11,9 @@ import * as fs from 'fs';
 import * as readline from 'readline';
 import { ethers } from 'ethers';
 import { Output, fmt, ExitCode } from './utils/output';
-import { resolveIdentityPath, saveConfig, isInitialized, CONFIG_DEFAULTS } from './utils/config';
+import { resolveIdentityPath, saveConfig, updateConfig, isInitialized, CONFIG_DEFAULTS } from './utils/config';
 import { addToGitignore } from './utils/config';
+import { validateSlug } from '../config/slugUtils';
 import { runTest } from './commands/test';
 import { generateSlug } from '../config/slugUtils';
 import { serializeAgirailsMd } from '../config/agirailsmd';
@@ -88,8 +89,13 @@ async function main(): Promise<void> {
 
       rl.close();
 
-      // Generate slug
+      // Generate and validate slug
       const slug = generateSlug(name.trim());
+      const slugError = validateSlug(slug);
+      if (slugError) {
+        output.error(`Invalid agent name: ${slugError}`);
+        process.exit(ExitCode.INVALID_INPUT);
+      }
 
       // Build frontmatter
       const frontmatter = {
@@ -110,15 +116,19 @@ async function main(): Promise<void> {
       // Build body
       const body = `\n# ${name.trim()}\n\nDescribe what your agent does here.\n\n## How to Request This Service\n\nExplain how clients should structure their requests.\n`;
 
-      // Write {slug}.md
+      // Write {slug}.md (guard against overwriting existing files)
       const filename = `${slug}.md`;
+      if (fs.existsSync(filename)) {
+        output.error(`File already exists: ${filename}. Remove it or choose a different name.`);
+        process.exit(ExitCode.INVALID_INPUT);
+      }
       const content = serializeAgirailsMd(frontmatter, body);
       fs.writeFileSync(filename, content, 'utf-8');
 
       output.print('');
       output.success(`Created ${fmt.bold(filename)}`);
 
-      // Bootstrap .actp/
+      // Bootstrap .actp/ or backfill identity pointer
       if (!isInitialized()) {
         const randomAddress = ethers.Wallet.createRandom().address;
         saveConfig({
@@ -129,6 +139,10 @@ async function main(): Promise<void> {
         });
         addToGitignore();
         output.success('Initialized .actp/ (mock mode)');
+      } else if (!resolveIdentityPath()) {
+        // Existing config without identity pointer — backfill it
+        updateConfig({ identity: filename });
+        output.success('Updated .actp/config.json with identity pointer');
       }
 
       // Run mock earning loop
