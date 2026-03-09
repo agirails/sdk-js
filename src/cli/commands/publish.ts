@@ -19,7 +19,7 @@ import { Command } from 'commander';
 import { Output, ExitCode } from '../utils/output';
 import { mapError } from '../utils/client';
 import { resolve, join } from 'path';
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from 'fs';
 import { computeConfigHash, serializeAgirailsMd, parseAgirailsMd } from '../../config/agirailsmd';
 import { preparePublish, extractRegistrationParams, PENDING_ENDPOINT } from '../../config/publishPipeline';
 import { savePendingPublish, getActpDir } from '../../config/pendingPublish';
@@ -156,7 +156,7 @@ async function runPublish(
     }
   }
 
-  const resolvedPath = resolve(effectivePath);
+  let resolvedPath = resolve(effectivePath);
 
   if (!existsSync(resolvedPath)) {
     output.error(`File not found: ${effectivePath}`);
@@ -167,8 +167,8 @@ async function runPublish(
 
   try {
     // Read and compute hash
-    const content = readFileSync(resolvedPath, 'utf-8');
-    const { configHash, structuredHash, bodyHash } = computeConfigHash(content);
+    let content = readFileSync(resolvedPath, 'utf-8');
+    let { configHash, structuredHash, bodyHash } = computeConfigHash(content);
 
     if (options.dryRun) {
       spinner.stop(true);
@@ -205,19 +205,61 @@ async function runPublish(
       try {
         const slugResult = await checkSlug(v4Config.slug);
         if (!slugResult.available) {
-          slugSpinner.stop(false);
-          const hint = slugResult.suggestion
-            ? `\nRename your file to "${slugResult.suggestion}.md" and update the slug field, then retry.`
-            : '';
-          throw new Error(`Slug "${v4Config.slug}" is already taken on agirails.app.${hint}`);
+          if (slugResult.suggestion) {
+            slugSpinner.stop(true);
+            const oldSlug = v4Config.slug;
+            const newSlug = slugResult.suggestion;
+
+            // Auto-rename: update frontmatter slug, rename file, update config pointer
+            output.info(`Slug "${oldSlug}" was taken. Renamed to "${newSlug}".`);
+
+            // Rename file on disk
+            const { dirname, join: pathJoin } = await import('path');
+            const dir = dirname(resolvedPath);
+            const newPath = pathJoin(dir, `${newSlug}.md`);
+            renameSync(resolvedPath, newPath);
+
+            // Re-read, update slug in frontmatter, rewrite, re-parse, recompute hash
+            const rawContent = readFileSync(newPath, 'utf-8');
+            const parsed = parseAgirailsMd(rawContent);
+            const updatedFm = { ...(parsed.frontmatter as Record<string, unknown>), slug: newSlug };
+            const newContent = serializeAgirailsMd(updatedFm, parsed.body);
+            writeFileSync(newPath, newContent, 'utf-8');
+
+            // Update in-memory references for the rest of publish
+            resolvedPath = newPath;
+            v4Config.slug = newSlug;
+
+            // Recompute configHash with new slug
+            const reHash = computeConfigHash(newContent);
+            configHash = reHash.configHash;
+            content = newContent;
+
+            // Update config.json identity pointer
+            try {
+              const config = loadConfig(resolve(newPath, '..'));
+              config.identity = `${newSlug}.md`;
+              saveConfig(config, resolve(newPath, '..'));
+            } catch {
+              // Best-effort
+            }
+          } else {
+            slugSpinner.stop(false);
+            throw new Error(`Slug "${v4Config.slug}" is already taken on agirails.app. Choose a different name.`);
+          }
+        } else {
+          slugSpinner.stop(true);
+          output.success(`Slug "${v4Config.slug}" is available.`);
         }
-        slugSpinner.stop(true);
-        output.success(`Slug "${v4Config.slug}" is available.`);
       } catch (slugErr) {
         if ((slugErr as Error).message.includes('already taken')) throw slugErr;
-        slugSpinner.stop(false);
-        // Non-fatal: slug check API failure doesn't block publish
-        output.warning(`Slug check failed: ${(slugErr as Error).message}. Proceeding.`);
+        if ((slugErr as Error).message.includes('was taken')) {
+          // Auto-rename succeeded — not an error
+        } else {
+          slugSpinner.stop(false);
+          // Non-fatal: slug check API failure doesn't block publish
+          output.warning(`Slug check failed: ${(slugErr as Error).message}. Proceeding.`);
+        }
       }
     }
 
@@ -368,6 +410,40 @@ async function runPublish(
     savePendingPublish({ ...pendingData, network: 'base-mainnet' });
 
     // ================================================================
+    // Write-back: wallet, agent_id, did into AGIRAILS.md frontmatter
+    // These are in PUBLISH_METADATA_KEYS — stripped before hash computation.
+    // ================================================================
+    const publishMetadata: Record<string, string> = {};
+    if (walletAddress) {
+      publishMetadata.wallet = walletAddress;
+      // DID: did:ethr:<chainId>:<address>
+      // Testnet (84532) always written; mainnet (8453) on re-publish when agent_id exists
+      publishMetadata.did = `did:ethr:84532:${walletAddress}`;
+    }
+    // agent_id: query on-chain after testnet activation (token ID = uint256(uint160(address)))
+    if (testnetTxHash && walletAddress) {
+      try {
+        const { getNetwork: getNet } = await import('../../config/networks');
+        const { ethers: eth } = await import('ethers');
+        const net = getNet('base-sepolia');
+        const registryAddr = net.contracts.agentRegistry;
+        if (!registryAddr) throw new Error('No agentRegistry configured');
+        const prov = new eth.JsonRpcProvider(net.rpcUrl);
+        const { AgentRegistryClient: ARC } = await import('../../registry/AgentRegistryClient');
+        const regClient = ARC.readOnly(registryAddr, prov);
+        const onChainConfig = await regClient.getConfig(walletAddress);
+        if (onChainConfig.isActive) {
+          // agent_id = tokenId = uint256(uint160(walletAddress))
+          const agentId = BigInt(walletAddress).toString();
+          publishMetadata.agent_id = agentId;
+          publishMetadata.did = `did:ethr:84532:${walletAddress}`;
+        }
+      } catch {
+        // Best-effort — agent_id will be written on re-publish
+      }
+    }
+
+    // ================================================================
     // Phase 1: API upsert to agirails.app (post-chain, non-blocking)
     // Requires agent_id — skipped on first publish (agent_id assigned
     // on-chain, written back to YAML, available on re-publish).
@@ -416,6 +492,7 @@ async function runPublish(
       config_cid: cid,
       published_at: new Date().toISOString(),
       ...(arweaveTxId ? { arweave_tx: arweaveTxId } : {}),
+      ...publishMetadata,
     };
     const updatedContent = serializeAgirailsMd(updatedFrontmatter, body);
     writeFileSync(resolvedPath, updatedContent, 'utf-8');

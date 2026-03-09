@@ -77,11 +77,18 @@ async function runTest(output: Output): Promise<void> {
     output.print(`Testing ${config.name} (${testJob.title})`);
 
     // Step 4: Run mock earning loop
+    const totalStart = performance.now();
     const runtime = new MockRuntime();
 
     // Create synthetic addresses
     const requesterWallet = ethers.Wallet.createRandom();
-    const providerAddress = loadConfig().address || ethers.Wallet.createRandom().address;
+    let providerAddress: string;
+    try {
+      providerAddress = loadConfig().address || ethers.Wallet.createRandom().address;
+    } catch {
+      // No config found — use random address (likely first run before actp init)
+      providerAddress = ethers.Wallet.createRandom().address;
+    }
 
     // Amount in USDC wei (6 decimals)
     const amountWei = BigInt(Math.round(config.pricing.base * 1_000_000));
@@ -94,6 +101,7 @@ async function runTest(output: Output): Promise<void> {
     const deadline = runtime.time.now() + 86400; // +24h
     const disputeWindow = parseDuration(config.sla.dispute_window);
 
+    const escrowStart = performance.now();
     const txId = await runtime.createTransaction({
       provider: providerAddress,
       requester: requesterWallet.address,
@@ -105,6 +113,7 @@ async function runTest(output: Output): Promise<void> {
 
     // Step 4b: linkEscrow (INITIATED → COMMITTED)
     const escrowId = await runtime.linkEscrow(txId, amountStr);
+    const escrowLockMs = performance.now() - escrowStart;
 
     // Step 4c: transitionState (COMMITTED → IN_PROGRESS)
     await runtime.transitionState(txId, 'IN_PROGRESS');
@@ -116,7 +125,11 @@ async function runTest(output: Output): Promise<void> {
     await runtime.time.advanceTime(disputeWindow + 1);
 
     // Step 4f: releaseEscrow (DELIVERED → SETTLED)
+    const settlementStart = performance.now();
     await runtime.releaseEscrow(escrowId);
+    const settlementMs = performance.now() - settlementStart;
+
+    const totalMs = performance.now() - totalStart;
 
     spinner.stop(true);
 
@@ -128,6 +141,11 @@ async function runTest(output: Output): Promise<void> {
         amountWei,
         network: 'mock',
         txId,
+        timing: {
+          totalMs: Math.round(totalMs),
+          escrowLockMs: Math.round(escrowLockMs),
+          settlementMs: Math.round(settlementMs),
+        },
       },
       output
     );

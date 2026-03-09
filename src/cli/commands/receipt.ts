@@ -13,6 +13,12 @@ import { computeDisplayFee } from '../../config/defaults';
 // Types
 // ============================================================================
 
+export interface ReceiptTiming {
+  totalMs: number;
+  escrowLockMs: number;
+  settlementMs: number;
+}
+
 export interface ReceiptData {
   agent: string;
   service: string;
@@ -20,6 +26,7 @@ export interface ReceiptData {
   amountWei: bigint;
   network: string;
   txId: string;
+  timing?: ReceiptTiming;
 }
 
 // ============================================================================
@@ -65,6 +72,7 @@ export function renderReceipt(data: ReceiptData, output: Output): void {
       net: formatUsdc(net),
       network: data.network,
       txId: data.txId,
+      ...(data.timing ? { timing: data.timing } : {}),
     });
     return;
   }
@@ -91,6 +99,9 @@ export function renderReceipt(data: ReceiptData, output: Output): void {
   line(`Net:        ${fmt.green(fmt.bold(formatUsdc(net)))}`);
   line(`Network:    ${data.network}`);
   line(`Tx:         ${formatTxId(data.txId)}`);
+  if (data.timing) {
+    line(`Time:       ${data.timing.totalMs}ms (escrow ${data.timing.escrowLockMs}ms, settle ${data.timing.settlementMs}ms)`);
+  }
   empty();
   line(fmt.bold("WHAT'S NEXT"));
   line('• Edit agent.ts with your logic');
