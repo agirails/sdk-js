@@ -17,7 +17,8 @@
     }
   },
   "bin": {
-    "actp": "./bin/actp"
+    "actp": "./bin/actp",
+    "agirails": "./bin/agirails"
   },
   "files": [
     "dist",

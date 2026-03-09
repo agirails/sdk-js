@@ -1,0 +1,10 @@
+#!/usr/bin/env node
+
+/**
+ * AGIRAILS Quickstart Entry Point
+ *
+ * This file is the executable entry point for the `npx agirails` command.
+ * It loads the compiled TypeScript from dist/cli/agirails.js
+ */
+
+require('../dist/cli/agirails.js');
