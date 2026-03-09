@@ -6,13 +6,12 @@
  * - Agent upsert after publish (post-chain, wallet signature auth)
  * - Dashboard claim (wallet signature auth)
  *
- * STATUS: These API routes are SDK-side ready but NOT YET deployed
- * on agirails.app. The web app currently has only GET/POST /api/v1/agents
- * with session auth. The following routes need to be created:
- *   - GET  /api/v1/agents/check-slug?slug=...
- *   - POST /api/v1/agents (with wallet signature auth, not session auth)
- *   - POST /api/v1/agents/claim/challenge
- *   - POST /api/v1/agents/claim
+ * STATUS: All API routes are implemented on agirails.app:
+ *   - GET  /api/v1/agents/check-slug?slug=... (rate-limited, slug validation)
+ *   - POST /api/v1/agents (dual auth: session + wallet-sig via EIP-712)
+ *   - POST /api/v1/agents/claim/challenge (Redis-backed challenge)
+ *   - POST /api/v1/agents/claim (on-chain ownerOf verification)
+ *   - GET  /a/{slug} (SSR profile page with OpenGraph)
  *
  * All callers handle API failures gracefully (non-blocking).
  *

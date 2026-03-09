@@ -97,9 +97,9 @@ async function runClaim(
       );
     }
 
-    // NOTE: agirails.app claim API routes (/api/v1/agents/claim/challenge,
-    // /api/v1/agents/claim) are not yet deployed. This code is forward-
-    // compatible — will work once the routes exist.
+    // agirails.app claim API routes are live:
+    // POST /api/v1/agents/claim/challenge — Redis-backed challenge
+    // POST /api/v1/agents/claim — on-chain ownerOf verification
 
     // Step 1: Get challenge from dashboard
     const { challenge } = await getClaimChallenge(walletAddress);

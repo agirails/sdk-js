@@ -447,9 +447,7 @@ async function runPublish(
     // Phase 1: API upsert to agirails.app (post-chain, non-blocking)
     // Requires agent_id — skipped on first publish (agent_id assigned
     // on-chain, written back to YAML, available on re-publish).
-    // NOTE: agirails.app API routes (check-slug, claim, upsert with
-    // ownerOf verification) are not yet deployed. This code is
-    // forward-compatible — will work once API routes exist.
+    // API routes: POST /api/v1/agents (dual auth: session + wallet-sig)
     // ================================================================
     if (v4Config && v4Config.agent_id && walletAddress) {
       const apiSpinner = output.spinner('Syncing with agirails.app...');
