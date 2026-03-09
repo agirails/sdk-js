@@ -70,6 +70,47 @@ export interface ClaimResult {
   profileUrl: string;
 }
 
+/** Published config shape embedded in discover response */
+export interface DiscoverAgentConfig {
+  name?: string;
+  description?: string;
+  capabilities?: string[];
+  pricing?: {
+    amount?: number;
+    currency?: string;
+    unit?: string;
+  };
+  payment_mode?: string;
+  sla?: Record<string, unknown>;
+  endpoints?: Record<string, string>;
+}
+
+/** Single agent in discover results */
+export interface DiscoverAgent {
+  slug: string;
+  wallet_address: string;
+  published_config?: DiscoverAgentConfig;
+  published_at?: string;
+  status?: string;
+}
+
+/** API response from /api/v1/discover */
+export interface DiscoverResult {
+  agents: DiscoverAgent[];
+  total: number;
+}
+
+/** Parameters for the discover endpoint */
+export interface DiscoverParams {
+  search?: string;
+  capability?: string;
+  paymentMode?: string;
+  sort?: 'reputation' | 'price' | 'recent';
+  limit?: number;
+  offset?: number;
+  maxPrice?: number;
+}
+
 // ============================================================================
 // API Client
 // ============================================================================
@@ -168,4 +209,38 @@ export async function claimAgent(params: ClaimParams): Promise<ClaimResult> {
   }
 
   return res.json() as Promise<ClaimResult>;
+}
+
+/**
+ * Discover published agents on agirails.app.
+ *
+ * Public read-only endpoint, no auth required. Supports filtering
+ * by capability, payment mode, search text, and sorting.
+ *
+ * @param params - Discovery filter parameters
+ * @returns Paginated list of agents with total count
+ */
+export async function discoverAgents(params: DiscoverParams = {}): Promise<DiscoverResult> {
+  const qs = new URLSearchParams();
+  if (params.search)          qs.set('search',      params.search);
+  if (params.capability)      qs.set('capability',  params.capability);
+  if (params.paymentMode)     qs.set('paymentMode', params.paymentMode);
+  if (params.sort)            qs.set('sort',        params.sort);
+  if (params.limit != null)   qs.set('limit',       String(params.limit));
+  if (params.offset != null)  qs.set('offset',      String(params.offset));
+  if (params.maxPrice != null) qs.set('maxPrice',   String(params.maxPrice));
+
+  const queryString = qs.toString();
+  const url = `${AGIRAILS_APP_BASE_URL}/api/v1/discover${queryString ? `?${queryString}` : ''}`;
+
+  const res = await fetch(url, {
+    method: 'GET',
+    headers: { 'Accept': 'application/json' },
+  });
+
+  if (!res.ok) {
+    throw new Error(`discover API failed: ${res.status} ${res.statusText}`);
+  }
+
+  return res.json() as Promise<DiscoverResult>;
 }

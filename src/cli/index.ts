@@ -56,6 +56,7 @@ import { createDeployEnvCommand } from './commands/deploy-env';
 import { createDeployCheckCommand } from './commands/deploy-check';
 import { createTestCommand } from './commands/test';
 import { createClaimCommand } from './commands/claim';
+import { createFindCommand } from './commands/find';
 
 // ============================================================================
 // Program Setup
@@ -115,6 +116,9 @@ program.addCommand(createDeployCheckCommand());
 // Phase 1: Agent identity
 program.addCommand(createTestCommand());
 program.addCommand(createClaimCommand());
+
+// Phase 2: Agent discovery
+program.addCommand(createFindCommand());
 
 // ============================================================================
 // Error Handling

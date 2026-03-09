@@ -18,6 +18,8 @@ import { runTest } from './commands/test';
 import { generateSlug } from '../config/slugUtils';
 import { serializeAgirailsMd } from '../config/agirailsmd';
 import { V4_DEFAULTS, V4_CONSTRAINTS } from '../config/defaults';
+import { Command } from 'commander';
+import { createFindCommand } from './commands/find';
 
 // ============================================================================
 // readline helper
@@ -166,4 +168,15 @@ async function main(): Promise<void> {
   }
 }
 
-main();
+// ============================================================================
+// Subcommand routing: agirails find [query] [options]
+// ============================================================================
+
+const subCmd = process.argv[2];
+if (subCmd === 'find') {
+  const sub = new Command('agirails');
+  sub.addCommand(createFindCommand());
+  sub.parse(process.argv);
+} else {
+  main();
+}
