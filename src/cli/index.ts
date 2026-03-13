@@ -57,6 +57,9 @@ import { createDeployCheckCommand } from './commands/deploy-check';
 import { createTestCommand } from './commands/test';
 import { createClaimCommand } from './commands/claim';
 import { createFindCommand } from './commands/find';
+import { createNegotiateCommand } from './commands/negotiate';
+import { createAutopublishCommand } from './commands/autopublish';
+import { createHealthCommand } from './commands/health';
 
 // ============================================================================
 // Program Setup
@@ -119,6 +122,15 @@ program.addCommand(createClaimCommand());
 
 // Phase 2: Agent discovery
 program.addCommand(createFindCommand());
+
+// Phase 2: Autonomous negotiation
+program.addCommand(createNegotiateCommand());
+
+// Phase 2: Auto-publish on save
+program.addCommand(createAutopublishCommand());
+
+// Phase 3: Health check
+program.addCommand(createHealthCommand());
 
 // ============================================================================
 // Error Handling

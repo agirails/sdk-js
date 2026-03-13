@@ -533,18 +533,33 @@ async function runPublish(
 
     output.print('');
     output.print('Mainnet: on-chain activation will happen on your first payment.');
+
+    // Context-aware next steps
+    const hasEndpoint = frontmatter.endpoint && frontmatter.endpoint !== PENDING_ENDPOINT;
     output.print('');
     output.print('Next steps:');
-    output.print('  - Verify config:  actp diff');
-    output.print('  - Make a payment: your first mainnet payment activates the agent on-chain');
+    if (!hasEndpoint) {
+      output.print('  1. Set your endpoint:    Add "endpoint: https://..." to AGIRAILS.md');
+      output.print('  2. Check endpoint:       actp health');
+      output.print('  3. Check your balance:   actp balance');
+      output.print('  4. Verify config match:  actp diff');
+    } else {
+      output.print('  1. Check endpoint:       actp health');
+      output.print('  2. Check your balance:   actp balance');
+      output.print('  3. Verify config match:  actp diff');
+    }
+
+    // Suggest test payment on testnet
+    if (testnetTxHash && v4Config?.slug) {
+      output.print('');
+      output.print(`  Try a test payment: actp pay agirails.app/a/${v4Config.slug} 5`);
+    }
 
     // Warn if placeholder endpoint
-    if (!frontmatter.endpoint || frontmatter.endpoint === PENDING_ENDPOINT) {
+    if (!hasEndpoint) {
       output.print('');
-      output.warning('No endpoint in AGIRAILS.md — using placeholder URL.');
-      output.print('  Update when your agent is deployed:');
-      output.print('    1. Add "endpoint: https://your-agent.com/webhook" to AGIRAILS.md');
-      output.print('    2. Run: actp publish');
+      output.warning('No endpoint set — your agent can\'t receive jobs yet.');
+      output.print('  Add "endpoint: https://your-agent.com/webhook" to AGIRAILS.md, then: actp publish');
     }
   } catch (error) {
     spinner.stop(false);
