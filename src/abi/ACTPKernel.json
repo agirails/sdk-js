@@ -811,10 +811,10 @@
         "internalType": "address"
       },
       {
-        "name": "disputeId",
-        "type": "bytes32",
+        "name": "bondAmount",
+        "type": "uint256",
         "indexed": false,
-        "internalType": "bytes32"
+        "internalType": "uint256"
       },
       {
         "name": "timestamp",
@@ -842,10 +842,22 @@
         "internalType": "bytes32"
       },
       {
-        "name": "resolution",
-        "type": "uint8",
+        "name": "initiator",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "providerAtFault",
+        "type": "bool",
         "indexed": false,
-        "internalType": "uint8"
+        "internalType": "bool"
+      },
+      {
+        "name": "bondAmount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       },
       {
         "name": "timestamp",
