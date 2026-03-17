@@ -1023,14 +1023,32 @@ export class Agent extends EventEmitter {
           return false;
         }
 
-        // If decision is 'counter-offer', we could implement QUOTED state here
-        // For MVP, we treat 'counter-offer' as reject (no automatic negotiation)
+        // Counter-offer: provider accepts at reduced margin (budget >= cost but < ideal price).
+        // ACTP invariant: tx.amount is immutable — escrow is always at buyer's original offer.
+        // The QUOTED proof documents the provider's ideal price for audit trail / transparency,
+        // but does NOT change the on-chain escrow amount.
         if (calculation.decision === 'counter-offer') {
-          this.logger.info('Job requires counter-offer (not implemented in MVP)', {
-            txId: tx.id,
-            reason: calculation.reason,
-          });
-          return false;
+          try {
+            const { keccak256, toUtf8Bytes, AbiCoder } = await import('ethers');
+            const providerIdealPrice = String(Math.round(calculation.price * 1_000_000)); // USDC base units
+            const quoteHash = keccak256(toUtf8Bytes(
+              JSON.stringify({ txId: tx.id, providerIdealPrice, actualEscrow: tx.amount, provider: this.address })
+            ));
+            const proof = AbiCoder.defaultAbiCoder().encode(['bytes32'], [quoteHash]);
+            await this._client!.runtime.transitionState(tx.id, 'QUOTED', proof);
+
+            this.logger.info('Counter-offer quoted (accepting at reduced margin)', {
+              txId: tx.id,
+              providerIdealPrice,
+              actualEscrow: tx.amount,
+              reason: calculation.reason,
+            });
+            // Don't auto-accept — buyer must linkEscrow after reviewing quote
+            return false;
+          } catch (quoteError) {
+            this.logger.error('Counter-offer submission failed', { txId: tx.id }, quoteError as Error);
+            return false;
+          }
         }
       } catch (error) {
         // If pricing calculation fails, reject the job for safety
