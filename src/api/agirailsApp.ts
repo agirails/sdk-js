@@ -85,6 +85,16 @@ export interface DiscoverAgentConfig {
   endpoints?: Record<string, string>;
 }
 
+/** Stats embedded in discover results (when sort=reputation) */
+export interface DiscoverAgentStats {
+  reputation_score: number;
+  completed_transactions: number;
+  failed_transactions: number;
+  success_rate: number;
+  total_gmv_usdc: string;
+  avg_completion_time_seconds: number | null;
+}
+
 /** Single agent in discover results */
 export interface DiscoverAgent {
   slug: string;
@@ -92,12 +102,29 @@ export interface DiscoverAgent {
   published_config?: DiscoverAgentConfig;
   published_at?: string;
   status?: string;
+  stats?: DiscoverAgentStats;
+}
+
+/** LLM-ranked agent entry */
+export interface RankedAgent {
+  slug: string;
+  reason: string;
+  risk: string;
+  confidence: 'high' | 'medium' | 'low';
+}
+
+/** LLM ranking metadata */
+export interface RankingInfo {
+  version: string;
+  model: string;
+  ranked: RankedAgent[];
 }
 
 /** API response from /api/v1/discover */
 export interface DiscoverResult {
   agents: DiscoverAgent[];
   total: number;
+  ranking?: RankingInfo;
 }
 
 /** Parameters for the discover endpoint */
@@ -109,6 +136,8 @@ export interface DiscoverParams {
   limit?: number;
   offset?: number;
   maxPrice?: number;
+  rank?: 'llm';
+  priority?: 'quality' | 'price' | 'speed';
 }
 
 // ============================================================================
@@ -229,6 +258,8 @@ export async function discoverAgents(params: DiscoverParams = {}): Promise<Disco
   if (params.limit != null)   qs.set('limit',       String(params.limit));
   if (params.offset != null)  qs.set('offset',      String(params.offset));
   if (params.maxPrice != null) qs.set('maxPrice',   String(params.maxPrice));
+  if (params.rank)            qs.set('rank',        params.rank);
+  if (params.priority)        qs.set('priority',    params.priority);
 
   const queryString = qs.toString();
   const url = `${AGIRAILS_APP_BASE_URL}/api/v1/discover${queryString ? `?${queryString}` : ''}`;

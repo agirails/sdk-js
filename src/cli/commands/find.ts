@@ -14,6 +14,7 @@ import {
   discoverAgents,
   DiscoverAgent,
   DiscoverParams,
+  RankingInfo,
 } from '../../api/agirailsApp';
 
 // ============================================================================
@@ -22,6 +23,8 @@ import {
 
 const VALID_SORT = ['reputation', 'price', 'recent'] as const;
 const VALID_PAYMENT_MODES = ['actp', 'x402'] as const;
+const VALID_RANK = ['llm'] as const;
+const VALID_PRIORITY = ['quality', 'price', 'speed'] as const;
 
 // ============================================================================
 // Command Definition
@@ -36,6 +39,8 @@ export function createFindCommand(): Command {
     .option('--sort <mode>', 'Sort: reputation | price | recent', 'recent')
     .option('-l, --limit <n>', 'Number of results (1-100)', '20')
     .option('--payment-mode <mode>', 'Filter by payment mode: actp | x402')
+    .option('--rank <mode>', 'Enable LLM ranking: llm')
+    .option('--priority <p>', 'Ranking priority: quality | price | speed', 'quality')
     .option('--json', 'Output as JSON')
     .option('-q, --quiet', 'Output slugs only, one per line')
     .action(async (query, options) => {
@@ -69,6 +74,8 @@ interface FindOptions {
   sort?: string;
   limit?: string;
   paymentMode?: string;
+  rank?: string;
+  priority?: string;
 }
 
 // ============================================================================
@@ -115,18 +122,50 @@ export async function runFind(
     return;
   }
 
+  // Validate --rank
+  if (options.rank && !(VALID_RANK as readonly string[]).includes(options.rank)) {
+    output.errorResult({
+      code: 'INVALID_INPUT',
+      message: `--rank must be one of: ${VALID_RANK.join(', ')}`,
+    });
+    process.exit(ExitCode.INVALID_INPUT);
+    return;
+  }
+
+  // Validate --priority
+  if (options.priority && !(VALID_PRIORITY as readonly string[]).includes(options.priority)) {
+    output.errorResult({
+      code: 'INVALID_INPUT',
+      message: `--priority must be one of: ${VALID_PRIORITY.join(', ')}`,
+    });
+    process.exit(ExitCode.INVALID_INPUT);
+    return;
+  }
+
+  // --rank=llm requires a search query
+  if (options.rank === 'llm' && !query) {
+    output.errorResult({
+      code: 'INVALID_INPUT',
+      message: '--rank=llm requires a search query (e.g. actp find "translate french" --rank llm)',
+    });
+    process.exit(ExitCode.INVALID_INPUT);
+    return;
+  }
+
   const params: DiscoverParams = {
     ...(query               ? { search: query }                                   : {}),
     ...(options.capability  ? { capability: options.capability }                   : {}),
     ...(options.paymentMode ? { paymentMode: options.paymentMode }                 : {}),
     ...(options.sort        ? { sort: options.sort as DiscoverParams['sort'] }     : {}),
     ...(options.maxPrice    ? { maxPrice: Number(options.maxPrice) }               : {}),
+    ...(options.rank        ? { rank: options.rank as DiscoverParams['rank'] }     : {}),
+    ...(options.priority    ? { priority: options.priority as DiscoverParams['priority'] } : {}),
     limit,
   };
 
   const spinner = output.spinner('Searching agents...');
 
-  let result: { agents: DiscoverAgent[]; total: number };
+  let result: { agents: DiscoverAgent[]; total: number; ranking?: RankingInfo };
 
   try {
     result = await discoverAgents(params);
@@ -142,11 +181,11 @@ export async function runFind(
     return;
   }
 
-  const { agents, total } = result;
+  const { agents, total, ranking } = result;
 
   // JSON mode — raw API response
   if (output.mode === 'json') {
-    output.result({ agents, total } as unknown as Record<string, unknown>);
+    output.result({ agents, total, ...(ranking ? { ranking } : {}) } as unknown as Record<string, unknown>);
     return;
   }
 
@@ -167,6 +206,23 @@ export async function runFind(
   }
 
   renderAgentTable(agents, output);
+
+  // Show LLM ranking recommendations if present
+  if (ranking && ranking.ranked.length > 0) {
+    output.blank();
+    output.print(fmt.bold('  AI Recommendations') + fmt.dim(` (${ranking.model}, ${ranking.version})`));
+    output.print('  ' + fmt.dim('-'.repeat(60)));
+
+    for (let i = 0; i < ranking.ranked.length; i++) {
+      const r = ranking.ranked[i];
+      const conf = r.confidence === 'high' ? fmt.green(r.confidence)
+        : r.confidence === 'medium' ? fmt.yellow(r.confidence)
+        : fmt.dim(r.confidence);
+      output.print(`  ${i + 1}. ${fmt.cyan(r.slug)} ${fmt.dim('[')}${conf}${fmt.dim(']')}`);
+      output.print(`     ${r.reason}`);
+      if (r.risk) output.print(`     ${fmt.dim('Risk:')} ${r.risk}`);
+    }
+  }
 
   output.blank();
   output.print(
