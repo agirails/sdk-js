@@ -272,7 +272,7 @@ export class AutoWalletProvider implements IWalletProvider {
    */
   async createACTPTransaction(params: CreateACTPTransactionParams): Promise<CreateACTPTransactionResult> {
     const kernelIface = new ethers.Interface([
-      'function createTransaction(address provider, address requester, uint256 amount, uint256 deadline, uint256 disputeWindow, bytes32 serviceHash, uint256 agentId)',
+      'function createTransaction(address provider, address requester, uint256 amount, uint256 deadline, uint256 disputeWindow, bytes32 serviceHash, uint256 agentId, uint256 requesterAgentId)',
     ]);
 
     return this.nonceManager.enqueue(
@@ -293,6 +293,7 @@ export class AutoWalletProvider implements IWalletProvider {
           params.disputeWindow,
           params.serviceHash,
           BigInt(params.agentId || '0'),
+          BigInt(params.requesterAgentId || '0'),
         ]);
 
         const calls: SmartWalletCall[] = [

@@ -403,6 +403,7 @@ export class BlockchainRuntime implements IACTPRuntime {
       metadata: this.validateServiceHash(params.serviceDescription),
       // ERC-8004 agent ID - pass through if provided (see ADR-001)
       agentId: params.agentId,
+      requesterAgentId: params.requesterAgentId,
     });
 
     return txId;

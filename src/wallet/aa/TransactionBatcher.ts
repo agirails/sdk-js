@@ -25,7 +25,7 @@ const ERC20_APPROVE_ABI = [
 ];
 
 const ACTP_KERNEL_ABI = [
-  'function createTransaction(address provider, address requester, uint256 amount, uint256 deadline, uint256 disputeWindow, bytes32 serviceHash, uint256 agentId)',
+  'function createTransaction(address provider, address requester, uint256 amount, uint256 deadline, uint256 disputeWindow, bytes32 serviceHash, uint256 agentId, uint256 requesterAgentId)',
   'function linkEscrow(bytes32 txId, address escrowVault, bytes32 escrowId)',
 ];
 
@@ -48,6 +48,8 @@ export interface ACTPBatchParams {
   serviceHash: string;
   /** ERC-8004 agent ID (0 if none) */
   agentId: string;
+  /** AIP-14: Requester's ERC-8004 agent ID (0 if none) */
+  requesterAgentId?: string;
   /** Current ACTP nonce for the requester (from ACTPKernel.requesterNonces) */
   actpNonce: bigint;
   /** Contract addresses */
@@ -125,6 +127,7 @@ export function buildACTPPayBatch(params: ACTPBatchParams): ACTPBatchResult {
     params.disputeWindow,
     params.serviceHash,
     BigInt(params.agentId || '0'),
+    BigInt(params.requesterAgentId || '0'),
   ]);
 
   // Call 3: ACTPKernel.linkEscrow(txId, escrowVault, escrowId)

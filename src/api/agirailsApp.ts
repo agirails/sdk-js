@@ -45,6 +45,10 @@ export interface UpsertAgentParams {
   signature: string;
   /** The message that was signed */
   message: string;
+  /** Unix timestamp (seconds) — part of signed message, server rejects if >5min old */
+  timestamp: number;
+  /** Network name (e.g. "base-sepolia") — bound in signed message, verified server-side */
+  network?: string;
 }
 
 export interface UpsertAgentResult {

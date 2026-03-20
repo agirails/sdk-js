@@ -26,6 +26,8 @@ export interface Transaction {
    * See ADR-001 for architectural rationale.
    */
   agentId?: string;
+  /** AIP-14: Requester's ERC-8004 agent ID (0 = not an agent) */
+  requesterAgentId?: string;
 }
 
 /**
@@ -44,6 +46,8 @@ export interface CreateTransactionParams {
    * See ADR-001 for architectural rationale.
    */
   agentId?: string;
+  /** AIP-14: Requester's ERC-8004 agent ID (0 or omit if requester is not an agent) */
+  requesterAgentId?: string;
 }
 
 /**

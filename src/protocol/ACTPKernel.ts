@@ -183,7 +183,8 @@ export class ACTPKernel {
       deadline,
       disputeWindow,
       metadata = '0x0000000000000000000000000000000000000000000000000000000000000000',
-      agentId = '0'  // Default to 0 (not an ERC-8004 agent)
+      agentId = '0',  // Default to 0 (not an ERC-8004 agent)
+      requesterAgentId = '0'  // AIP-14: Requester's ERC-8004 agent ID
     } = params;
 
     // Input validation
@@ -197,7 +198,7 @@ export class ACTPKernel {
       // ethers v6: use getFunction() for typed access
       const createTxFunc = this.contract.getFunction('createTransaction');
 
-      // Contract signature: createTransaction(provider, requester, amount, deadline, disputeWindow, serviceHash, agentId)
+      // Contract signature: createTransaction(provider, requester, amount, deadline, disputeWindow, serviceHash, agentId, requesterAgentId)
       const estimatedGas = await createTxFunc.estimateGas(
         provider,
         requester,
@@ -205,7 +206,8 @@ export class ACTPKernel {
         deadline,
         disputeWindow,
         metadata,  // serviceHash
-        BigInt(agentId)  // ERC-8004 agent ID (0 = not an agent)
+        BigInt(agentId),  // ERC-8004 agent ID (0 = not an agent)
+        BigInt(requesterAgentId)  // AIP-14: Requester's agent ID
       );
 
       // Build tx options with gas settings (15% buffer for simple state initialization)
@@ -221,6 +223,7 @@ export class ACTPKernel {
         disputeWindow,
         metadata,  // serviceHash
         BigInt(agentId),  // ERC-8004 agent ID
+        BigInt(requesterAgentId),  // AIP-14: Requester's agent ID
         txOptions
       );
 
@@ -588,7 +591,14 @@ export class ACTPKernel {
           ? Number(txData.platformFeeBpsLocked)
           : txData.platformFeeBpsLocked,
       // ERC-8004 agent ID (undefined or '0' means not an ERC-8004 agent)
-      agentId: agentIdValue && agentIdValue !== '0' ? agentIdValue : undefined
+      agentId: agentIdValue && agentIdValue !== '0' ? agentIdValue : undefined,
+      // AIP-14: requester agent ID
+      requesterAgentId: (() => {
+        const v = typeof txData.requesterAgentId === 'bigint'
+          ? txData.requesterAgentId.toString()
+          : txData.requesterAgentId?.toString();
+        return v && v !== '0' ? v : undefined;
+      })()
     };
   }
 
@@ -629,7 +639,8 @@ export class ACTPKernel {
       deadline,
       disputeWindow,
       metadata = '0x0000000000000000000000000000000000000000000000000000000000000000',
-      agentId = '0'
+      agentId = '0',
+      requesterAgentId = '0'  // AIP-14
     } = params;
 
     // ethers v6: use getFunction()
@@ -641,7 +652,8 @@ export class ACTPKernel {
       deadline,
       disputeWindow,
       metadata,
-      BigInt(agentId)
+      BigInt(agentId),
+      BigInt(requesterAgentId)  // AIP-14
     );
   }
 

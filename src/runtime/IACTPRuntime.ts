@@ -35,6 +35,8 @@ export interface CreateTransactionParams {
    * Stored in transaction for later use by ReputationReporter.
    */
   agentId?: string;
+  /** AIP-14: Requester's ERC-8004 agent ID (0 or omit if requester is not an agent) */
+  requesterAgentId?: string;
 }
 
 /**

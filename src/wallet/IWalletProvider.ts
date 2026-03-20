@@ -79,6 +79,7 @@ export interface CreateACTPTransactionParams {
   disputeWindow: number;
   serviceHash: string;
   agentId: string;
+  requesterAgentId?: string;
   contracts: {
     actpKernel: string;
   };
@@ -105,6 +106,7 @@ export interface BatchedPayParams {
   disputeWindow: number;
   serviceHash: string;
   agentId: string;
+  requesterAgentId?: string;
   contracts: {
     usdc: string;
     actpKernel: string;

@@ -94,7 +94,7 @@ describe('AutoWalletProvider.createACTPTransaction()', () => {
 
     const [calls] = provider.submitUserOp.mock.calls[0];
     const iface = new ethers.Interface([
-      'function createTransaction(address provider, address requester, uint256 amount, uint256 deadline, uint256 disputeWindow, bytes32 serviceHash, uint256 agentId)',
+      'function createTransaction(address provider, address requester, uint256 amount, uint256 deadline, uint256 disputeWindow, bytes32 serviceHash, uint256 agentId, uint256 requesterAgentId)',
     ]);
     const decoded = iface.decodeFunctionData('createTransaction', calls[0].data);
 

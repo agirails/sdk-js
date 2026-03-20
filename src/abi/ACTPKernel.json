@@ -333,6 +333,11 @@
         "name": "agentId",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "requesterAgentId",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [
@@ -485,6 +490,21 @@
           },
           {
             "name": "agentId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "requesterAgentId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "disputeInitiator",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "disputeBond",
             "type": "uint256",
             "internalType": "uint256"
           }

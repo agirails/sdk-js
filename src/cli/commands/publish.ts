@@ -452,7 +452,11 @@ async function runPublish(
     if (v4Config && v4Config.agent_id && walletAddress) {
       const apiSpinner = output.spinner('Syncing with agirails.app...');
       try {
-        const upsertMessage = `agirails-publish:${v4Config.slug}:${configHash}`;
+        const publishTimestamp = Math.floor(Date.now() / 1000);
+        // C-2 fix: include network in signed message to prevent cross-network replay
+        // Upsert only fires after testnet activation, so network is always base-sepolia
+        const publishNetwork = 'base-sepolia';
+        const upsertMessage = `agirails-publish:${v4Config.slug}:${configHash}:${publishNetwork}:${publishTimestamp}`;
         const { resolvePrivateKey: resolveKey } = await import('../../wallet/keystore');
         const privKey = await resolveKey(projectRoot, { network: 'testnet' });
         if (privKey) {
@@ -466,6 +470,8 @@ async function runPublish(
             configHash,
             signature: sig,
             message: upsertMessage,
+            timestamp: publishTimestamp,
+            network: publishNetwork,
           });
           apiSpinner.stop(true);
           output.success(`Profile live at: agirails.app/a/${v4Config.slug}`);
