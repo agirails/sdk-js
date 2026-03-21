@@ -111,12 +111,12 @@ export const BASE_SEPOLIA: NetworkConfig = {
   rpcUrl: BASE_SEPOLIA_RPC_URL,
   blockExplorer: 'https://sepolia.basescan.org',
   contracts: {
-    actpKernel: '0x469CBADbACFFE096270594F0a31f0EEC53753411',
-    escrowVault: '0x57f888261b629bB380dfb983f5DA6c70Ff2D49E5',
+    actpKernel: '0x0ba0b17554601b30F5406e74d2208f567C12CcFE',
+    escrowVault: '0xedC62264301A119207f1f89C6bDE4Fd7a7A4CeB4',
     usdc: '0x444b4e1A65949AB2ac75979D5d0166Eb7A248Ccb', // MockUSDC
     eas: '0x4200000000000000000000000000000000000021',
     easSchemaRegistry: '0x4200000000000000000000000000000000000020',
-    agentRegistry: '0xDd6D66924B43419F484aE981F174b803487AF25A',
+    agentRegistry: '0x55e7F23AB5700fD0D9f83294be2d0F2eC84013E1',
     identityRegistry: '0xF64F748C7802a68Cb936a9213881fE74e83FDA97',
     archiveTreasury: '0xACB672de092beaAE2cd286dD61Cb2352AF7159F1',
     x402Relay: '0x4DCD02b276Dbeab57c265B72435e90507b6Ac81A',
@@ -128,7 +128,7 @@ export const BASE_SEPOLIA: NetworkConfig = {
     maxFeePerGas: ethers.parseUnits('2', 'gwei'),
     maxPriorityFeePerGas: ethers.parseUnits('1', 'gwei')
   },
-  actpKernelDeploymentBlock: 37306493,
+  actpKernelDeploymentBlock: 39180727,
   // AIP-12: Account Abstraction
   aa: {
     entryPoint: '0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789',
