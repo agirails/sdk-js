@@ -817,4 +817,50 @@ export class ACTPKernel {
     }
   }
 
+
+  /**
+   * Accept a provider's quote and update transaction amount.
+   *
+   * This is a dedicated on-chain function (NOT a transitionState wrapper).
+   * It updates the transaction amount to the quoted amount and locks the
+   * current platformFeeBps, but does NOT change the transaction state
+   * (stays in QUOTED). After acceptQuote, call linkEscrow to move to COMMITTED.
+   *
+   * Reference: ACTPKernel.sol acceptQuote()
+   *
+   * @param txId - Transaction ID (bytes32)
+   * @param newAmount - New amount agreed upon (uint256, in USDC wei)
+   * @throws {ValidationError} If inputs are invalid
+   * @throws {TransactionRevertedError} If contract reverts (wrong state, wrong caller, etc.)
+   *
+   * @example
+   * ```typescript
+   * // Provider submits quote (INITIATED -> QUOTED)
+   * await kernel.submitQuote(txId, quoteHash);
+   *
+   * // Requester accepts the quoted amount
+   * await kernel.acceptQuote(txId, BigInt(2000000)); // 2 USDC
+   *
+   * // Now link escrow to commit (QUOTED -> COMMITTED)
+   * await kernel.linkEscrow(txId, escrowVault, escrowId);
+   * ```
+   */
+  async acceptQuote(txId: string, newAmount: bigint): Promise<void> {
+    // Input validation
+    validateTxId(txId, 'txId');
+    validateAmount(newAmount, 'newAmount');
+
+    try {
+      const acceptQuoteFunc = this.contract.getFunction('acceptQuote');
+
+      const estimatedGas = await acceptQuoteFunc.estimateGas(txId, newAmount);
+      const txOptions = this.buildTxOptions(estimatedGas, 'transitionState');
+
+      const tx = await acceptQuoteFunc(txId, newAmount, txOptions);
+      await tx.wait(this.confirmations);
+    } catch (error: any) {
+      throw new TransactionRevertedError(error.transactionHash, error.reason || error.message);
+    }
+  }
+
 }

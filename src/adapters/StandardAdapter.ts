@@ -206,6 +206,32 @@ export class StandardAdapter extends BaseAdapter implements IAdapter {
   }
 
   /**
+   * Accept a provider's quote, updating the transaction amount.
+   *
+   * Does NOT change state (stays QUOTED). After acceptQuote, call linkEscrow.
+   * Only the requester can accept a quote.
+   *
+   * @param txId - Transaction ID
+   * @param newAmount - New amount in user-friendly format ("100", "100.50", "100 USDC")
+   *
+   * @example
+   * ```typescript
+   * // Provider submits quote -> QUOTED
+   * await client.standard.transitionState(txId, 'QUOTED');
+   *
+   * // Requester accepts with new amount
+   * await client.standard.acceptQuote(txId, '150');
+   *
+   * // Link escrow to commit
+   * await client.standard.linkEscrow(txId);
+   * ```
+   */
+  async acceptQuote(txId: string, newAmount: string | number): Promise<void> {
+    const amount = this.parseAmount(newAmount);
+    return this.runtime.acceptQuote(txId, amount.toString());
+  }
+
+    /**
    * Link escrow to a transaction.
    *
    * Automatically transitions INITIATED or QUOTED → COMMITTED.

@@ -712,7 +712,67 @@ export class MockRuntime implements IACTPRuntime {
     });
   }
 
-  // ============================================================================
+  /**
+   * Accept a provider's quote, updating the transaction amount.
+   *
+   * Mirrors on-chain acceptQuote() behavior:
+   * - Requires QUOTED state
+   * - Updates amount to newAmount
+   * - Does NOT change state (stays QUOTED)
+   * - Emits QuoteAccepted event
+   *
+   * @param txId - Transaction ID
+   * @param newAmount - New amount in USDC wei
+   */
+  async acceptQuote(txId: string, newAmount: string): Promise<void> {
+    return this.stateManager.withLock(async (state) => {
+      const tx = state.transactions[txId];
+      if (!tx) {
+        throw new TransactionNotFoundError(txId);
+      }
+
+      // Must be in QUOTED state
+      if (tx.state !== 'QUOTED') {
+        throw new InvalidStateTransitionError(txId, tx.state, 'QUOTED');
+      }
+
+      // Validate amount
+      const newAmountBigInt = BigInt(newAmount);
+      if (newAmountBigInt <= 0n) {
+        throw new InvalidAmountError(newAmount, 'Amount must be positive');
+      }
+
+      // Check deadline
+      const currentTime = state.blockchain.currentTime;
+      if (currentTime > tx.deadline) {
+        throw new DeadlinePassedError(txId, tx.deadline, currentTime);
+      }
+
+      const oldAmount = tx.amount;
+      const blockNumber = state.blockchain.blockNumber;
+
+      // Update amount (state stays QUOTED)
+      tx.amount = newAmount;
+      tx.updatedAt = currentTime;
+
+      // Record QuoteAccepted event
+      const event: MockEvent = {
+        type: 'QuoteAccepted',
+        timestamp: currentTime,
+        blockNumber,
+        data: {
+          txId,
+          oldAmount,
+          newAmount,
+        },
+      };
+
+      tx.events.push(event);
+      this.persistEvent(event, state);
+    });
+  }
+
+    // ============================================================================
   // Escrow Operations
   // ============================================================================
 

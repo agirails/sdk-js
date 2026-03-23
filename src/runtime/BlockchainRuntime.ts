@@ -501,6 +501,21 @@ export class BlockchainRuntime implements IACTPRuntime {
   }
 
   /**
+   * Accept a provider's quote, updating the transaction amount.
+   *
+   * Calls the dedicated acceptQuote() function on ACTPKernel (not transitionState).
+   * Does NOT change state (stays QUOTED). After acceptQuote, call linkEscrow.
+   *
+   * @param txId - Transaction ID
+   * @param newAmount - New amount in USDC wei
+   */
+  async acceptQuote(txId: string, newAmount: string): Promise<void> {
+    this.requireInitialized();
+    await this.ensureConnected();
+    await this.kernel.acceptQuote(txId, BigInt(newAmount));
+  }
+
+    /**
    * Gets a transaction by ID
    *
    * @param txId - Transaction ID

@@ -131,6 +131,16 @@ export interface IACTPRuntime {
   transitionState(txId: string, newState: TransactionState, proof?: string): Promise<void>;
 
   /**
+   * Accepts a provider's quote, updating the transaction amount.
+   *
+   * Does NOT change state (stays QUOTED). After acceptQuote, call linkEscrow.
+   *
+   * @param txId - Transaction ID
+   * @param newAmount - New amount in USDC wei (string for BigNumber precision)
+   */
+  acceptQuote(txId: string, newAmount: string): Promise<void>;
+
+  /**
    * Gets a transaction by ID.
    *
    * @param txId - Transaction ID
