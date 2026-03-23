@@ -157,6 +157,58 @@ describe('StandardAdapter', () => {
     });
   });
 
+
+  describe('acceptQuote', () => {
+    async function createQuotedTx(): Promise<string> {
+      const txId = await adapter.createTransaction({
+        provider: providerAddress,
+        amount: '100',
+      });
+      await runtime.transitionState(txId, 'QUOTED');
+      return txId;
+    }
+
+    test('accepts quote with user-friendly amount and stays QUOTED', async () => {
+      const txId = await createQuotedTx();
+
+      await adapter.acceptQuote(txId, '150'); // 150 USDC
+
+      const tx = await runtime.getTransaction(txId);
+      expect(tx!.state).toBe('QUOTED');
+      expect(tx!.amount).toBe('150000000'); // parseAmount converts to wei
+    });
+
+    test('accepts numeric amount', async () => {
+      const txId = await createQuotedTx();
+
+      await adapter.acceptQuote(txId, 200);
+
+      const tx = await runtime.getTransaction(txId);
+      expect(tx!.amount).toBe('200000000');
+    });
+
+    test('rejects from INITIATED state', async () => {
+      const txId = await adapter.createTransaction({
+        provider: providerAddress,
+        amount: '100',
+      });
+
+      await expect(adapter.acceptQuote(txId, '150')).rejects.toThrow();
+    });
+
+    test('full flow: create → quote → acceptQuote → linkEscrow', async () => {
+      const txId = await createQuotedTx();
+
+      await adapter.acceptQuote(txId, '150');
+      const escrowId = await adapter.linkEscrow(txId);
+
+      const tx = await runtime.getTransaction(txId);
+      expect(tx!.state).toBe('COMMITTED');
+      expect(tx!.amount).toBe('150000000');
+      expect(escrowId).toBeDefined();
+    });
+  });
+
   describe('transitionState', () => {
     test('transitions COMMITTED to IN_PROGRESS', async () => {
       const txId = await adapter.createTransaction({
