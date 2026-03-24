@@ -250,6 +250,6 @@ export const DEFAULT_PRICING_STRATEGY: PricingStrategy = {
   behavior: {
     belowPrice: 'counter-offer',
     belowCost: 'reject',
-    maxNegotiationRounds: 3,
+    maxNegotiationRounds: 10,
   },
 };

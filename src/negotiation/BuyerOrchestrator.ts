@@ -36,6 +36,8 @@ export interface NegotiationResult {
   reason: string;
   /** Per-round details for traceability */
   rounds: RoundResult[];
+  /** True if repeated identical prices were detected across rounds (price deadlock) */
+  deadlock_detected?: boolean;
 }
 
 export interface RoundResult {
@@ -45,6 +47,8 @@ export interface RoundResult {
   action: 'accepted' | 'rejected' | 'timeout' | 'error';
   reason: string;
   tx_id?: string;
+  /** Actual quoted price from on-chain (USDC float), if quote was received */
+  quoted_price?: number;
 }
 
 export interface OrchestratorConfig {
@@ -190,6 +194,10 @@ export class BuyerOrchestrator {
     const maxRounds = Math.min(this.policy.negotiation.rounds_max, ranked.length);
     const quoteTtlSeconds = PolicyEngine.parseTtl(this.policy.negotiation.quote_ttl);
 
+    // Price tracking for deadlock detection (PRD-5B)
+    const priceHistory: number[] = [];
+    let deadlockDetected = false;
+
     for (let round = 0; round < maxRounds; round++) {
       const candidate = ranked[round];
       const providerAddress = this.findAgentAddress(discovered.agents, candidate.slug);
@@ -206,6 +214,7 @@ export class BuyerOrchestrator {
         reputation_score: this.findAgentReputation(discovered.agents, candidate.slug),
         commerce_session_id: session.commerce_session_id,
         expires_at: Math.floor(Date.now() / 1000) + quoteTtlSeconds,
+        final_offer: deadlockDetected,
       };
 
       const validation = this.policyEngine.validate(offer);
@@ -272,7 +281,29 @@ export class BuyerOrchestrator {
 
       emit({ type: 'quote_received', txId });
 
-      // 3d. Reserve budget and link escrow (or recognize already-committed).
+      // 3d. Read quoted price from on-chain for tracking (PRD-5B)
+      let quotedPrice: number | undefined;
+      try {
+        const quotedTx = await this.runtime.getTransaction(txId);
+        if (quotedTx && quotedTx.amount) {
+          const rawAmount = typeof quotedTx.amount === 'string' ? parseFloat(quotedTx.amount) : quotedTx.amount;
+          quotedPrice = rawAmount / 1_000_000; // Convert base units to USDC
+          priceHistory.push(quotedPrice);
+
+          // Deadlock detection: if 2+ consecutive identical prices, flag deadlock
+          if (priceHistory.length >= 2) {
+            const last = priceHistory[priceHistory.length - 1];
+            const prev = priceHistory[priceHistory.length - 2];
+            if (last === prev) {
+              deadlockDetected = true;
+            }
+          }
+        }
+      } catch {
+        // Non-fatal — price tracking is best-effort
+      }
+
+      // 3e. Reserve budget and link escrow (or recognize already-committed).
       // ACTP invariant: tx.amount is immutable (set at createTransaction).
       // Policy was already validated pre-round, so offer.unit_price
       // is the correct amount for both reservation and escrow.
@@ -296,6 +327,7 @@ export class BuyerOrchestrator {
           action: 'accepted',
           reason,
           tx_id: txId,
+          quoted_price: quotedPrice,
         });
 
         emit({ type: 'round_end', round: round + 1, action: 'accepted', reason });
@@ -309,6 +341,7 @@ export class BuyerOrchestrator {
           rounds_used: round + 1,
           reason: 'Negotiation complete — already committed',
           rounds,
+          deadlock_detected: deadlockDetected,
         };
       }
 
@@ -329,6 +362,7 @@ export class BuyerOrchestrator {
           action: 'accepted',
           reason,
           tx_id: txId,
+          quoted_price: quotedPrice,
         });
 
         emit({ type: 'round_end', round: round + 1, action: 'accepted', reason });
@@ -342,6 +376,7 @@ export class BuyerOrchestrator {
           rounds_used: round + 1,
           reason: 'Negotiation complete — escrow linked',
           rounds,
+          deadlock_detected: deadlockDetected,
         };
       } catch (err) {
         // Reserve or linkEscrow failed — release and try next
@@ -354,6 +389,7 @@ export class BuyerOrchestrator {
           action: 'error',
           reason: `Escrow failed: ${reason}`,
           tx_id: txId,
+          quoted_price: quotedPrice,
         });
         emit({ type: 'round_end', round: round + 1, action: 'error', reason });
         continue;
@@ -364,12 +400,17 @@ export class BuyerOrchestrator {
     this.sessionStore.updateStatus(session.commerce_session_id, 'failed');
     emit({ type: 'complete', success: false, reason: 'All candidates exhausted' });
 
+    const exhaustedReason = deadlockDetected
+      ? `All ${rounds.length} candidates exhausted (price deadlock detected)`
+      : `All ${rounds.length} candidates exhausted`;
+
     return {
       success: false,
       commerce_session_id: session.commerce_session_id,
       rounds_used: rounds.length,
-      reason: `All ${rounds.length} candidates exhausted`,
+      reason: exhaustedReason,
       rounds,
+      deadlock_detected: deadlockDetected,
     };
   }
 

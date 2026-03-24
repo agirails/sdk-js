@@ -400,4 +400,199 @@ describe('BuyerOrchestrator', () => {
       // Budget should be reserved (via PolicyEngine ledger)
     });
   });
+
+  // --------------------------------------------------------------------------
+  // Deadlock detection (PRD-5B)
+  // --------------------------------------------------------------------------
+
+  describe('deadlock detection', () => {
+    it('tracks quoted_price on accepted rounds', async () => {
+      mockDiscover.mockResolvedValue({
+        agents: [mockAgent('agent-a', 0.80, 90, '0xA')],
+        total: 1,
+      });
+      const runtime = createMockRuntime();
+      const orchestrator = new BuyerOrchestrator(POLICY, runtime, '0xBuyer', TEST_DIR);
+
+      const origCreate = runtime.createTransaction.bind(runtime);
+      runtime.createTransaction = async (params: CreateTransactionParams) => {
+        const txId = await origCreate(params);
+        runtime._transactions.get(txId)!.state = 'QUOTED';
+        return txId;
+      };
+
+      const result = await orchestrator.negotiate({ pollIntervalMs: 50 });
+
+      expect(result.success).toBe(true);
+      expect(result.rounds[0].quoted_price).toBeDefined();
+      expect(typeof result.rounds[0].quoted_price).toBe('number');
+    });
+
+    it('detects deadlock when consecutive providers quote same price', async () => {
+      mockDiscover.mockResolvedValue({
+        agents: [
+          mockAgent('agent-a', 0.80, 90, '0xA'),
+          mockAgent('agent-b', 0.80, 85, '0xB'),
+        ],
+        total: 2,
+      });
+      const runtime = createMockRuntime();
+      const orchestrator = new BuyerOrchestrator(
+        { ...POLICY, negotiation: { rounds_max: 3, quote_ttl: '1s' } },
+        runtime,
+        '0xBuyer',
+        TEST_DIR,
+      );
+
+      let callCount = 0;
+      const origCreate = runtime.createTransaction.bind(runtime);
+      runtime.createTransaction = async (params: CreateTransactionParams) => {
+        callCount++;
+        const txId = await origCreate(params);
+        runtime._transactions.get(txId)!.state = 'QUOTED';
+        return txId;
+      };
+
+      const origLinkEscrow = runtime.linkEscrow.bind(runtime);
+      let linkCount = 0;
+      runtime.linkEscrow = async (txId: string, amount: string) => {
+        linkCount++;
+        if (linkCount === 1) throw new Error('Simulated escrow failure');
+        return origLinkEscrow(txId, amount);
+      };
+
+      const result = await orchestrator.negotiate({ pollIntervalMs: 50 });
+
+      expect(result.success).toBe(true);
+      expect(result.rounds_used).toBe(2);
+      expect(result.deadlock_detected).toBe(true);
+      expect(result.rounds[0].quoted_price).toBeDefined();
+      expect(result.rounds[1].quoted_price).toBeDefined();
+    });
+
+    it('does not flag deadlock when prices differ', async () => {
+      mockDiscover.mockResolvedValue({
+        agents: [
+          mockAgent('agent-cheap', 0.50, 90, '0xCheap'),
+          mockAgent('agent-expensive', 0.80, 85, '0xExpensive'),
+        ],
+        total: 2,
+      });
+      const runtime = createMockRuntime();
+      const orchestrator = new BuyerOrchestrator(
+        { ...POLICY, negotiation: { rounds_max: 3, quote_ttl: '1s' } },
+        runtime,
+        '0xBuyer',
+        TEST_DIR,
+      );
+
+      let callCount = 0;
+      const origCreate = runtime.createTransaction.bind(runtime);
+      runtime.createTransaction = async (params: CreateTransactionParams) => {
+        callCount++;
+        const txId = await origCreate(params);
+        runtime._transactions.get(txId)!.state = 'QUOTED';
+        return txId;
+      };
+
+      const origLinkEscrow = runtime.linkEscrow.bind(runtime);
+      let linkCount = 0;
+      runtime.linkEscrow = async (txId: string, amount: string) => {
+        linkCount++;
+        if (linkCount === 1) throw new Error('Simulated escrow failure');
+        return origLinkEscrow(txId, amount);
+      };
+
+      const result = await orchestrator.negotiate({ pollIntervalMs: 50 });
+
+      expect(result.success).toBe(true);
+      expect(result.deadlock_detected).toBe(false);
+    });
+
+    it('includes deadlock in failure reason when all candidates exhausted', async () => {
+      mockDiscover.mockResolvedValue({
+        agents: [
+          mockAgent('agent-a', 0.80, 90, '0xA'),
+          mockAgent('agent-b', 0.80, 85, '0xB'),
+        ],
+        total: 2,
+      });
+      const runtime = createMockRuntime();
+      const orchestrator = new BuyerOrchestrator(
+        { ...POLICY, negotiation: { rounds_max: 3, quote_ttl: '1s' } },
+        runtime,
+        '0xBuyer',
+        TEST_DIR,
+      );
+
+      const origCreate = runtime.createTransaction.bind(runtime);
+      runtime.createTransaction = async (params: CreateTransactionParams) => {
+        const txId = await origCreate(params);
+        runtime._transactions.get(txId)!.state = 'QUOTED';
+        return txId;
+      };
+
+      runtime.linkEscrow = async () => { throw new Error('Escrow always fails'); };
+
+      const result = await orchestrator.negotiate({ pollIntervalMs: 50 });
+
+      expect(result.success).toBe(false);
+      expect(result.deadlock_detected).toBe(true);
+      expect(result.reason).toContain('price deadlock');
+    });
+
+    it('sets final_offer on QuoteOffer when deadlock detected', async () => {
+      mockDiscover.mockResolvedValue({
+        agents: [
+          mockAgent('agent-a', 0.80, 90, '0xA'),
+          mockAgent('agent-b', 0.80, 85, '0xB'),
+          mockAgent('agent-c', 0.80, 80, '0xC'),
+        ],
+        total: 3,
+      });
+      const runtime = createMockRuntime();
+      const orchestrator = new BuyerOrchestrator(
+        { ...POLICY, negotiation: { rounds_max: 5, quote_ttl: '5s' } },
+        runtime,
+        '0xBuyer',
+        TEST_DIR,
+      );
+
+      const origCreate = runtime.createTransaction.bind(runtime);
+      runtime.createTransaction = async (params: CreateTransactionParams) => {
+        const txId = await origCreate(params);
+        runtime._transactions.get(txId)!.state = 'QUOTED';
+        return txId;
+      };
+
+      const origLinkEscrow = runtime.linkEscrow.bind(runtime);
+      let linkCount = 0;
+      runtime.linkEscrow = async (txId: string, amount: string) => {
+        linkCount++;
+        if (linkCount <= 2) throw new Error('Simulated escrow failure');
+        return origLinkEscrow(txId, amount);
+      };
+
+      const { PolicyEngine } = require('../../src/negotiation/PolicyEngine');
+      const offers: any[] = [];
+      const origValidate = PolicyEngine.prototype.validate;
+      PolicyEngine.prototype.validate = function(offer: any) {
+        offers.push({ ...offer });
+        return origValidate.call(this, offer);
+      };
+
+      try {
+        const result = await orchestrator.negotiate({ pollIntervalMs: 50 });
+
+        expect(result.success).toBe(true);
+        expect(result.rounds_used).toBe(3);
+        // First offer: no deadlock yet
+        expect(offers[0].final_offer).toBeFalsy();
+        // Third offer: deadlock was detected after rounds 1+2 quoted same price
+        expect(offers[2].final_offer).toBe(true);
+      } finally {
+        PolicyEngine.prototype.validate = origValidate;
+      }
+    });
+  });
 });

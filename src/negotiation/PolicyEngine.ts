@@ -47,6 +47,8 @@ export interface QuoteOffer {
   expires_at?: number; // unix timestamp
   reputation_score?: number;
   commerce_session_id?: string;
+  /** Signal that this is a final offer — no further negotiation expected */
+  final_offer?: boolean;
 }
 
 export type PolicyViolation =
