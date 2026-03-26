@@ -592,6 +592,12 @@ export class ACTPClient {
   private agentRegistryAddress?: string;
 
   /**
+   * ERC-8004 Identity Registry address (for first-time identity mint).
+   * @internal
+   */
+  private erc8004IdentityRegistryAddress?: string;
+
+  /**
    * Network identifier (e.g. 'base-sepolia', 'base-mainnet').
    * Used for chain-scoped pending-publish file operations.
    * @internal
@@ -634,6 +640,7 @@ export class ACTPClient {
     pendingPublish: PendingPublish | null = null,
     agentRegistryAddress?: string,
     networkId?: string,
+    erc8004IdentityRegistryAddress?: string,
   ) {
     this.runtime = runtime;
     this.info = info;
@@ -645,6 +652,7 @@ export class ACTPClient {
     this.pendingPublish = pendingPublish;
     this.agentRegistryAddress = agentRegistryAddress;
     this.networkId = networkId;
+    this.erc8004IdentityRegistryAddress = erc8004IdentityRegistryAddress;
     this.basic = new BasicAdapter(runtime, requesterAddress, easHelper, walletProvider, contractAddresses, this);
     this.standard = new StandardAdapter(runtime, requesterAddress, easHelper, walletProvider, contractAddresses);
     this.smartWalletRouter = createSmartWalletRouter(walletProvider, contractAddresses, runtime, easHelper);
@@ -707,6 +715,7 @@ export class ACTPClient {
     let lazyPending: PendingPublish | null = null;
     let registryAddr: string | undefined;
     let networkId: string | undefined;
+    let erc8004IdentityAddr: string | undefined;
 
     // If custom runtime provided, use it directly
     if (config.runtime) {
@@ -858,6 +867,7 @@ export class ACTPClient {
             const smartWalletAddress = autoWallet.getAddress();
             registryAddr = config.contracts?.agentRegistry
               ?? networkConfig.contracts.agentRegistry;
+            erc8004IdentityAddr = networkConfig.contracts.erc8004IdentityRegistry;
 
             // Load pending publish (may be null) — chain-scoped
             try {
@@ -1029,6 +1039,7 @@ export class ACTPClient {
       runtime, normalizedAddress, info, easHelper,
       erc8004Bridge, reputationReporter, walletProvider, contractAddresses,
       lazyScenario, lazyPending, registryAddr, networkId,
+      erc8004IdentityAddr,
     );
     client.pendingIsStale = pendingIsStale;
 
@@ -1594,6 +1605,7 @@ export class ACTPClient {
       cid: pending.cid,
       configHash: pending.configHash,
       listed: true,
+      erc8004IdentityRegistry: this.erc8004IdentityRegistryAddress,
     };
 
     // For scenario A, extract registration params from pending publish

@@ -54,6 +54,7 @@ export interface NetworkConfig {
     identityRegistry?: string; // AIP-7 ERC-1056 DID Registry (optional until deployed)
     archiveTreasury?: string; // AIP-7 Archive Treasury for Arweave funding (optional until deployed)
     x402Relay?: string; // X402Relay for atomic payment fee splitting (optional until deployed)
+    erc8004IdentityRegistry?: string; // ERC-8004 Identity Registry (canonical CREATE2)
   };
   eas: {
     deliverySchemaUID: string; // AIP-4 delivery proof schema
@@ -120,6 +121,7 @@ export const BASE_SEPOLIA: NetworkConfig = {
     identityRegistry: '0xF64F748C7802a68Cb936a9213881fE74e83FDA97',
     archiveTreasury: '0xACB672de092beaAE2cd286dD61Cb2352AF7159F1',
     x402Relay: '0x4DCD02b276Dbeab57c265B72435e90507b6Ac81A',
+    erc8004IdentityRegistry: '0x8004A818BFB912233c491871b3d84c89A494BD9e',
   },
   eas: {
     deliverySchemaUID: '0x1b0ebdf0bd20c28ec9d5362571ce8715a55f46e81c3de2f9b0d8e1b95fb5ffce'
@@ -161,6 +163,7 @@ export const BASE_MAINNET: NetworkConfig = {
     agentRegistry: '0x6fB222CF3DDdf37Bcb248EE7BBBA42Fb41901de8',
     archiveTreasury: '0x0516C411C0E8d75D17A768022819a0a4FB3cA2f2',
     x402Relay: '0x81DFb954A3D58FEc24Fc9c946aC2C71a911609F8',
+    erc8004IdentityRegistry: '0x8004A169FB4a3325136EB29fA0ceB6D2e539a432',
   },
   eas: {
     deliverySchemaUID: '0x166501e7476e2fcf9214c4c5144533c2957d56fe59d639effc1719a0658d9c9a'
@@ -228,7 +231,8 @@ export function getNetwork(network: string): NetworkConfig {
       agentRegistry: config.contracts.agentRegistry,
       identityRegistry: config.contracts.identityRegistry,
       archiveTreasury: config.contracts.archiveTreasury,
-      x402Relay: config.contracts.x402Relay
+      x402Relay: config.contracts.x402Relay,
+      erc8004IdentityRegistry: config.contracts.erc8004IdentityRegistry
     },
     eas: {
       deliverySchemaUID: config.eas.deliverySchemaUID,

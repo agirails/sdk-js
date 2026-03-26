@@ -384,14 +384,17 @@ async function runPublish(
     // ALWAYS activate on testnet (one command, both networks per SPEC)
     // ================================================================
     let testnetTxHash: string | undefined;
+    let smartWalletAddress: string | undefined;
     const activationSpinner = output.spinner('Activating on testnet...');
     try {
-      testnetTxHash = await activateOnTestnet(
+      const activationResult = await activateOnTestnet(
         projectRoot, configHash, cid,
         regParams.endpoint, regParams.serviceDescriptors, output,
       );
       activationSpinner.stop(true);
-      if (testnetTxHash) {
+      if (activationResult) {
+        testnetTxHash = activationResult.txHash;
+        smartWalletAddress = activationResult.smartWalletAddress;
         output.success(`Testnet activation: ${testnetTxHash}`);
       } else {
         output.info('Testnet: already up-to-date.');
@@ -420,27 +423,77 @@ async function runPublish(
       // Testnet (84532) always written; mainnet (8453) on re-publish when agent_id exists
       publishMetadata.did = `did:ethr:84532:${walletAddress}`;
     }
-    // agent_id: query on-chain after testnet activation (token ID = uint256(uint160(address)))
-    if (testnetTxHash && walletAddress) {
+    // agent_id: query ERC-8004 Identity Registry for minted tokenId
+    // Use Smart Wallet address (NFT owner) when available, fall back to EOA
+    const ownerAddress = smartWalletAddress || walletAddress;
+    if (testnetTxHash && ownerAddress) {
       try {
         const { getNetwork: getNet } = await import('../../config/networks');
         const { ethers: eth } = await import('ethers');
         const net = getNet('base-sepolia');
-        const registryAddr = net.contracts.agentRegistry;
-        if (!registryAddr) throw new Error('No agentRegistry configured');
         const prov = new eth.JsonRpcProvider(net.rpcUrl);
-        const { AgentRegistryClient: ARC } = await import('../../registry/AgentRegistryClient');
-        const regClient = ARC.readOnly(registryAddr, prov);
-        const onChainConfig = await regClient.getConfig(walletAddress);
-        if (onChainConfig.isActive) {
-          // agent_id = tokenId = uint256(uint160(walletAddress))
-          const agentId = BigInt(walletAddress).toString();
-          publishMetadata.agent_id = agentId;
-          publishMetadata.did = `did:ethr:84532:${walletAddress}`;
+
+        // Query ERC-8004 Identity Registry for the agent's NFT tokenId
+        const erc8004Addr = net.contracts.erc8004IdentityRegistry;
+        if (erc8004Addr) {
+          const { ERC8004_IDENTITY_ABI } = await import('../../types/erc8004');
+          const erc8004 = new eth.Contract(erc8004Addr, ERC8004_IDENTITY_ABI, prov);
+          // Parse Registered event from tx receipt for exact agentId
+          let agentId: string | undefined;
+          try {
+            const receipt = await prov.getTransactionReceipt(testnetTxHash);
+            if (receipt) {
+              const registeredTopic = eth.id('Registered(uint256,string,address)');
+              for (const log of receipt.logs) {
+                if (log.address.toLowerCase() === erc8004Addr.toLowerCase()
+                    && log.topics[0] === registeredTopic) {
+                  // agentId is the first indexed parameter
+                  agentId = BigInt(log.topics[1]).toString();
+                  break;
+                }
+              }
+            }
+          } catch {
+            // Event parsing failed — fall back to balanceOf query
+          }
+
+          // Fallback: query by balance if event parsing didn't work
+          if (!agentId) {
+            const balance = await erc8004.balanceOf(ownerAddress);
+            if (Number(balance) > 0) {
+              const lastIndex = Number(balance) - 1;
+              agentId = (await erc8004.tokenOfOwnerByIndex(ownerAddress, lastIndex)).toString();
+            }
+          }
+
+          if (agentId) {
+            publishMetadata.agent_id = agentId;
+            publishMetadata.did = `did:ethr:84532:${ownerAddress}`;
+          }
+        }
+
+        // Fallback: check AgentRegistry if ERC-8004 didn't yield an agent_id
+        if (!publishMetadata.agent_id) {
+          const registryAddr = net.contracts.agentRegistry;
+          if (registryAddr) {
+            const { AgentRegistryClient: ARC } = await import('../../registry/AgentRegistryClient');
+            const regClient = ARC.readOnly(registryAddr, prov);
+            const onChainConfig = await regClient.getConfig(ownerAddress);
+            if (onChainConfig.isActive) {
+              const agentId = BigInt(ownerAddress).toString();
+              publishMetadata.agent_id = agentId;
+              publishMetadata.did = `did:ethr:84532:${ownerAddress}`;
+            }
+          }
         }
       } catch {
         // Best-effort — agent_id will be written on re-publish
       }
+    }
+
+    // Write-back wallet address — prefer Smart Wallet address
+    if (smartWalletAddress && !publishMetadata.wallet) {
+      publishMetadata.wallet = smartWalletAddress;
     }
 
     // ================================================================
@@ -592,7 +645,7 @@ async function activateOnTestnet(
   endpoint: string,
   serviceDescriptors: import('../../types/agent').ServiceDescriptor[],
   output: Output,
-): Promise<string | undefined> {
+): Promise<{ txHash: string; smartWalletAddress: string } | undefined> {
   const { resolvePrivateKey } = await import('../../wallet/keystore');
   const { ethers } = await import('ethers');
   const { getNetwork } = await import('../../config/networks');
@@ -660,7 +713,7 @@ async function activateOnTestnet(
     return undefined;
   }
 
-  // Build activation calls
+  // Build activation calls (includes ERC-8004 identity mint for scenario A)
   const activationCalls = buildActivationBatch({
     scenario,
     agentRegistryAddress: networkConfig.contracts.agentRegistry,
@@ -668,6 +721,7 @@ async function activateOnTestnet(
     configHash,
     listed: true,
     ...(scenario === 'A' ? { endpoint, serviceDescriptors } : {}),
+    erc8004IdentityRegistry: networkConfig.contracts.erc8004IdentityRegistry,
   });
 
   // Always mint test USDC on testnet (SPEC: "always")
@@ -692,5 +746,5 @@ async function activateOnTestnet(
   }
 
   output.success('Minted 1,000 test USDC to Smart Wallet');
-  return receipt.hash;
+  return { txHash: receipt.hash, smartWalletAddress };
 }

@@ -162,6 +162,36 @@ const AGENT_REGISTRY_ABI = [
 ];
 
 /**
+ * ABI fragment for ERC-8004 Identity Registry registration.
+ *
+ * Matches ERC-8004 spec:
+ *   register(string agentURI) → uint256 agentId
+ *
+ * Mints an ERC-721 NFT to msg.sender with the given agentURI.
+ */
+const ERC8004_IDENTITY_REGISTER_ABI = [
+  'function register(string agentURI) external returns (uint256 agentId)',
+];
+
+/**
+ * Build an ERC-8004 Identity Registry registration batch call.
+ *
+ * Mints an agent NFT on the canonical ERC-8004 registry.
+ * The agentURI should be an IPFS URI pointing to the agent's metadata.
+ *
+ * @param erc8004RegistryAddress - ERC-8004 Identity Registry address
+ * @param agentURI - Agent metadata URI (e.g., "ipfs://Qm...")
+ */
+export function buildERC8004RegisterBatch(
+  erc8004RegistryAddress: string,
+  agentURI: string
+): SmartWalletCall[] {
+  const iface = new ethers.Interface(ERC8004_IDENTITY_REGISTER_ABI);
+  const data = iface.encodeFunctionData('register', [agentURI]);
+  return [{ target: erc8004RegistryAddress, value: 0n, data }];
+}
+
+/**
  * Build a register-agent batch for AgentRegistry.
  *
  * Used for bootstrap registration (gasless even before registration — chicken-and-egg).
@@ -277,6 +307,8 @@ export interface ActivationBatchParams {
   serviceDescriptors?: ServiceDescriptor[];
   /** Whether to set listed=true (for scenarios A, B1) */
   listed?: boolean;
+  /** ERC-8004 Identity Registry address (for scenario A — first registration) */
+  erc8004IdentityRegistry?: string;
 }
 
 /**
@@ -325,18 +357,27 @@ export function buildActivationBatch(params: ActivationBatchParams): SmartWallet
 
   switch (scenario) {
     case 'A': {
-      // First activation: register + publish + list
+      // First activation: ERC-8004 identity + AgentRegistry register + publish + list
       if (!params.endpoint || !params.serviceDescriptors || params.serviceDescriptors.length === 0) {
         throw new Error('Scenario A requires endpoint and serviceDescriptors');
       }
-      const registerCalls = buildRegisterAgentBatch(
+      const allCalls: SmartWalletCall[] = [];
+      // ERC-8004 identity mint (if registry address provided)
+      if (params.erc8004IdentityRegistry) {
+        // Ensure CID is bare (strip gateway prefix if present)
+        const bareCID = cid.replace(/^https?:\/\/.*\/ipfs\//, '').replace(/^ipfs:\/\//, '');
+        const agentURI = `ipfs://${bareCID}`;
+        allCalls.push(...buildERC8004RegisterBatch(params.erc8004IdentityRegistry, agentURI));
+      }
+      // AgentRegistry registration
+      allCalls.push(...buildRegisterAgentBatch(
         agentRegistryAddress,
         params.endpoint,
         params.serviceDescriptors
-      );
-      const publishCalls = buildPublishConfigBatch(agentRegistryAddress, cid, configHash);
-      const listCalls = buildSetListedBatch(agentRegistryAddress, params.listed ?? true);
-      return [...registerCalls, ...publishCalls, ...listCalls];
+      ));
+      allCalls.push(...buildPublishConfigBatch(agentRegistryAddress, cid, configHash));
+      allCalls.push(...buildSetListedBatch(agentRegistryAddress, params.listed ?? true));
+      return allCalls;
     }
     case 'B1': {
       // Re-publish with listing: publish + list

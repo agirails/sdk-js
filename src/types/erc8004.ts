@@ -233,13 +233,16 @@ export const ERC8004_REPUTATION_REGISTRY: Record<ERC8004Network, string> = {
 
 /**
  * Minimal ABI for ERC-8004 Identity Registry.
- * Only includes view functions needed by ERC8004Bridge.
+ * Includes view functions for ERC8004Bridge + register for publish flow.
  */
 export const ERC8004_IDENTITY_ABI = [
+  // Read (ERC-721 + ERC-8004)
   'function ownerOf(uint256 agentId) view returns (address)',
   'function getAgentURI(uint256 agentId) view returns (string)',
   'function balanceOf(address owner) view returns (uint256)',
   'function tokenOfOwnerByIndex(address owner, uint256 index) view returns (uint256)',
+  // Write (ERC-8004 registration)
+  'function register(string agentURI) external returns (uint256 agentId)',
 ] as const;
 
 /**
