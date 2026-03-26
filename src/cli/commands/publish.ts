@@ -417,11 +417,12 @@ async function runPublish(
     // These are in PUBLISH_METADATA_KEYS — stripped before hash computation.
     // ================================================================
     const publishMetadata: Record<string, string> = {};
-    if (walletAddress) {
-      publishMetadata.wallet = walletAddress;
-      // DID: did:ethr:<chainId>:<address>
-      // Testnet (84532) always written; mainnet (8453) on re-publish when agent_id exists
-      publishMetadata.did = `did:ethr:84532:${walletAddress}`;
+    // Wallet write-back: Smart Wallet is the on-chain identity (NFT owner,
+    // escrow party). EOA is only a fallback for non-Smart-Wallet flows.
+    const canonicalWallet = smartWalletAddress || walletAddress;
+    if (canonicalWallet) {
+      publishMetadata.wallet = canonicalWallet;
+      publishMetadata.did = `did:ethr:84532:${canonicalWallet}`;
     }
     // agent_id: query ERC-8004 Identity Registry for minted tokenId
     // Use Smart Wallet address (NFT owner) when available, fall back to EOA
@@ -491,10 +492,6 @@ async function runPublish(
       }
     }
 
-    // Write-back wallet address — prefer Smart Wallet address
-    if (smartWalletAddress && !publishMetadata.wallet) {
-      publishMetadata.wallet = smartWalletAddress;
-    }
 
     // ================================================================
     // Phase 1: API upsert to agirails.app (post-chain, non-blocking)
@@ -518,7 +515,7 @@ async function runPublish(
           await upsertAgent({
             slug: v4Config.slug,
             agentId: v4Config.agent_id,
-            wallet: walletAddress,
+            wallet: smartWalletAddress || walletAddress,
             configCid: cid,
             configHash,
             signature: sig,

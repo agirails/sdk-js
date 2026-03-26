@@ -6,6 +6,8 @@
  * - buildACTPPayBatch: correct 3-call structure
  * - buildRegisterAgentBatch: correct encoding
  * - buildTestnetMintBatch: correct encoding
+ * - buildERC8004RegisterBatch: ERC-8004 identity mint encoding
+ * - buildActivationBatch: scenario A with/without ERC-8004 (3 vs 4 calls)
  */
 
 import { ethers } from 'ethers';
@@ -18,6 +20,7 @@ import {
   buildPublishConfigBatch,
   buildSetListedBatch,
   buildActivationBatch,
+  buildERC8004RegisterBatch,
 } from './TransactionBatcher';
 import { ServiceDescriptor } from '../../types/agent';
 
@@ -28,6 +31,7 @@ const USDC = '0x' + '33'.repeat(20);
 const KERNEL = '0x' + '44'.repeat(20);
 const VAULT = '0x' + '55'.repeat(20);
 const REGISTRY = '0x' + '66'.repeat(20);
+const ERC8004_REGISTRY = '0x8004A818BFB912233c491871b3d84c89A494BD9e';
 const ZERO_HASH = '0x' + '00'.repeat(32);
 
 describe('TransactionBatcher', () => {
@@ -283,8 +287,27 @@ describe('TransactionBatcher', () => {
     });
   });
 
+  describe('buildERC8004RegisterBatch()', () => {
+    it('should produce a single call targeting the ERC-8004 registry', () => {
+      const calls = buildERC8004RegisterBatch(ERC8004_REGISTRY, 'ipfs://bafybeicid123');
+      expect(calls).toHaveLength(1);
+      expect(calls[0].target).toBe(ERC8004_REGISTRY);
+      expect(calls[0].value).toBe(0n);
+    });
+
+    it('should encode register(string) correctly', () => {
+      const agentURI = 'ipfs://bafybeicid123456789';
+      const calls = buildERC8004RegisterBatch(ERC8004_REGISTRY, agentURI);
+      const iface = new ethers.Interface([
+        'function register(string agentURI) external returns (uint256 agentId)',
+      ]);
+      const decoded = iface.decodeFunctionData('register', calls[0].data);
+      expect(decoded[0]).toBe(agentURI);
+    });
+  });
+
   describe('buildActivationBatch()', () => {
-    it('scenario A: should produce 3 calls (register + publish + list)', () => {
+    it('scenario A without ERC-8004: should produce 3 calls (register + publish + list)', () => {
       const calls = buildActivationBatch({
         scenario: 'A',
         agentRegistryAddress: REGISTRY,
@@ -293,12 +316,95 @@ describe('TransactionBatcher', () => {
         endpoint: 'https://agent.example.com',
         serviceDescriptors: [TEST_SERVICE],
         listed: true,
+        // No erc8004IdentityRegistry → no ERC-8004 call
       });
       expect(calls).toHaveLength(3);
-      // All target the registry
+      // All target the AgentRegistry
       expect(calls[0].target).toBe(REGISTRY); // registerAgent
       expect(calls[1].target).toBe(REGISTRY); // publishConfig
       expect(calls[2].target).toBe(REGISTRY); // setListed
+    });
+
+    it('scenario A with ERC-8004: should produce 4 calls (identity + register + publish + list)', () => {
+      const calls = buildActivationBatch({
+        scenario: 'A',
+        agentRegistryAddress: REGISTRY,
+        cid: TEST_CID,
+        configHash: TEST_HASH,
+        endpoint: 'https://agent.example.com',
+        serviceDescriptors: [TEST_SERVICE],
+        listed: true,
+        erc8004IdentityRegistry: ERC8004_REGISTRY,
+      });
+      expect(calls).toHaveLength(4);
+      // Call 0: ERC-8004 register (identity mint)
+      expect(calls[0].target).toBe(ERC8004_REGISTRY);
+      expect(calls[0].value).toBe(0n);
+      // Call 1-3: AgentRegistry calls
+      expect(calls[1].target).toBe(REGISTRY); // registerAgent
+      expect(calls[2].target).toBe(REGISTRY); // publishConfig
+      expect(calls[3].target).toBe(REGISTRY); // setListed
+    });
+
+    it('scenario A with ERC-8004: should encode register(agentURI) correctly', () => {
+      const calls = buildActivationBatch({
+        scenario: 'A',
+        agentRegistryAddress: REGISTRY,
+        cid: TEST_CID,
+        configHash: TEST_HASH,
+        endpoint: 'https://agent.example.com',
+        serviceDescriptors: [TEST_SERVICE],
+        listed: true,
+        erc8004IdentityRegistry: ERC8004_REGISTRY,
+      });
+
+      // Decode ERC-8004 register call
+      const iface = new ethers.Interface([
+        'function register(string agentURI) external returns (uint256 agentId)',
+      ]);
+      const decoded = iface.decodeFunctionData('register', calls[0].data);
+      expect(decoded[0]).toBe(`ipfs://${TEST_CID}`);
+    });
+
+    it('scenario A with ERC-8004: should sanitize gateway URL in CID', () => {
+      const calls = buildActivationBatch({
+        scenario: 'A',
+        agentRegistryAddress: REGISTRY,
+        cid: 'https://ipfs.io/ipfs/bafybeicid123',
+        configHash: TEST_HASH,
+        endpoint: 'https://agent.example.com',
+        serviceDescriptors: [TEST_SERVICE],
+        listed: true,
+        erc8004IdentityRegistry: ERC8004_REGISTRY,
+      });
+
+      const iface = new ethers.Interface([
+        'function register(string agentURI) external returns (uint256 agentId)',
+      ]);
+      const decoded = iface.decodeFunctionData('register', calls[0].data);
+      // Should strip gateway prefix
+      expect(decoded[0]).toBe('ipfs://bafybeicid123');
+    });
+
+    it('scenario B1/B2 with ERC-8004: should NOT include ERC-8004 call (already registered)', () => {
+      const callsB1 = buildActivationBatch({
+        scenario: 'B1',
+        agentRegistryAddress: REGISTRY,
+        cid: TEST_CID,
+        configHash: TEST_HASH,
+        listed: true,
+        erc8004IdentityRegistry: ERC8004_REGISTRY,
+      });
+      expect(callsB1).toHaveLength(2); // publishConfig + setListed only
+
+      const callsB2 = buildActivationBatch({
+        scenario: 'B2',
+        agentRegistryAddress: REGISTRY,
+        cid: TEST_CID,
+        configHash: TEST_HASH,
+        erc8004IdentityRegistry: ERC8004_REGISTRY,
+      });
+      expect(callsB2).toHaveLength(1); // publishConfig only
     });
 
     it('scenario A: should throw if missing endpoint or serviceDescriptors', () => {

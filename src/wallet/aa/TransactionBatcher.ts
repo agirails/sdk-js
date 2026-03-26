@@ -6,7 +6,13 @@
  *   2. ACTPKernel.createTransaction(provider, requester, amount, deadline, disputeWindow, serviceHash, agentId)
  *   3. ACTPKernel.linkEscrow(txId, escrowVault, escrowId)
  *
- * TransactionBatcher encodes all 3 as SmartWalletCall[] for executeBatch.
+ * First-time activation (Scenario A) prepends up to 4 calls:
+ *   1. ERC-8004 IdentityRegistry.register(agentURI) — mint NFT identity
+ *   2. AgentRegistry.registerAgent(endpoint, serviceDescriptors)
+ *   3. AgentRegistry.publishConfig(cid, configHash)
+ *   4. AgentRegistry.setListed(true)
+ *
+ * TransactionBatcher encodes all calls as SmartWalletCall[] for executeBatch.
  * It pre-computes the txId using the same keccak256 formula as the contract.
  *
  * @module wallet/aa/TransactionBatcher
@@ -347,7 +353,7 @@ export function buildSetListedBatch(
  * Build the full activation batch based on scenario.
  *
  * Scenario call counts:
- * - A: registerAgent + publishConfig + setListed = 3 calls
+ * - A: ERC-8004 register + AgentRegistry registerAgent + publishConfig + setListed = 4 calls (3 if no ERC-8004 registry)
  * - B1: publishConfig + setListed = 2 calls
  * - B2: publishConfig = 1 call
  * - C/none: empty (0 calls)
