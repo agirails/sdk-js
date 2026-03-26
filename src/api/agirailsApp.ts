@@ -269,6 +269,7 @@ export async function requestClaimCode(params: {
   signer?: string;
   signature: string;
   message: string;
+  network?: string;
 }): Promise<ClaimCodeResult> {
   const url = `${AGIRAILS_APP_BASE_URL}/api/v1/agents/claim-code`;
 

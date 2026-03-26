@@ -97,7 +97,16 @@ async function runClaimCode(
 
   try {
     const projectRoot = resolve(resolvedPath, '..');
-    const privateKey = await resolvePrivateKey(projectRoot, { network: 'testnet' });
+    const { loadConfig: loadCfg } = await import('../utils/config');
+    let networkMode = 'testnet';
+    try {
+      const cfg = loadCfg(projectRoot);
+      if (cfg.mode === 'mainnet') networkMode = 'mainnet';
+    } catch {
+      // Default to testnet if no config
+    }
+    const chainName = networkMode === 'mainnet' ? 'base-mainnet' : 'base-sepolia';
+    const privateKey = await resolvePrivateKey(projectRoot, { network: networkMode });
     if (!privateKey) {
       throw new Error(
         'No wallet credentials found.\n' +
@@ -114,7 +123,7 @@ async function runClaimCode(
 
     // Sign message
     const timestamp = Math.floor(Date.now() / 1000);
-    const message = `agirails-claim-code:${agentId}:${timestamp}`;
+    const message = `agirails-claim-code:${agentId}:${chainName}:${timestamp}`;
     const signature = await wallet.signMessage(message);
 
     const result = await requestClaimCode({
@@ -123,6 +132,7 @@ async function runClaimCode(
       signer: effectiveWallet.toLowerCase() !== walletAddress.toLowerCase() ? walletAddress : undefined,
       signature,
       message,
+      network: chainName,
     });
 
     spinner.stop(true);
