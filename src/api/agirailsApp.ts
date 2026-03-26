@@ -62,6 +62,11 @@ export interface UpsertAgentParams {
 export interface UpsertAgentResult {
   success: boolean;
   profileUrl: string;
+  claimCode?: string;
+}
+
+export interface ClaimCodeResult {
+  claimCode: string;
 }
 
 export interface ClaimChallengeResult {
@@ -250,6 +255,35 @@ export async function claimAgent(params: ClaimParams): Promise<ClaimResult> {
   }
 
   return res.json() as Promise<ClaimResult>;
+}
+
+/**
+ * Request a new claim code for an agent (proves ownership via wallet signature).
+ *
+ * @param params - Agent ID + wallet signature
+ * @returns Claim code
+ */
+export async function requestClaimCode(params: {
+  agentId: string;
+  wallet: string;
+  signer?: string;
+  signature: string;
+  message: string;
+}): Promise<ClaimCodeResult> {
+  const url = `${AGIRAILS_APP_BASE_URL}/api/v1/agents/claim-code`;
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`claim-code API failed: ${res.status} ${res.statusText}${body ? ` — ${body}` : ''}`);
+  }
+
+  return res.json() as Promise<ClaimCodeResult>;
 }
 
 /**

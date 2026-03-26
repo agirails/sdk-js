@@ -512,7 +512,7 @@ async function runPublish(
         if (privKey) {
           const signer = new ethers.Wallet(privKey);
           const sig = await signer.signMessage(upsertMessage);
-          await upsertAgent({
+          const apiResult = await upsertAgent({
             slug: v4Config.slug,
             agentId: v4Config.agent_id,
             wallet: smartWalletAddress || walletAddress,
@@ -526,6 +526,12 @@ async function runPublish(
           });
           apiSpinner.stop(true);
           output.success(`Profile live at: agirails.app/a/${v4Config.slug}`);
+          // Display claim code if returned (for linking to dashboard)
+          if (apiResult.claimCode) {
+            output.print(`  Claim code: ${apiResult.claimCode}`);
+            output.print(`  Claim link: https://agirails.app/claim?code=${apiResult.claimCode}`);
+            output.print('  (use this to link the agent to your dashboard account)');
+          }
         } else {
           apiSpinner.stop(false);
           output.info('Skipped agirails.app sync (no wallet key for signing).');
