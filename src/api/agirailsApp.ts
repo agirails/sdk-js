@@ -23,7 +23,7 @@
 // ============================================================================
 
 const AGIRAILS_APP_BASE_URL =
-  process.env.AGIRAILS_APP_URL || 'https://agirails.app';
+  process.env.AGIRAILS_APP_URL || 'https://www.agirails.app';
 
 // ============================================================================
 // Types
