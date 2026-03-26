@@ -15,7 +15,9 @@ import { ethers } from 'ethers';
 const BASE_SEPOLIA_RPC_URL = process.env.BASE_SEPOLIA_RPC || 'https://sepolia.base.org';
 const BASE_MAINNET_RPC_URL = process.env.BASE_MAINNET_RPC || 'https://mainnet.base.org';
 
-// Shared AA keys for out-of-the-box UX (override with env vars in production).
+// Shared AA keys for out-of-the-box UX (like Firebase API keys — NOT secrets).
+// These are restricted by contract-address allowlists on the provider dashboards
+// (CDP: AgentRegistry + X402Relay only; Pimlico: same). Override with env vars.
 const CDP_CLIENT_KEY = process.env.CDP_API_KEY?.trim() || '2txciN85t41erCjveqgNnXYyHRcoo5xP';
 const PIMLICO_KEY = process.env.PIMLICO_API_KEY?.trim() || 'pim_YiHmeAijzTPUvo1UMmXUiN';
 
