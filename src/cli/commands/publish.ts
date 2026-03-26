@@ -516,6 +516,7 @@ async function runPublish(
             slug: v4Config.slug,
             agentId: v4Config.agent_id,
             wallet: smartWalletAddress || walletAddress,
+            signer: walletAddress, // EOA that signed the message
             configCid: cid,
             configHash,
             signature: sig,

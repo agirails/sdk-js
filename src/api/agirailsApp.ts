@@ -38,7 +38,15 @@ export interface CheckSlugResult {
 export interface UpsertAgentParams {
   slug: string;
   agentId: string;
+  /** On-chain wallet address (Smart Wallet if AA-enabled, EOA otherwise) */
   wallet: string;
+  /**
+   * EOA signer address when wallet is a Smart Wallet.
+   * Server verifies: recoverSigner(msg, sig) == signer, then derives
+   * Smart Wallet from signer to confirm signer controls wallet.
+   * Omit if wallet == signer (non-AA flow).
+   */
+  signer?: string;
   configCid: string;
   configHash: string;
   /** Wallet signature proving ownership (signs a message containing agentId) */
