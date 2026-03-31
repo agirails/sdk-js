@@ -111,7 +111,8 @@ function buildV4Config(
   const slug = getString(fm, 'slug') || generateSlug(name);
 
   // Services
-  const services = getStringArray(fm, 'services');
+  let services = getStringArray(fm, 'services');
+  if (services.length === 0) services = getStringArray(fm, 'capabilities');
   if (services.length === 0) {
     throw new Error('Missing required field: services (must be a non-empty array)');
   }

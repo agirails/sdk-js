@@ -57,6 +57,8 @@ export interface UpsertAgentParams {
   timestamp: number;
   /** Network name (e.g. "base-sepolia") — bound in signed message, verified server-side */
   network?: string;
+  /** Agent config (name, description, capabilities, pricing) for profile display */
+  config?: Record<string, unknown>;
 }
 
 export interface UpsertAgentResult {
@@ -270,6 +272,8 @@ export async function requestClaimCode(params: {
   signature: string;
   message: string;
   network?: string;
+  /** Agent config (name, description, capabilities, pricing) for profile display */
+  config?: Record<string, unknown>;
 }): Promise<ClaimCodeResult> {
   const url = `${AGIRAILS_APP_BASE_URL}/api/v1/agents/claim-code`;
 

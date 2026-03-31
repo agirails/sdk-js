@@ -9,7 +9,7 @@
  */
 
 import { keccak256, toUtf8Bytes } from 'ethers';
-import { publishAgirailsMd, PENDING_ENDPOINT } from './publishPipeline';
+import { publishAgirailsMd, PENDING_ENDPOINT, extractRegistrationParams } from './publishPipeline';
 import * as fs from 'fs';
 
 // ============================================================================
@@ -440,5 +440,38 @@ describe('service type validation', () => {
       filebaseClient: createMockFilebaseClient() as any,
       skipArweave: true,
     });
+  });
+});
+
+// ============================================================================
+// serviceTypes backward compatibility
+// ============================================================================
+
+describe('serviceTypes backward compatibility', () => {
+  test('serviceTypes is normalized to capabilities', () => {
+    const result = extractRegistrationParams({
+      serviceTypes: ['code-review', 'bug-fixing'],
+    });
+
+    expect(result.serviceDescriptors).toHaveLength(2);
+    expect(result.serviceDescriptors[0].serviceType).toBe('code-review');
+    expect(result.serviceDescriptors[1].serviceType).toBe('bug-fixing');
+    expect(result.endpoint).toBe(PENDING_ENDPOINT);
+  });
+
+  test('capabilities takes precedence over serviceTypes', () => {
+    const result = extractRegistrationParams({
+      capabilities: ['text-generation'],
+      serviceTypes: ['code-review'],
+    });
+
+    expect(result.serviceDescriptors).toHaveLength(1);
+    expect(result.serviceDescriptors[0].serviceType).toBe('text-generation');
+  });
+
+  test('serviceTypes with empty array still throws', () => {
+    expect(() => extractRegistrationParams({
+      serviceTypes: [],
+    })).toThrow('services');
   });
 });

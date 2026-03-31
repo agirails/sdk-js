@@ -113,6 +113,11 @@ function usdcToBaseUnits(value: number, fieldName: string): bigint {
 export function extractRegistrationParams(
   frontmatter: Record<string, unknown>
 ): { endpoint: string; serviceDescriptors: ServiceDescriptor[] } {
+  // Normalize legacy serviceTypes → capabilities (backward compat)
+  if (Array.isArray(frontmatter.serviceTypes) && !frontmatter.capabilities) {
+    frontmatter = { ...frontmatter, capabilities: frontmatter.serviceTypes };
+  }
+
   // Endpoint: use frontmatter field or placeholder
   const endpoint = typeof frontmatter.endpoint === 'string' && frontmatter.endpoint
     ? frontmatter.endpoint

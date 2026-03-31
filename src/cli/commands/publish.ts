@@ -419,14 +419,15 @@ async function runPublish(
     const publishMetadata: Record<string, string> = {};
     // Wallet write-back: Smart Wallet is the on-chain identity (NFT owner,
     // escrow party). EOA is only a fallback for non-Smart-Wallet flows.
-    const canonicalWallet = smartWalletAddress || walletAddress;
+    const existingWallet = (frontmatter as Record<string, unknown>).wallet as string | undefined;
+    const canonicalWallet = smartWalletAddress || existingWallet || walletAddress;
     if (canonicalWallet) {
       publishMetadata.wallet = canonicalWallet;
       publishMetadata.did = `did:ethr:84532:${canonicalWallet}`;
     }
     // agent_id: query ERC-8004 Identity Registry for minted tokenId
     // Use Smart Wallet address (NFT owner) when available, fall back to EOA
-    const ownerAddress = smartWalletAddress || walletAddress;
+    const ownerAddress = smartWalletAddress || existingWallet || walletAddress;
     if (testnetTxHash && ownerAddress) {
       try {
         const { getNetwork: getNet } = await import('../../config/networks');
@@ -515,7 +516,7 @@ async function runPublish(
           const apiResult = await upsertAgent({
             slug: v4Config.slug,
             agentId: v4Config.agent_id,
-            wallet: smartWalletAddress || walletAddress,
+            wallet: smartWalletAddress || existingWallet || walletAddress,
             signer: walletAddress, // EOA that signed the message
             configCid: cid,
             configHash,
@@ -523,6 +524,39 @@ async function runPublish(
             message: upsertMessage,
             timestamp: publishTimestamp,
             network: publishNetwork,
+            config: {
+              name: v4Config.name,
+              description: (v4Config.description || "").replace(/^#\s+[^\n]+\n*/, "").trim(),
+              capabilities: v4Config.services,
+              pricing: {
+                model: "fixed",
+                amount: String(v4Config.pricing.base),
+                unit: v4Config.pricing.unit || "job",
+                currency: v4Config.pricing.currency || "USDC",
+                minimum: String(v4Config.pricing.min_price ?? v4Config.pricing.base),
+              },
+              sla: {
+                availability: "24/7",
+                responseTime: { p50: 30, p95: 300 },
+                ...(v4Config.sla.concurrency ? { throughput: v4Config.sla.concurrency + " concurrent" } : {}),
+              },
+              ...(v4Config.sla.concurrency ? { concurrency: v4Config.sla.concurrency } : {}),
+              payment_mode: v4Config.payment.modes.includes("x402") ? "x402" : "actp",
+              network: v4Config.network,
+              // Covenant: map V4 accepts/returns to web input/output format
+              ...(v4Config.covenant.accepts && Object.keys(v4Config.covenant.accepts).length > 0 ? {
+                covenant: {
+                  input: Object.entries(v4Config.covenant.accepts).map(([k, v]) => k + ": " + v).join("\n"),
+                  output: Object.entries(v4Config.covenant.returns).map(([k, v]) => k + ": " + v).join("\n"),
+                  guarantees: [] as string[],
+                  dispute: { window_hours: 24, resolution: "auto-refund" },
+                },
+              } : {}),
+              // Endpoint: for x402 agents
+              ...(v4Config.endpoint ? {
+                endpoints: { execute: v4Config.endpoint },
+              } : {}),
+            },
           });
           apiSpinner.stop(true);
           output.success(`Profile live at: agirails.app/a/${v4Config.slug}`);
