@@ -1,7 +1,7 @@
 /**
  * Helpers - Common utility functions for ACTP SDK
  *
- * SECURITY FIX (L-7): Convenience methods for common operations
+ *Security: Convenience methods for common operations
  * to reduce boilerplate and prevent mistakes.
  *
  * @module utils/Helpers
@@ -46,7 +46,7 @@ export const USDC = {
   /**
    * Convert USDC wei to human-readable string
    *
-   * SECURITY FIX (MEDIUM-6): Uses pure BigInt arithmetic to prevent precision loss
+   *Security: Uses pure BigInt arithmetic to prevent precision loss
    *
    * @param weiAmount - Amount in USDC wei
    * @param decimals - Number of decimal places to show (default: 2)
@@ -62,13 +62,13 @@ export const USDC = {
   fromWei(weiAmount: bigint | string, decimals = 2): string {
     const amount = typeof weiAmount === 'string' ? BigInt(weiAmount) : weiAmount;
 
-    // SECURITY FIX (MEDIUM-6): Use pure BigInt arithmetic for precision
+    // Security: Use pure BigInt arithmetic for precision
     // Calculate divisor and multiplier using BigInt to avoid floating point
     const divisorExponent = 6 - decimals;
     const divisor = divisorExponent >= 0 ? BigInt(10 ** divisorExponent) : 1n;
     const maxDecimal = BigInt(10 ** decimals);
 
-    // SECURITY FIX (MEDIUM-6): Round using BigInt arithmetic
+    // Security: Round using BigInt arithmetic
     // Add half divisor before division for proper rounding (banker's rounding alternative)
     const roundedAmount = divisorExponent >= 0
       ? (amount + divisor / 2n) / divisor
@@ -378,7 +378,7 @@ export const State = {
   /**
    * Get valid next states from current state
    *
-   * SECURITY FIX (CRITICAL-1): Must match ACTPKernel contract state machine exactly
+   *Security: Must match ACTPKernel contract state machine exactly
    * Per CLAUDE.md §Architecture Overview - ACTP Protocol State Machine
    *
    * @param currentState - Current state
@@ -540,7 +540,7 @@ export function shortenAddress(address: string, chars: number = 4): string {
  * ============================================================================
  * Service Metadata Utilities
  *
- * SECURITY FIX (CRITICAL): ACTPKernel expects bytes32 serviceHash, not raw strings.
+ *Security: ACTPKernel expects bytes32 serviceHash, not raw strings.
  * These utilities handle proper hashing and encoding of service metadata.
  * ============================================================================
  */
@@ -558,7 +558,7 @@ export interface ServiceMetadata {
 /**
  * Service metadata utilities for ACTP transactions
  *
- * SECURITY FIX (CRITICAL): The ACTPKernel contract expects a bytes32 serviceHash,
+ *Security: The ACTPKernel contract expects a bytes32 serviceHash,
  * not a raw JSON string. This utility properly hashes metadata before on-chain calls.
  */
 export const ServiceHash = {
@@ -584,7 +584,7 @@ export const ServiceHash = {
   /**
    * Hash service metadata to bytes32 using keccak256
    *
-   * SECURITY FIX (CRITICAL): This is what should be passed to ACTPKernel.createTransaction()
+   *Security: This is what should be passed to ACTPKernel.createTransaction()
    *
    * @param metadata - Service metadata (string or object)
    * @returns bytes32 hash string (0x-prefixed, 64 hex chars)

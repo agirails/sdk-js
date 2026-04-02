@@ -1,7 +1,7 @@
 /**
  * SecureNonce - Cryptographically secure nonce generation
  *
- * SECURITY FIX (NEW-H-3): Provides secure random nonce generation
+ *Security: Provides secure random nonce generation
  * to prevent weak randomness vulnerabilities in EIP-712 message signing.
  *
  * Reference: V7 Re-Audit NEW-H-3 (Weak Random Nonce Generation)

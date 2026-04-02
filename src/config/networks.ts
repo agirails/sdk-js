@@ -1,7 +1,7 @@
 import { ethers } from 'ethers';
 
 // ============================================================================
-// SECURITY FIX (C-7): RPC URL Configuration
+// Security: RPC URL Configuration
 // ============================================================================
 // Environment variables take priority over hardcoded defaults.
 // This prevents accidental API key leakage if developers modify this file.
@@ -114,15 +114,15 @@ export const BASE_SEPOLIA: NetworkConfig = {
   rpcUrl: BASE_SEPOLIA_RPC_URL,
   blockExplorer: 'https://sepolia.basescan.org',
   contracts: {
-    actpKernel: '0x0ba0b17554601b30F5406e74d2208f567C12CcFE',
-    escrowVault: '0xedC62264301A119207f1f89C6bDE4Fd7a7A4CeB4',
+    actpKernel: '0x90a1Bcc218c148F63D036aB2f7B5329C9ee7868d',
+    escrowVault: '0xA336967F4481EeE4A8Bb59e35423D273fbf9f5e7',
     usdc: '0x444b4e1A65949AB2ac75979D5d0166Eb7A248Ccb', // MockUSDC
     eas: '0x4200000000000000000000000000000000000021',
     easSchemaRegistry: '0x4200000000000000000000000000000000000020',
-    agentRegistry: '0x55e7F23AB5700fD0D9f83294be2d0F2eC84013E1',
-    identityRegistry: '0xF64F748C7802a68Cb936a9213881fE74e83FDA97',
-    archiveTreasury: '0xACB672de092beaAE2cd286dD61Cb2352AF7159F1',
-    x402Relay: '0x4DCD02b276Dbeab57c265B72435e90507b6Ac81A',
+    agentRegistry: '0x7403426a720f91ea155405e3b63d16aa40a46f98',
+    identityRegistry: '0xce9749c768b425fab0daa0331047d1340ec99a88',
+    archiveTreasury: '0xe9aaefae83d206a2e4504f84b6b13c55d09d62a0',
+    x402Relay: '0x0804FC3c04214bC9036E126554aF7EE24d589988',
     erc8004IdentityRegistry: '0x8004A818BFB912233c491871b3d84c89A494BD9e',
   },
   eas: {
@@ -132,7 +132,7 @@ export const BASE_SEPOLIA: NetworkConfig = {
     maxFeePerGas: ethers.parseUnits('2', 'gwei'),
     maxPriorityFeePerGas: ethers.parseUnits('1', 'gwei')
   },
-  actpKernelDeploymentBlock: 39180727,
+  actpKernelDeploymentBlock: 39679499,
   // AIP-12: Account Abstraction
   aa: {
     entryPoint: '0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789',
@@ -175,9 +175,7 @@ export const BASE_MAINNET: NetworkConfig = {
     maxPriorityFeePerGas: ethers.parseUnits('0.1', 'gwei')
   },
   /**
-   * SECURITY: $1,000 max transaction limit until contracts are audited.
-   * This limits exposure in case of undiscovered vulnerabilities.
-   * Will be removed/increased after formal security audit.
+   * SECURITY: $1,000 max transaction limit for production safety.
    */
   maxTransactionAmount: 1000,
   actpKernelDeploymentBlock: 41935749,

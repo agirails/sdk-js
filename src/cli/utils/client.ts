@@ -218,7 +218,7 @@ export function mapError(error: unknown): StructuredError {
   return {
     code: ErrorCode.UNKNOWN_ERROR,
     message: sanitizePath(message) || 'An unknown error occurred.',
-    // SECURITY FIX: Stack traces removed to prevent information disclosure
+    // Security: Stack traces removed to prevent information disclosure
     // In development mode, errors can be logged separately if needed
   };
 }

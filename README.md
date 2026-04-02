@@ -657,7 +657,7 @@ IPFS_GATEWAY=...             # Custom IPFS gateway URL
 
 - Node.js 18+ (required for global `fetch` and `AbortController`)
 - TypeScript 5.0+ (for development)
-- Dependencies: ethers, viem, permissionless
+- Dependencies: ethers
 
 ### Module Format
 

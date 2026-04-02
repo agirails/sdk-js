@@ -272,7 +272,7 @@ export class MockRuntime implements IACTPRuntime {
   /**
    * In-memory event log, also persisted to state file.
    *
-   * SECURITY FIX (L-4): Events are now persisted to the state file
+   *Security: Events are now persisted to the state file
    * so they survive across CLI invocations.
    */
   private eventLog: MockEvent[] = [];
@@ -316,11 +316,11 @@ export class MockRuntime implements IACTPRuntime {
   constructor(stateManager?: MockStateManager) {
     this.stateManager = stateManager ?? new MockStateManager();
 
-    // SECURITY FIX (L-4): Load persisted events from state file
+    // Security: Load persisted events from state file
     this.loadPersistedEvents();
 
     // Initialize time interface
-    // SECURITY FIX: Time operations now use withLock to prevent race conditions
+    // Security: Time operations now use withLock to prevent race conditions
     this.time = {
       now: () => this.getCurrentTime(),
       advanceTime: (seconds: number) => this.advanceTimeWithLock(seconds),
@@ -352,7 +352,7 @@ export class MockRuntime implements IACTPRuntime {
   /**
    * Load events from persisted state file.
    *
-   * SECURITY FIX (L-4): Events survive across CLI invocations.
+   *Security: Events survive across CLI invocations.
    */
   private loadPersistedEvents(): void {
     try {
@@ -380,7 +380,7 @@ export class MockRuntime implements IACTPRuntime {
   /**
    * Persist an event to both in-memory log and state file.
    *
-   * SECURITY FIX (L-4): Events are persisted for audit trail.
+   *Security: Events are persisted for audit trail.
    *
    * @param event - Event to persist
    * @param state - Current state (to avoid re-loading)
@@ -432,7 +432,7 @@ export class MockRuntime implements IACTPRuntime {
         throw new DeadlinePassedError('new', params.deadline, currentTime);
       }
 
-      // SECURITY FIX (M-4): Generate transaction ID with collision check
+      // Security: Generate transaction ID with collision check
       const txId = this.generateTransactionIdWithCollisionCheck(state);
 
       // Create transaction
@@ -472,7 +472,7 @@ export class MockRuntime implements IACTPRuntime {
       transaction.events.push(event);
       state.transactions[txId] = transaction;
 
-      // SECURITY FIX (L-4): Persist event to state file
+      // Security: Persist event to state file
       this.persistEvent(event, state);
 
       return txId;
@@ -543,7 +543,7 @@ export class MockRuntime implements IACTPRuntime {
   /**
    * Gets transactions filtered by provider address and optionally state.
    *
-   * SECURITY FIX (H-1): Filtered query to prevent DoS via memory exhaustion.
+   *Security: Filtered query to prevent DoS via memory exhaustion.
    * Instead of loading all transactions and filtering client-side, we filter
    * server-side and limit the result set.
    *
@@ -612,7 +612,7 @@ export class MockRuntime implements IACTPRuntime {
    * ```
    */
   async transitionState(txId: string, newState: TransactionState, proof?: string): Promise<void> {
-    // SECURITY FIX (PROOF-PARAM): Accept optional proof parameter for interface compliance
+    // Security: Accept optional proof parameter for interface compliance
     // In MockRuntime, proof is stored but not validated (no on-chain verification)
     // This allows testing delivery proof flows without actual blockchain interaction
     return this.stateManager.withLock(async (state) => {
@@ -645,7 +645,7 @@ export class MockRuntime implements IACTPRuntime {
       // Record completion time for DELIVERED state
       if (newState === 'DELIVERED') {
         tx.completedAt = currentTime;
-        // SECURITY FIX (PROOF-PARAM): Store delivery proof if provided
+        // Security: Store delivery proof if provided
         // Only set if not already populated (Agent sets deliveryProof before transitioning,
         // and passes disputeWindowProof as the proof param — don't overwrite the real proof)
         if (proof && !tx.deliveryProof) {
@@ -689,7 +689,7 @@ export class MockRuntime implements IACTPRuntime {
           };
 
           tx.events.push(refundEvent);
-          // SECURITY FIX (L-4): Persist event
+          // Security: Persist event
           this.persistEvent(refundEvent, state);
         }
       }
@@ -707,7 +707,7 @@ export class MockRuntime implements IACTPRuntime {
       };
 
       tx.events.push(event);
-      // SECURITY FIX (L-4): Persist event
+      // Security: Persist event
       this.persistEvent(event, state);
     });
   }
@@ -894,7 +894,7 @@ export class MockRuntime implements IACTPRuntime {
       };
 
       tx.events.push(linkEvent, transitionEvent);
-      // SECURITY FIX (L-4): Persist events
+      // Security: Persist events
       this.persistEvent(linkEvent, state);
       this.persistEvent(transitionEvent, state);
 
@@ -1000,7 +1000,7 @@ export class MockRuntime implements IACTPRuntime {
       };
 
       tx.events.push(releaseEvent, transitionEvent);
-      // SECURITY FIX (L-4): Persist events
+      // Security: Persist events
       this.persistEvent(releaseEvent, state);
       this.persistEvent(transitionEvent, state);
     });
@@ -1076,7 +1076,7 @@ export class MockRuntime implements IACTPRuntime {
         },
       };
 
-      // SECURITY FIX (L-4): Persist event
+      // Security: Persist event
       this.persistEvent(event, state);
     });
   }
@@ -1139,7 +1139,7 @@ export class MockRuntime implements IACTPRuntime {
         },
       };
 
-      // SECURITY FIX (L-4): Persist event
+      // Security: Persist event
       this.persistEvent(event, state);
     });
   }
@@ -1183,7 +1183,7 @@ export class MockRuntime implements IACTPRuntime {
   /**
    * Advances time by specified seconds (with file locking).
    *
-   * SECURITY FIX: Uses withLock to prevent race conditions when
+   * Security: Uses withLock to prevent race conditions when
    * multiple processes access the state file concurrently.
    */
   private async advanceTimeWithLock(seconds: number): Promise<void> {
@@ -1209,7 +1209,7 @@ export class MockRuntime implements IACTPRuntime {
         },
       };
 
-      // SECURITY FIX (L-4): Persist event
+      // Security: Persist event
       this.persistEvent(event, state);
     });
   }
@@ -1217,7 +1217,7 @@ export class MockRuntime implements IACTPRuntime {
   /**
    * Advances time by specified blocks (with file locking).
    *
-   * SECURITY FIX: Uses withLock to prevent race conditions.
+   * Security: Uses withLock to prevent race conditions.
    */
   private async advanceBlocksWithLock(blocks: number): Promise<void> {
     if (blocks < 0) {
@@ -1243,7 +1243,7 @@ export class MockRuntime implements IACTPRuntime {
         },
       };
 
-      // SECURITY FIX (L-4): Persist event
+      // Security: Persist event
       this.persistEvent(event, state);
     });
   }
@@ -1251,7 +1251,7 @@ export class MockRuntime implements IACTPRuntime {
   /**
    * Sets exact timestamp (must be >= current time) (with file locking).
    *
-   * SECURITY FIX: Uses withLock to prevent race conditions.
+   * Security: Uses withLock to prevent race conditions.
    */
   private async setTimeWithLock(timestamp: number): Promise<void> {
     return this.stateManager.withLock(async (state) => {
@@ -1278,7 +1278,7 @@ export class MockRuntime implements IACTPRuntime {
         },
       };
 
-      // SECURITY FIX (L-4): Persist event
+      // Security: Persist event
       this.persistEvent(event, state);
     });
   }
@@ -1309,7 +1309,7 @@ export class MockRuntime implements IACTPRuntime {
   /**
    * Generates a unique transaction ID (bytes32 hex string).
    *
-   * SECURITY FIX (M-4): Now checks for collisions against existing transactions.
+   *Security: Now checks for collisions against existing transactions.
    * Uses cryptographically secure random bytes (32 bytes = 256 bits of entropy).
    *
    * @param state - Current mock state to check for collisions
@@ -1346,7 +1346,7 @@ export class MockRuntime implements IACTPRuntime {
   /**
    * Generates a unique escrow ID with improved randomness.
    *
-   * SECURITY FIX (L-5): Uses 16 bytes (128 bits) of cryptographic randomness
+   *Security: Uses 16 bytes (128 bits) of cryptographic randomness
    * instead of just 4 bytes. Removes timestamp to prevent predictability.
    *
    * @returns Unique escrow ID

@@ -143,7 +143,7 @@ export function loadConfig(projectRoot: string = process.cwd()): CLIConfig {
       throw new Error('Config missing required field: address');
     }
 
-    // SECURITY FIX (L-2): Warn about private key storage in config file
+    // Security: Warn about private key storage in config file
     if (config.privateKey) {
       console.warn('\x1b[33m%s\x1b[0m', 'WARNING: Private key stored in config file.');
       console.warn('\x1b[33m%s\x1b[0m', '         Consider using ACTP_PRIVATE_KEY environment variable instead.');

@@ -247,7 +247,7 @@ export class Agent extends EventEmitter {
   /**
    * Active jobs
    *
-   * SECURITY FIX (C-2): Changed from Map to LRUCache to prevent unbounded growth
+   *Security: Changed from Map to LRUCache to prevent unbounded growth
    * Maximum 1000 active jobs with LRU eviction
    */
   private activeJobs = new LRUCache<string, Job>(1000);
@@ -255,7 +255,7 @@ export class Agent extends EventEmitter {
   /**
    * Processed job IDs (for deduplication)
    *
-   * SECURITY FIX (C-1): Track jobs we've attempted to process
+   *Security: Track jobs we've attempted to process
    * This prevents race conditions where the same job is processed multiple times
    * before the state transition completes
    */
@@ -264,7 +264,7 @@ export class Agent extends EventEmitter {
   /**
    * Processing locks (for atomic locking)
    *
-   * SECURITY FIX (C-1): Mutex for job processing.
+   *Security: Mutex for job processing.
    * When we see a job, we IMMEDIATELY add to this set (atomic in single-threaded JS).
    * This prevents race conditions where two poll cycles both pass the processedJobs.has()
    * check before either calls processedJobs.set().
@@ -274,7 +274,7 @@ export class Agent extends EventEmitter {
   /**
    * Concurrency semaphore
    *
-   * SECURITY FIX (MEDIUM-4): Limits concurrent job execution to prevent
+   *Security: Limits concurrent job execution to prevent
    * resource exhaustion (memory/CPU DoS). Uses behavior.concurrency setting.
    */
   private concurrencySemaphore!: Semaphore;
@@ -329,7 +329,7 @@ export class Agent extends EventEmitter {
       throw new ServiceConfigError('name', 'Agent name is required');
     }
 
-    // SECURITY FIX (H-6): Use dedicated AGIRAILS directory as base
+    // Security: Use dedicated AGIRAILS directory as base
     // This prevents writes anywhere in the project directory
     const AGIRAILS_BASE = path.join(os.homedir(), '.agirails');
 
@@ -360,7 +360,7 @@ export class Agent extends EventEmitter {
       minLevel: config.logging?.level || 'info',
     });
 
-    // SECURITY FIX (MEDIUM-4): Initialize concurrency semaphore
+    // Security: Initialize concurrency semaphore
     // Default to 10 concurrent jobs if not specified
     const maxConcurrency = config.behavior?.concurrency || 10;
     this.concurrencySemaphore = new Semaphore(maxConcurrency);
@@ -518,7 +518,7 @@ export class Agent extends EventEmitter {
       throw new ServiceConfigError('name', 'Service name is required');
     }
 
-    // SECURITY FIX (H-2): Validate service name to prevent injection
+    // Security: Validate service name to prevent injection
     try {
       config.name = validateServiceName(config.name);
     } catch (error) {
@@ -594,7 +594,7 @@ export class Agent extends EventEmitter {
   /**
    * Active jobs
    *
-   * SECURITY FIX (N-2): Now uses LRUCache.values() iterator.
+   *Security: Now uses LRUCache.values() iterator.
    * Returns a snapshot of currently active jobs.
    */
   get jobs(): Job[] {
@@ -723,7 +723,7 @@ export class Agent extends EventEmitter {
   /**
    * Poll for new jobs
    *
-   * SECURITY FIXES:
+   * Security notes:
    * - C-1: Race condition prevention using processedJobs deduplication
    * - C-2: Memory leak prevention using LRUCache
    * - H-1: DoS prevention by filtering transactions before loading all
@@ -740,7 +740,7 @@ export class Agent extends EventEmitter {
     }
 
     try {
-      // SECURITY FIX (H-1): Use filtered query instead of getAllTransactions
+      // Security: Use filtered query instead of getAllTransactions
       // This prevents DoS via memory exhaustion by only fetching relevant transactions
       let pendingJobs: any[] = [];
 
@@ -767,7 +767,7 @@ export class Agent extends EventEmitter {
       // Process each pending job
       for (const tx of pendingJobs) {
         try {
-          // SECURITY FIX (C-1): Check processingLocks first (atomic check)
+          // Security: Check processingLocks first (atomic check)
           // This prevents race conditions where two poll cycles both try to process
           // the same job before either transitions the state
           if (this.processingLocks.has(tx.id) || this.processedJobs.has(tx.id)) {
@@ -777,13 +777,13 @@ export class Agent extends EventEmitter {
           // IMMEDIATELY acquire lock (atomic in single-threaded JS)
           this.processingLocks.add(tx.id);
 
-          // SECURITY FIX (C-2): Check if already in active jobs (LRUCache handles size limit)
+          // Security: Check if already in active jobs (LRUCache handles size limit)
           if (this.activeJobs.has(tx.id)) {
             this.processingLocks.delete(tx.id);
             continue;
           }
 
-          // SECURITY FIX (H-4): Verify this agent is authorized to accept this transaction
+          // Security: Verify this agent is authorized to accept this transaction
           // Check that tx.provider matches our address (prevents unauthorized state transitions)
           if (tx.provider !== this.address) {
             this.logger.warn('Unauthorized transaction detected', {
@@ -815,7 +815,7 @@ export class Agent extends EventEmitter {
           // Create Job object from transaction
           const job = this.createJobFromTransaction(tx);
 
-          // SECURITY FIX (C-2): Add to active jobs (LRUCache prevents unbounded growth)
+          // Security: Add to active jobs (LRUCache prevents unbounded growth)
           this.activeJobs.set(job.id, job);
 
           // Link escrow immediately to transition out of INITIATED state
@@ -868,7 +868,7 @@ export class Agent extends EventEmitter {
   /**
    * Find service handler for a transaction
    *
-   * SECURITY FIX (MEDIUM): Use exact field matching instead of substring search
+   *Security: Use exact field matching instead of substring search
    * to prevent service routing spoofing attacks.
    *
    * Supports multiple formats (in priority order):
@@ -939,7 +939,7 @@ export class Agent extends EventEmitter {
   /**
    * Check if job should be auto-accepted
    *
-   * SECURITY FIX (MVP): Added pricing strategy evaluation
+   *Security: Added pricing strategy evaluation
    * - Checks service-level filters (budget constraints)
    * - Evaluates pricing strategy if configured
    * - Only accepts jobs that meet pricing requirements
@@ -1186,13 +1186,13 @@ export class Agent extends EventEmitter {
   /**
    * Process a job by invoking the handler
    *
-   * SECURITY FIX (C-2): Always cleanup activeJobs on completion/failure
-   * SECURITY FIX (MEDIUM-4): Uses semaphore to limit concurrent execution
+   *Security: Always cleanup activeJobs on completion/failure
+   *Security: Uses semaphore to limit concurrent execution
    */
   private async processJob(job: Job, handler: JobHandler): Promise<void> {
     const startTime = Date.now();
 
-    // SECURITY FIX (MEDIUM-4): Check concurrency limit before processing
+    // Security: Check concurrency limit before processing
     // If semaphore is full, wait up to 30 seconds for a slot
     const CONCURRENCY_TIMEOUT_MS = 30000;
 
@@ -1226,7 +1226,7 @@ export class Agent extends EventEmitter {
       // Invoke handler
       const result = await handler(job, context);
 
-      // SECURITY FIX (CRITICAL-2): Use ProofGenerator to create authenticated delivery proof
+      // Security: Use ProofGenerator to create authenticated delivery proof
       // This ensures the proof has proper structure with txId, contentHash, and timestamp
       const proofGenerator = new ProofGenerator();
       const deliverable = typeof result === 'string' ? result : JSON.stringify(result);
@@ -1273,7 +1273,7 @@ export class Agent extends EventEmitter {
         await this._client.runtime.transitionState(job.id, 'DELIVERED', disputeWindowProof);
       }
 
-      // SECURITY FIX (C-2): Remove from active jobs on SUCCESS
+      // Security: Remove from active jobs on SUCCESS
       this.activeJobs.delete(job.id);
 
       // Update stats
@@ -1295,7 +1295,7 @@ export class Agent extends EventEmitter {
       this.emit('job:completed', job, result);
       this.emit('payment:received', job.budget);
     } catch (error) {
-      // SECURITY FIX (C-2): Remove from active jobs on FAILURE
+      // Security: Remove from active jobs on FAILURE
       this.activeJobs.delete(job.id);
       this._stats.jobsFailed++;
       this._stats.successRate =
@@ -1304,7 +1304,7 @@ export class Agent extends EventEmitter {
       this.logger.error('Job failed', { jobId: job.id }, error as Error);
       this.emit('job:failed', job, error);
     } finally {
-      // SECURITY FIX (MEDIUM-4): Always release semaphore permit
+      // Security: Always release semaphore permit
       this.concurrencySemaphore.release();
     }
   }

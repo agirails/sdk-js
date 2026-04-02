@@ -140,7 +140,7 @@ export class AgentRegistry {
    * ```
    */
   async registerAgent(params: RegisterAgentParams): Promise<string> {
-    // SECURITY FIX (H-1): Await async endpoint validation (DNS resolution + SSRF check)
+    // Security: Await async endpoint validation (DNS resolution + SSRF check)
     await validateEndpointURL(params.endpoint, 'endpoint');
 
     if (!params.serviceDescriptors || params.serviceDescriptors.length === 0) {
@@ -227,7 +227,7 @@ export class AgentRegistry {
    * @param newEndpoint - New webhook/IPFS gateway URL
    */
   async updateEndpoint(newEndpoint: string): Promise<string> {
-    // SECURITY FIX (H-1): Await async endpoint validation (DNS resolution + SSRF check)
+    // Security: Await async endpoint validation (DNS resolution + SSRF check)
     await validateEndpointURL(newEndpoint, 'newEndpoint');
 
     try {

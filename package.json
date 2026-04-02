@@ -31,16 +31,9 @@
     "test": "jest --runInBand",
     "test:watch": "jest --watch --runInBand",
     "test:coverage": "jest --coverage --runInBand",
-    "test:onchain": "hardhat test",
     "lint": "eslint src --ext .ts",
     "format": "prettier --write 'src/**/*.ts'",
     "prepublishOnly": "npm run build && npm test && npm run lint",
-    "test:setup": "ts-node test-scripts/00-setup.ts",
-    "test:happy-path": "ts-node test-scripts/01-happy-path.ts",
-    "test:dispute": "ts-node test-scripts/02-dispute.ts",
-    "test:cancel": "ts-node test-scripts/03-cancel.ts",
-    "test:happy-path-eas": "ts-node test-scripts/04-happy-path-eas.ts",
-    "test:status": "ts-node test-scripts/status.ts",
     "test:all": "npm run test:setup && npm run test:happy-path && npm run test:dispute && npm run test:cancel",
     "eas:register": "ts-node scripts/register-eas-schema.ts",
     "eas:register:mainnet": "ts-node scripts/register-eas-schema.ts base-mainnet"
@@ -62,12 +55,12 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/agirails/sdk"
+    "url": "https://github.com/agirails/sdk-js"
   },
   "bugs": {
-    "url": "https://github.com/agirails/sdk/issues"
+    "url": "https://github.com/agirails/sdk-js/issues"
   },
-  "homepage": "https://github.com/agirails/sdk#readme",
+  "homepage": "https://github.com/agirails/sdk-js#readme",
   "dependencies": {
     "@aws-sdk/client-s3": "^3.989.0",
     "@ethereum-attestation-service/eas-sdk": "1.6.1",

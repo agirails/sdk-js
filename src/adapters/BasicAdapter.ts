@@ -135,7 +135,7 @@ export class BasicAdapter extends BaseAdapter implements IAdapter {
    *
    * @param runtime - ACTP runtime implementation (MockRuntime or BlockchainRuntime)
    * @param requesterAddress - The requester's Ethereum address
-   * @param easHelper - Optional EAS helper for attestation verification (SECURITY FIX C-4)
+   * @param easHelper - Optional EAS helper for attestation verification
    * @param walletProvider - Optional wallet provider for AA batched payments
    * @param contractAddresses - Optional contract addresses for batched payment encoding
    */
@@ -188,7 +188,7 @@ export class BasicAdapter extends BaseAdapter implements IAdapter {
     const amount = this.parseAmount(params.amount);
     const currentTime = this.runtime.time.now();
     const deadline = this.parseDeadline(params.deadline, currentTime);
-    // SECURITY FIX (L-1): Validate dispute window bounds
+    // Security: Validate dispute window bounds
     const disputeWindow = this.validateDisputeWindow(params.disputeWindow);
 
     const requester = this.requesterAddress;

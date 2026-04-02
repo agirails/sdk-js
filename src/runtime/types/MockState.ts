@@ -209,7 +209,7 @@ export interface MockState {
   /**
    * Global event log for all events (optional for backwards compatibility).
    *
-   * SECURITY FIX (L-4): Events are now persisted to state file for
+   *Security: Events are now persisted to state file for
    * debugging and audit purposes. This allows event history to survive
    * across CLI invocations.
    */

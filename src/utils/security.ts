@@ -1,7 +1,7 @@
 /**
  * Security Utilities for ACTP SDK
  *
- * SECURITY FIXES:
+ * Security notes:
  * - H-7: Constant-time string comparison (timing attack prevention)
  * - H-6: Path traversal prevention
  * - H-2: Input validation and sanitization
@@ -191,7 +191,7 @@ export function safeJSONParse<T = any>(
     return null;
   }
 
-  // SECURITY FIX (C-3): Check JSON size to prevent DoS attacks
+  // Security: Check JSON size to prevent DoS attacks
   const MAX_JSON_SIZE = 1_000_000; // 1MB
   if (jsonString.length > MAX_JSON_SIZE) {
     return null;
@@ -353,7 +353,7 @@ export class LRUCache<K, V> {
   /**
    * Check if key exists in cache
    *
-   * SECURITY FIX (N-1): Use Map's native has() instead of get()
+   *Security: Use Map's native has() instead of get()
    * to avoid modifying LRU order on read-only operations.
    *
    * @param key - Cache key
@@ -389,7 +389,7 @@ export class LRUCache<K, V> {
   /**
    * Get all values from cache
    *
-   * SECURITY FIX (N-2): Add iterator support for LRUCache.
+   *Security: Add iterator support for LRUCache.
    * Returns values in LRU order (oldest to newest).
    *
    * @returns Array of all cached values

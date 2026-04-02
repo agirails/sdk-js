@@ -283,7 +283,7 @@ export class MockStateManager {
       throw new MockStateCorruptedError(sanitizePath(this.statePath), error as Error);
     }
 
-    // SECURITY FIX: Check nesting depth to prevent DoS via deeply nested JSON
+    // Security: Check nesting depth to prevent DoS via deeply nested JSON
     try {
       checkNestingDepth(state);
     } catch (error) {
@@ -530,7 +530,7 @@ export class MockStateManager {
       transactions: {},
       escrows: {},
       accounts: {},
-      // SECURITY FIX (L-4): Initialize events array for persistence
+      // Security: Initialize events array for persistence
       events: [],
     };
   }

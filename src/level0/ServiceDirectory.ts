@@ -15,7 +15,7 @@ import { validateServiceName, isValidAddress } from '../utils/security';
  * Maps service names to provider addresses.
  * This is a singleton that can be updated by provide() calls.
  *
- * SECURITY FIXES:
+ * Security notes:
  * - H-5: Address validation to prevent poisoning
  * - H-2: Service name validation
  */
@@ -28,18 +28,18 @@ class ServiceDirectory {
   /**
    * Register a provider for a service
    *
-   * SECURITY FIX (H-5): Validate address format before registration
-   * SECURITY FIX (H-2): Validate service name
+   *Security: Validate address format before registration
+   *Security: Validate service name
    *
    * @param service - Service name
    * @param provider - Provider address
    * @throws Error if service name or provider address is invalid
    */
   register(service: string, provider: string): void {
-    // SECURITY FIX (H-2): Validate service name
+    // Security: Validate service name
     const validatedService = validateServiceName(service);
 
-    // SECURITY FIX (H-5): Validate Ethereum address format
+    // Security: Validate Ethereum address format
     if (!isValidAddress(provider)) {
       throw new Error(
         `Invalid provider address: "${provider}". Must be a valid Ethereum address (0x followed by 40 hex characters).`
@@ -56,17 +56,17 @@ class ServiceDirectory {
   /**
    * Unregister a provider from a service
    *
-   * SECURITY FIX (H-5): Validate address format
-   * SECURITY FIX (H-2): Validate service name
+   *Security: Validate address format
+   *Security: Validate service name
    *
    * @param service - Service name
    * @param provider - Provider address
    */
   unregister(service: string, provider: string): void {
-    // SECURITY FIX (H-2): Validate service name
+    // Security: Validate service name
     const validatedService = validateServiceName(service);
 
-    // SECURITY FIX (H-5): Validate address format
+    // Security: Validate address format
     if (!isValidAddress(provider)) {
       throw new Error(`Invalid provider address: "${provider}"`);
     }
@@ -83,13 +83,13 @@ class ServiceDirectory {
   /**
    * Find providers for a service
    *
-   * SECURITY FIX (H-2): Validate service name
+   *Security: Validate service name
    *
    * @param service - Service name
    * @returns Array of provider addresses
    */
   findProviders(service: string): string[] {
-    // SECURITY FIX (H-2): Validate service name
+    // Security: Validate service name
     try {
       const validatedService = validateServiceName(service);
       const providers = this.directory.get(validatedService);

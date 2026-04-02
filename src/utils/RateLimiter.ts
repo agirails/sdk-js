@@ -1,7 +1,7 @@
 /**
  * RateLimiter - Prevents excessive API/RPC calls
  *
- * SECURITY FIX (M-4): Rate limiting to prevent:
+ *Security: Rate limiting to prevent:
  * - API rate limit exhaustion
  * - Self-inflicted DoS
  * - Excessive RPC costs
@@ -157,7 +157,7 @@ export interface CircuitBreakerConfig {
   recoveryTimeout: number;
   /** Number of successes in half-open needed to close circuit */
   successThreshold?: number;
-  /** SECURITY FIX (MEDIUM-5): Timeout for half-open test (ms). If no result reported, auto-reset. Default: 30000 */
+  /**Security: Timeout for half-open test (ms). If no result reported, auto-reset. Default: 30000 */
   halfOpenTestTimeout?: number;
 }
 
@@ -176,7 +176,7 @@ export interface CircuitBreakerResult {
 /**
  * Circuit Breaker - Prevents cascading failures
  *
- * SECURITY FIX (M-5): Circuit breaker to:
+ *Security: Circuit breaker to:
  * - Prevent repeated calls to failing services
  * - Allow systems to recover
  * - Provide graceful degradation
@@ -217,11 +217,11 @@ export class CircuitBreaker {
   private lastFailureTime = 0;
   private readonly config: Required<CircuitBreakerConfig>;
 
-  // SECURITY FIX (CIRCUIT-HALFOPEN): Track if a test request is in progress
+  // Security: Track if a test request is in progress
   // Half-open state should only allow ONE request at a time to test service recovery
   private halfOpenTestInProgress = false;
 
-  // SECURITY FIX (MEDIUM-5): Track when half-open test started for timeout detection
+  // Security: Track when half-open test started for timeout detection
   private halfOpenTestStartTime = 0;
 
   constructor(config: CircuitBreakerConfig) {
@@ -229,7 +229,7 @@ export class CircuitBreaker {
       failureThreshold: config.failureThreshold,
       recoveryTimeout: config.recoveryTimeout,
       successThreshold: config.successThreshold ?? 1,
-      // SECURITY FIX (MEDIUM-5): Default 30 second timeout for half-open tests
+      // Security: Default 30 second timeout for half-open tests
       halfOpenTestTimeout: config.halfOpenTestTimeout ?? 30000,
     };
   }
@@ -237,7 +237,7 @@ export class CircuitBreaker {
   /**
    * Check if operation can be executed
    *
-   * SECURITY FIX (CIRCUIT-HALFOPEN): In half-open state, only allow ONE request
+   *Security: In half-open state, only allow ONE request
    * at a time to prevent overwhelming a recovering service.
    */
   canExecute(): CircuitBreakerResult {
@@ -256,10 +256,10 @@ export class CircuitBreaker {
         if (now - this.lastFailureTime >= this.config.recoveryTimeout) {
           this.state = 'half-open';
           this.successes = 0;
-          // SECURITY FIX (HIGH-7): Removed duplicate assignment (was setting false then true)
-          // SECURITY FIX (CIRCUIT-HALFOPEN): Mark test as in progress for first allowed request
+          // Security: Removed duplicate assignment (was setting false then true)
+          // Security: Mark test as in progress for first allowed request
           this.halfOpenTestInProgress = true;
-          // SECURITY FIX (MEDIUM-5): Record when test started for timeout detection
+          // Security: Record when test started for timeout detection
           this.halfOpenTestStartTime = now;
           return {
             allowed: true,
@@ -274,7 +274,7 @@ export class CircuitBreaker {
         };
 
       case 'half-open':
-        // SECURITY FIX (MEDIUM-5): Check if test has timed out (caller never reported result)
+        // Security: Check if test has timed out (caller never reported result)
         // This prevents the circuit breaker from getting stuck if caller crashes/forgets to report
         if (this.halfOpenTestInProgress && this.halfOpenTestStartTime > 0) {
           const testDuration = now - this.halfOpenTestStartTime;
@@ -285,7 +285,7 @@ export class CircuitBreaker {
           }
         }
 
-        // SECURITY FIX (CIRCUIT-HALFOPEN): Only allow if no test is in progress
+        // Security: Only allow if no test is in progress
         // This prevents multiple concurrent requests from overwhelming a recovering service
         if (this.halfOpenTestInProgress) {
           return {
@@ -296,7 +296,7 @@ export class CircuitBreaker {
         }
         // Mark test as in progress
         this.halfOpenTestInProgress = true;
-        // SECURITY FIX (MEDIUM-5): Record when test started
+        // Security: Record when test started
         this.halfOpenTestStartTime = now;
         return {
           allowed: true,
@@ -309,14 +309,14 @@ export class CircuitBreaker {
   /**
    * Record a successful operation
    *
-   * SECURITY FIX (CIRCUIT-HALFOPEN): Clears test-in-progress flag
-   * SECURITY FIX (MEDIUM-5): Clears test start time
+   *Security: Clears test-in-progress flag
+   *Security: Clears test start time
    */
   recordSuccess(): void {
     if (this.state === 'half-open') {
-      // SECURITY FIX (CIRCUIT-HALFOPEN): Clear test flag
+      // Security: Clear test flag
       this.halfOpenTestInProgress = false;
-      // SECURITY FIX (MEDIUM-5): Clear test start time
+      // Security: Clear test start time
       this.halfOpenTestStartTime = 0;
       this.successes++;
       if (this.successes >= this.config.successThreshold) {
@@ -333,17 +333,17 @@ export class CircuitBreaker {
   /**
    * Record a failed operation
    *
-   * SECURITY FIX (CIRCUIT-HALFOPEN): Clears test-in-progress flag
-   * SECURITY FIX (MEDIUM-5): Clears test start time
+   *Security: Clears test-in-progress flag
+   *Security: Clears test start time
    */
   recordFailure(): void {
     this.failures++;
     this.lastFailureTime = Date.now();
 
     if (this.state === 'half-open') {
-      // SECURITY FIX (CIRCUIT-HALFOPEN): Clear test flag before opening
+      // Security: Clear test flag before opening
       this.halfOpenTestInProgress = false;
-      // SECURITY FIX (MEDIUM-5): Clear test start time
+      // Security: Clear test start time
       this.halfOpenTestStartTime = 0;
       // Immediately open on failure in half-open state
       this.state = 'open';
@@ -395,8 +395,8 @@ export class CircuitBreaker {
   /**
    * Manually reset the circuit breaker
    *
-   * SECURITY FIX (CIRCUIT-HALFOPEN): Also clears test-in-progress flag
-   * SECURITY FIX (MEDIUM-5): Also clears test start time
+   *Security: Also clears test-in-progress flag
+   *Security: Also clears test start time
    */
   reset(): void {
     this.state = 'closed';

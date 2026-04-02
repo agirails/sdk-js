@@ -55,7 +55,7 @@ export interface BlockchainRuntimeConfig {
   /** EAS (Ethereum Attestation Service) configuration for delivery proof verification */
   easConfig?: EASConfig;
   /**
-   * SECURITY FIX (CRITICAL-2): Require attestation verification before escrow release
+   *Security: Require attestation verification before escrow release
    * When true, releaseEscrow() will require a valid EAS attestation
    * Default: false for backward compatibility, SHOULD be true in production
    */
@@ -98,22 +98,22 @@ export class BlockchainRuntime implements IACTPRuntime {
   private readonly kernel: ACTPKernel;
   private readonly escrow: EscrowVault;
   private readonly events: EventMonitor;
-  // SECURITY FIX (H-4): MessageSigner created via factory in initialize()
+  // Security: MessageSigner created via factory in initialize()
   private messageSigner: MessageSigner | null = null;
-  // SECURITY FIX (CRITICAL-2): EAS helper for attestation verification
+  // Security: EAS helper for attestation verification
   private easHelper: EASHelper | null = null;
-  // SECURITY FIX (HIGH-3): Attestation tracker for replay protection
+  // Security: Attestation tracker for replay protection
   private readonly attestationTracker: IUsedAttestationTracker;
-  // SECURITY FIX (CRITICAL-2): Flag to require attestation before release
+  // Security: Flag to require attestation before release
   private readonly requireAttestation: boolean;
-  // SECURITY FIX (MEDIUM-9): Nonce tracker for message replay protection
+  // Security: Nonce tracker for message replay protection
   private readonly nonceTracker: IReceivedNonceTracker;
   private readonly networkConfig: NetworkConfig;
   private readonly provider: JsonRpcProvider;
   private readonly signer: Signer;
   private readonly easConfig?: EASConfig;
 
-  // SECURITY FIX (HIGH-3): Provider reconnection with exponential backoff
+  // Security: Provider reconnection with exponential backoff
   private reconnectAttempts = 0;
   private readonly maxReconnectAttempts = 5;
   private readonly baseReconnectDelay = 1000; // 1 second
@@ -149,18 +149,18 @@ export class BlockchainRuntime implements IACTPRuntime {
     // intrinsic transaction cost" even when the wallet has enough ETH for the *actual*
     // network fee (ethers uses maxFee * gasLimit for the balance check).
 
-    // SECURITY FIX (CRITICAL-2): Store EAS config for initialization
+    // Security: Store EAS config for initialization
     this.easConfig = config.easConfig;
 
-    // SECURITY FIX (CRITICAL-2): Default to NOT requiring attestation for backward compatibility
+    // Security: Default to NOT requiring attestation for backward compatibility
     // Production deployments SHOULD set this to true
     this.requireAttestation = config.requireAttestation ?? false;
 
-    // SECURITY FIX (HIGH-3): Create attestation tracker with optional persistence
+    // Security: Create attestation tracker with optional persistence
     // If stateDirectory is provided, attestations survive process restarts
     this.attestationTracker = createUsedAttestationTracker(config.stateDirectory);
 
-    // SECURITY FIX (MEDIUM-9): Create nonce tracker for message replay protection
+    // Security: Create nonce tracker for message replay protection
     // Uses memory-efficient strategy (tracks highest nonce per sender+type)
     this.nonceTracker = createReceivedNonceTracker('memory-efficient');
 
@@ -178,13 +178,13 @@ export class BlockchainRuntime implements IACTPRuntime {
       config.gasSettings
     );
 
-    // SECURITY FIX (C-3): Use public getters instead of private field access
+    // Security: Use public getters instead of private field access
     this.events = new EventMonitor(
       this.kernel.getContract(),
       this.escrow.getContract()
     );
 
-    // SECURITY FIX (H-4): MessageSigner is created in initialize() using factory pattern
+    // Security: MessageSigner is created in initialize() using factory pattern
     // This ensures EIP-712 domain is always properly initialized before use
   }
 
@@ -195,7 +195,7 @@ export class BlockchainRuntime implements IACTPRuntime {
    * It initializes the MessageSigner with proper EIP-712 domain and
    * optionally the EASHelper for attestation verification.
    *
-   * SECURITY FIX (CHAINID-VALIDATION): Validates that the connected network
+   *Security: Validates that the connected network
    * matches the expected network configuration to prevent cross-chain attacks.
    *
    * @example
@@ -205,7 +205,7 @@ export class BlockchainRuntime implements IACTPRuntime {
    * ```
    */
   async initialize(): Promise<void> {
-    // SECURITY FIX (CHAINID-VALIDATION): Verify connected network matches config
+    // Security: Verify connected network matches config
     // This prevents:
     // 1. Cross-chain replay attacks (signing for one chain, replaying on another)
     // 2. Misconfigured RPC endpoints (connecting to wrong network)
@@ -237,9 +237,9 @@ export class BlockchainRuntime implements IACTPRuntime {
       });
     }
 
-    // SECURITY FIX (H-4): Use factory pattern to guarantee domain initialization
+    // Security: Use factory pattern to guarantee domain initialization
     // This prevents runtime errors from uninitialized domain
-    // SECURITY FIX (MEDIUM-9): Wire nonce tracker for message replay protection
+    // Security: Wire nonce tracker for message replay protection
     this.messageSigner = await MessageSigner.create(
       this.signer,
       this.networkConfig.contracts.actpKernel,
@@ -249,7 +249,7 @@ export class BlockchainRuntime implements IACTPRuntime {
       }
     );
 
-    // SECURITY FIX (CRITICAL-2): Initialize EAS helper if config provided
+    // Security: Initialize EAS helper if config provided
     // This enables attestation verification for escrow release
     if (this.easConfig) {
       this.easHelper = new EASHelper(
@@ -273,7 +273,7 @@ export class BlockchainRuntime implements IACTPRuntime {
   /**
    * Require initialization before use
    *
-   * SECURITY FIX (M-4): Enforces initialize() call before operations
+   *Security: Enforces initialize() call before operations
    * @throws Error if initialize() has not been called
    */
   private requireInitialized(): void {
@@ -288,10 +288,10 @@ export class BlockchainRuntime implements IACTPRuntime {
   /**
    * Ensure provider connection is healthy with automatic reconnection
    *
-   * SECURITY FIX (HIGH-3): Implements exponential backoff reconnection
+   *Security: Implements exponential backoff reconnection
    * to handle transient network failures gracefully.
    *
-   * SECURITY FIX (H-4): Converted from recursive to iterative loop
+   *Security: Converted from recursive to iterative loop
    * to prevent stack overflow on prolonged network failures.
    *
    * @throws Error if connection cannot be established after max attempts
@@ -304,7 +304,7 @@ export class BlockchainRuntime implements IACTPRuntime {
       return;
     }
 
-    // SECURITY FIX (H-4): Iterative loop instead of recursion (prevents stack overflow)
+    // Security: Iterative loop instead of recursion (prevents stack overflow)
     for (let attempt = 0; attempt <= this.maxReconnectAttempts; attempt++) {
       try {
         // Test connection with a simple call
@@ -344,7 +344,7 @@ export class BlockchainRuntime implements IACTPRuntime {
   /**
    * Get provider connection status
    *
-   * SECURITY FIX (HIGH-3): Monitoring method for connection health
+   *Security: Monitoring method for connection health
    *
    * @returns Connection status information
    */
@@ -369,10 +369,10 @@ export class BlockchainRuntime implements IACTPRuntime {
    * @returns Promise resolving to transaction ID (bytes32 hex string)
    */
   async createTransaction(params: CreateTransactionParams): Promise<string> {
-    // SECURITY FIX (M-4): Enforce initialization
+    // Security: Enforce initialization
     this.requireInitialized();
 
-    // SECURITY FIX (HIGH-3): Ensure provider connection before transaction
+    // Security: Ensure provider connection before transaction
     await this.ensureConnected();
 
     // Validate parameters
@@ -398,7 +398,7 @@ export class BlockchainRuntime implements IACTPRuntime {
       amount: BigInt(params.amount),
       deadline: params.deadline,
       disputeWindow: params.disputeWindow || 172800, // Default 2 days
-      // SECURITY FIX (CRITICAL): serviceDescription should be a bytes32 hash
+      // Security: serviceDescription should be a bytes32 hash
       // If caller passes raw string, it will fail on-chain. Basic/Standard API now hash before calling.
       metadata: this.validateServiceHash(params.serviceDescription),
       // ERC-8004 agent ID - pass through if provided (see ADR-001)
@@ -421,10 +421,10 @@ export class BlockchainRuntime implements IACTPRuntime {
    * @returns Promise resolving to escrow ID (same as txId)
    */
   async linkEscrow(txId: string, amount: string): Promise<string> {
-    // SECURITY FIX (M-4): Enforce initialization
+    // Security: Enforce initialization
     this.requireInitialized();
 
-    // SECURITY FIX (HIGH-3): Ensure provider connection before transaction
+    // Security: Ensure provider connection before transaction
     await this.ensureConnected();
 
     // Validate transaction exists and get details
@@ -462,7 +462,7 @@ export class BlockchainRuntime implements IACTPRuntime {
   /**
    * Transitions a transaction to a new state
    *
-   * SECURITY FIX (PROOF-PARAM): Added optional proof parameter for DELIVERED state.
+   *Security: Added optional proof parameter for DELIVERED state.
    * The kernel contract uses proof data for dispute window configuration and
    * delivery verification. Without proof, default dispute window applies.
    *
@@ -471,10 +471,10 @@ export class BlockchainRuntime implements IACTPRuntime {
    * @param proof - Optional proof data (hex string, e.g., ABI-encoded delivery proof)
    */
   async transitionState(txId: string, newState: TransactionState, proof?: string): Promise<void> {
-    // SECURITY FIX (M-4): Enforce initialization
+    // Security: Enforce initialization
     this.requireInitialized();
 
-    // SECURITY FIX (HIGH-3): Ensure provider connection before transaction
+    // Security: Ensure provider connection before transaction
     await this.ensureConnected();
 
     // Map TransactionState string to State enum value
@@ -494,7 +494,7 @@ export class BlockchainRuntime implements IACTPRuntime {
       throw new ValidationError('state', `Invalid state: ${newState}`);
     }
 
-    // SECURITY FIX (PROOF-PARAM): Pass proof to kernel if provided
+    // Security: Pass proof to kernel if provided
     // Default to empty bytes (0x) if no proof provided
     const proofBytes = proof || '0x';
     await this.kernel.transitionState(txId, stateValue, proofBytes);
@@ -542,7 +542,7 @@ export class BlockchainRuntime implements IACTPRuntime {
         7: 'CANCELLED',
       };
 
-      // SECURITY FIX (H-2): Throw error for unknown states instead of silent fallback
+      // Security: Throw error for unknown states instead of silent fallback
       const mappedState = stateMap[tx.state];
       if (mappedState === undefined) {
         throw new Error(
@@ -593,12 +593,12 @@ export class BlockchainRuntime implements IACTPRuntime {
   /**
    * Releases escrow funds to provider by settling the transaction
    *
-   * SECURITY FIX (CRITICAL-2): This method now validates:
+   *Security: This method now validates:
    * 1. Transaction state is DELIVERED
    * 2. Dispute window has elapsed
    * 3. EAS attestation is valid (if requireAttestation is true)
    *
-   * SECURITY FIX (SETTLEMENT-FLOW): Uses transitionState(SETTLED) instead of
+   *Security: Uses transitionState(SETTLED) instead of
    * direct releaseEscrow() call. Per ACTPKernel.sol, settlement via state transition
    * automatically handles escrow release through _releaseEscrow() internal call.
    * This ensures proper state machine progression and event emission.
@@ -612,10 +612,10 @@ export class BlockchainRuntime implements IACTPRuntime {
    * @throws Error if transaction not found, not in DELIVERED state, or attestation invalid
    */
   async releaseEscrow(escrowId: string, attestationUID?: string): Promise<void> {
-    // SECURITY FIX (M-4): Enforce initialization
+    // Security: Enforce initialization
     this.requireInitialized();
 
-    // SECURITY FIX (HIGH-3): Ensure provider connection before transaction
+    // Security: Ensure provider connection before transaction
     await this.ensureConnected();
 
     // SIMPLIFICATION (ESCROW-ID): escrowId = txId standard
@@ -632,13 +632,13 @@ export class BlockchainRuntime implements IACTPRuntime {
       txId = escrowId;
     }
 
-    // SECURITY FIX (MEDIUM-1): Fetch transaction and validate state
+    // Security: Fetch transaction and validate state
     const tx = await this.getTransaction(txId);
     if (!tx) {
       throw new Error(`Transaction not found: ${txId}`);
     }
 
-    // SECURITY FIX (MEDIUM-1): Validate transaction is in DELIVERED state
+    // Security: Validate transaction is in DELIVERED state
     if (tx.state !== 'DELIVERED') {
       throw new Error(
         `Cannot release escrow: transaction ${txId} is in state ${tx.state}, expected DELIVERED. ` +
@@ -646,7 +646,7 @@ export class BlockchainRuntime implements IACTPRuntime {
       );
     }
 
-    // SECURITY FIX (MEDIUM-1): Validate dispute window has elapsed for non-requesters.
+    // Security: Validate dispute window has elapsed for non-requesters.
     // Requester is allowed to approve early release (before dispute window end).
     if (tx.completedAt && tx.disputeWindow) {
       if (DisputeWindow.isActive(tx.completedAt, tx.disputeWindow)) {
@@ -665,7 +665,7 @@ export class BlockchainRuntime implements IACTPRuntime {
       }
     }
 
-    // SECURITY FIX (CRITICAL-2): Verify EAS attestation if required
+    // Security: Verify EAS attestation if required
     if (this.requireAttestation) {
       if (!attestationUID) {
         throw new Error(
@@ -707,7 +707,7 @@ export class BlockchainRuntime implements IACTPRuntime {
       sdkLogger.info('Settling transaction without attestation verification', { txId });
     }
 
-    // SECURITY FIX (SETTLEMENT-FLOW): Use transitionState(SETTLED) instead of releaseEscrow()
+    // Security: Use transitionState(SETTLED) instead of releaseEscrow()
     // Per ACTPKernel.sol, the settlement flow is:
     //   transitionState(txId, SETTLED, proof) → internally calls _releaseEscrow(txn)
     // This ensures proper state machine progression and emits correct events.
@@ -725,7 +725,7 @@ export class BlockchainRuntime implements IACTPRuntime {
    * @returns Promise resolving to balance as string (in USDC wei)
    */
   async getEscrowBalance(escrowId: string): Promise<string> {
-    // SECURITY FIX (M-4): Enforce initialization
+    // Security: Enforce initialization
     this.requireInitialized();
 
     try {
@@ -882,7 +882,7 @@ export class BlockchainRuntime implements IACTPRuntime {
   /**
    * Get nonce tracker instance (for monitoring/debugging)
    *
-   * SECURITY FIX (MEDIUM-9): Exposed for monitoring nonce replay protection
+   *Security: Exposed for monitoring nonce replay protection
    */
   getNonceTracker(): IReceivedNonceTracker {
     return this.nonceTracker;
@@ -898,7 +898,7 @@ export class BlockchainRuntime implements IACTPRuntime {
   /**
    * Validate and normalize service hash for on-chain storage
    *
-   * SECURITY FIX (CRITICAL): ACTPKernel expects bytes32 serviceHash.
+   *Security: ACTPKernel expects bytes32 serviceHash.
    * This method validates format and hashes raw strings if needed.
    *
    * @param serviceDescription - Service hash or description string
@@ -916,7 +916,7 @@ export class BlockchainRuntime implements IACTPRuntime {
       return serviceDescription;
     }
 
-    // SECURITY FIX (CRITICAL): If it's a raw string (legacy format), hash it
+    // Security: If it's a raw string (legacy format), hash it
     // This ensures on-chain compatibility with the contract's bytes32 expectation
     sdkLogger.warn('serviceDescription is not a valid bytes32 hash - hashing now (use ServiceHash.hash() for best practice)');
     return keccak256(toUtf8Bytes(serviceDescription));
@@ -929,7 +929,7 @@ export class BlockchainRuntime implements IACTPRuntime {
   /**
    * Estimate gas for createTransaction operation
    *
-   * SECURITY FIX (M-2): Pre-transaction gas estimation helps:
+   *Security: Pre-transaction gas estimation helps:
    * - Prevent failed transactions due to insufficient gas
    * - Allow users to make informed decisions about costs
    * - Catch potential issues before spending gas

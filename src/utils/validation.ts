@@ -142,7 +142,7 @@ export function validateTxId(txId: string, fieldName: string = 'txId'): void {
 /**
  * Check if IP address is private/local (SSRF protection)
  *
- * SECURITY FIX (H-1): Comprehensive private IP detection
+ *Security: Comprehensive private IP detection
  * - IPv4: 127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16
  * - IPv6: ::1, fc00::/7, fd00::/8, fe80::/10
  * - IPv4-mapped IPv6: ::ffff:127.0.0.0/8, ::ffff:10.0.0.0/8, etc.
@@ -202,7 +202,7 @@ function isPrivateIP(ip: string): boolean {
 /**
  * Validate endpoint URL (for AgentRegistry)
  *
- * SECURITY FIX (H-1): Enhanced SSRF protection with DNS resolution
+ *Security: Enhanced SSRF protection with DNS resolution
  *
  * Security checks:
  * - Valid URL format
@@ -245,7 +245,7 @@ export async function validateEndpointURL(endpoint: string, fieldName: string = 
     );
   }
 
-  // SECURITY FIX (H-1): First check hostname syntax
+  // Security: First check hostname syntax
   // URL().hostname strips brackets from IPv6 addresses
   const hostname = parsedUrl.hostname;
 
@@ -257,7 +257,7 @@ export async function validateEndpointURL(endpoint: string, fieldName: string = 
     );
   }
 
-  // SECURITY FIX (H-1): DNS resolution check
+  // Security: DNS resolution check
   // Resolve hostname to IP address(es) and validate each resolved IP
   // This prevents DNS rebinding attacks where hostname resolves to private IP
   if (parsedUrl.protocol === 'https:') {
@@ -281,7 +281,7 @@ export async function validateEndpointURL(endpoint: string, fieldName: string = 
             );
           }
 
-          // SECURITY FIX (H-1): CRITICAL - Block AWS metadata endpoint explicitly
+          // Security: CRITICAL - Block AWS metadata endpoint explicitly
           if (address === '169.254.169.254') {
             throw new ValidationError(
               fieldName,
@@ -292,7 +292,7 @@ export async function validateEndpointURL(endpoint: string, fieldName: string = 
         }
       }
     } catch (error: any) {
-      // SECURITY FIX (H-1): Fail-secure - if DNS lookup fails, reject
+      // Security: Fail-secure - if DNS lookup fails, reject
       // Don't allow requests to unresolvable hostnames (could be DNS rebinding setup)
       if (error instanceof ValidationError) {
         throw error; // Re-throw validation errors
@@ -353,7 +353,7 @@ export function validateArweaveTxId(txId: string, _fieldName: string = 'txId'): 
 /**
  * Validate gateway URL against whitelist (SSRF Protection - P0-1)
  *
- * SECURITY FIX: Only allow downloads from whitelisted gateway domains.
+ * Security: Only allow downloads from whitelisted gateway domains.
  * This prevents SSRF attacks where attacker controls the gateway URL.
  *
  * @param url - Full gateway URL to validate
@@ -470,7 +470,7 @@ export function validateSignature(signature: string, fieldName: string = 'signat
 /**
  * Sanitize error messages to remove sensitive data
  *
- * SECURITY FIX (P0-2): Removes credentials, private keys, and other
+ *Security: Removes credentials, private keys, and other
  * sensitive data from error messages before logging/returning.
  *
  * @param error - Error to sanitize
@@ -519,7 +519,7 @@ export function sanitizeErrorMessage(error: unknown): string {
 /**
  * Create a safe error object for external consumption
  *
- * SECURITY FIX (P0-2): Returns error without stack trace or sensitive details
+ *Security: Returns error without stack trace or sensitive details
  *
  * @param error - Original error
  * @param operation - What operation failed

@@ -1,7 +1,7 @@
 /**
  * ErrorRecoveryGuide - Structured Error Classification and Recovery Guidance
  *
- * SECURITY FIX (HIGH-6): Provides comprehensive error recovery documentation
+ *Security: Provides comprehensive error recovery documentation
  * to help developers handle errors appropriately and avoid security pitfalls.
  *
  * @module utils/ErrorRecoveryGuide

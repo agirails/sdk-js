@@ -368,7 +368,7 @@ function parseCommand(command: string): {
 /**
  * Execute a command (by spawning a child process)
  *
- * SECURITY FIX: No longer uses shell interpolation.
+ * Security: No longer uses shell interpolation.
  * Arguments are passed as an array directly to the actp binary.
  * This prevents command injection attacks.
  */

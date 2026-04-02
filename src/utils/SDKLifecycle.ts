@@ -1,7 +1,7 @@
 /**
  * SDKLifecycle - Proper cleanup and resource management
  *
- * SECURITY FIX (M-8): Ensures proper cleanup on SDK shutdown:
+ *Security: Ensures proper cleanup on SDK shutdown:
  * - Connection cleanup
  * - Pending request handling
  * - Memory release
@@ -70,7 +70,7 @@ export class SDKLifecycle {
   private readonly logger: Logger;
   private isShuttingDown = false;
 
-  // SECURITY FIX (NEW-HIGH-2): Store handler references for cleanup
+  // Security: Store handler references for cleanup
   private processHandlers: {
     sigint?: () => void;
     sigterm?: () => void;
@@ -260,7 +260,7 @@ export class SDKLifecycle {
       }
     }
 
-    // SECURITY FIX (NEW-HIGH-2): Remove process handlers to prevent memory leaks
+    // Security: Remove process handlers to prevent memory leaks
     this.unregisterProcessHandlers();
 
     // Clear registrations
@@ -282,7 +282,7 @@ export class SDKLifecycle {
   /**
    * Register process-level shutdown handlers
    *
-   * SECURITY FIX (NEW-HIGH-2): Store handler references for cleanup
+   *Security: Store handler references for cleanup
    * to prevent memory leaks when multiple SDKLifecycle instances are created.
    */
   private registerProcessHandlers(): void {
@@ -291,12 +291,12 @@ export class SDKLifecycle {
       return;
     }
 
-    // SECURITY FIX (NEW-HIGH-2): Prevent duplicate registrations
+    // Security: Prevent duplicate registrations
     if (this.processHandlersRegistered) {
       return;
     }
 
-    // SECURITY FIX (NEW-HIGH-2): Create named handlers we can remove later
+    // Security: Create named handlers we can remove later
     this.processHandlers.sigint = () => {
       this.logger.info('Received SIGINT, initiating shutdown');
       this.shutdown().then(() => {
@@ -345,7 +345,7 @@ export class SDKLifecycle {
   /**
    * Unregister process-level shutdown handlers
    *
-   * SECURITY FIX (NEW-HIGH-2): Remove handlers to prevent memory leaks
+   *Security: Remove handlers to prevent memory leaks
    */
   private unregisterProcessHandlers(): void {
     if (typeof process === 'undefined' || !this.processHandlersRegistered) {

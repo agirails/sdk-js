@@ -3,7 +3,7 @@ import { DeliveryProof } from '../types';
 import { DeliveryProofData, deliveryProofDataFromProof } from '../types/eip712';
 
 /**
- * SECURITY FIX (MEDIUM-2): URL validation configuration for SSRF prevention
+ *Security: URL validation configuration for SSRF prevention
  */
 export interface URLValidationConfig {
   /**
@@ -56,7 +56,7 @@ const DEFAULT_URL_CONFIG: Required<URLValidationConfig> = {
  * ProofGenerator - Content hashing and delivery proofs
  * Reference: Yellow Paper §11.4.1
  *
- * SECURITY FIX (MEDIUM-2): Now includes URL validation for SSRF prevention
+ *Security: Now includes URL validation for SSRF prevention
  */
 export class ProofGenerator {
   private readonly urlConfig: Required<URLValidationConfig>;
@@ -177,7 +177,7 @@ export class ProofGenerator {
   /**
    * Generate content hash from URL (for IPFS/Arweave)
    *
-   * SECURITY FIX (MEDIUM-2): Now includes:
+   *Security: Now includes:
    * - Protocol validation (HTTPS only by default)
    * - Hostname blocklist (prevents SSRF to internal services)
    * - Size limits (prevents DoS via large responses)
@@ -188,7 +188,7 @@ export class ProofGenerator {
    * @throws Error if URL is blocked, too large, or fetch fails
    */
   async hashFromUrl(url: string): Promise<string> {
-    // SECURITY FIX (MEDIUM-2): Validate URL before fetching
+    // Security: Validate URL before fetching
     this.validateUrl(url);
 
     // In browser/Node.js environment with fetch
@@ -210,7 +210,7 @@ export class ProofGenerator {
           throw new Error(`HTTP error: ${response.status} ${response.statusText}`);
         }
 
-        // SECURITY FIX (MEDIUM-2): Check Content-Length header first
+        // Security: Check Content-Length header first
         const contentLength = response.headers.get('content-length');
         if (contentLength) {
           const size = parseInt(contentLength, 10);
@@ -221,7 +221,7 @@ export class ProofGenerator {
           }
         }
 
-        // SECURITY FIX (MEDIUM-2): Read response with size limit
+        // Security: Read response with size limit
         const chunks: Uint8Array[] = [];
         let totalSize = 0;
         const reader = response.body?.getReader();
@@ -264,7 +264,7 @@ export class ProofGenerator {
   }
 
   /**
-   * SECURITY FIX (MEDIUM-2): Validate URL against security rules
+   *Security: Validate URL against security rules
    *
    * @param url - URL to validate
    * @throws Error if URL is not allowed

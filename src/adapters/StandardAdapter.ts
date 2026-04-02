@@ -109,7 +109,7 @@ export class StandardAdapter extends BaseAdapter implements IAdapter {
    *
    * @param runtime - ACTP runtime implementation (MockRuntime or BlockchainRuntime)
    * @param requesterAddress - The requester's Ethereum address
-   * @param easHelper - Optional EAS helper for attestation verification (SECURITY FIX C-4)
+   * @param easHelper - Optional EAS helper for attestation verification
    * @param walletProvider - Optional wallet provider for Smart Wallet routing
    * @param contractAddresses - Optional contract addresses for Smart Wallet call encoding
    */
@@ -148,7 +148,7 @@ export class StandardAdapter extends BaseAdapter implements IAdapter {
     const amount = this.parseAmount(params.amount);
     const currentTime = this.runtime.time.now();
     const deadline = this.parseDeadline(params.deadline, currentTime);
-    // SECURITY FIX (L-1): Validate dispute window bounds
+    // Security: Validate dispute window bounds
     const disputeWindow = this.validateDisputeWindow(params.disputeWindow);
 
     const requester = this.requesterAddress;
@@ -312,7 +312,7 @@ export class StandardAdapter extends BaseAdapter implements IAdapter {
    * Can only be called when transaction is in DELIVERED state
    * and dispute window has expired.
    *
-   * SECURITY FIX (C-4 + HIGH-5): MANDATORY attestation verification before release.
+   *Security: MANDATORY attestation verification before release.
    * When EASHelper is available (testnet/mainnet modes), attestation verification
    * is REQUIRED - not optional. This prevents releasing funds without proper
    * delivery proof.

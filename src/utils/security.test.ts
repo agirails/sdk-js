@@ -1,7 +1,7 @@
 /**
  * Security Utilities Tests
  *
- * SECURITY FIX (N-3): Comprehensive tests for security utilities
+ *Security: Comprehensive tests for security utilities
  * to ensure protection against timing attacks, path traversal,
  * injection attacks, and prototype pollution.
  *

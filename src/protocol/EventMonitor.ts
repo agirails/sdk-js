@@ -18,7 +18,7 @@ import { State, Transaction } from '../types';
  *     → Event emitted (already confirmed)
  *     → EventMonitor receives event (instant)
  *
- * SECURITY FIX (EVENT-MONITOR): Corrected event parameter order to match ABI.
+ *Security: Corrected event parameter order to match ABI.
  * Per ACTPKernel.json, TransactionCreated signature is:
  *   (bytes32 indexed transactionId, address indexed requester, address indexed provider, uint256 amount, bytes32 serviceHash)
  *
@@ -76,7 +76,7 @@ export class EventMonitor {
   /**
    * Get all transactions for an address
    *
-   * SECURITY FIX (EVENT-MONITOR): Corrected filter parameter order.
+   *Security: Corrected filter parameter order.
    * Per ACTPKernel.json ABI, TransactionCreated event signature is:
    *   (bytes32 indexed transactionId, address indexed requester, address indexed provider, uint256 amount, bytes32 serviceHash)
    *
@@ -84,7 +84,7 @@ export class EventMonitor {
    * - To filter by requester: (null, address, null)
    * - To filter by provider: (null, null, address)
    *
-   * SECURITY FIX (EVENT-MONITOR): Use getTransaction() instead of transactions()
+   *Security: Use getTransaction() instead of transactions()
    * The kernel contract exposes getTransaction(bytes32) not transactions(bytes32).
    */
   async getTransactionHistory(
@@ -109,7 +109,7 @@ export class EventMonitor {
         }
         const txId = (event as EventLog).args?.transactionId;
 
-        // SECURITY FIX: Use getTransaction() - the actual ABI function
+        // Security: Use getTransaction() - the actual ABI function
         // Previous code called transactions(txId) which doesn't exist in ABI
         const txData = await this.kernelContract.getTransaction(txId);
 
@@ -138,7 +138,7 @@ export class EventMonitor {
   /**
    * Subscribe to transaction creation events
    *
-   * SECURITY FIX (EVENT-MONITOR): Corrected event parameter order.
+   *Security: Corrected event parameter order.
    * Per ACTPKernel.json ABI:
    *   TransactionCreated(bytes32 indexed transactionId, address indexed requester, address indexed provider, uint256 amount, bytes32 serviceHash)
    */

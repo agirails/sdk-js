@@ -24,7 +24,7 @@ export interface IUsedAttestationTracker {
    * @param txId - Transaction ID (bytes32)
    * @returns true if recorded, false if already used for different transaction
    *
-   * SECURITY FIX (HIGH-1): This method is now async to ensure persistence completes
+   *Security: This method is now async to ensure persistence completes
    * before returning. Use recordUsageSync() for fire-and-forget behavior.
    */
   recordUsage(attestationUID: string, txId: string): Promise<boolean>;
@@ -53,10 +53,10 @@ export interface IUsedAttestationTracker {
 /**
  * In-Memory Used Attestation Tracker
  *
- * SECURITY FIX (C-1): Prevents attestation replay attacks by tracking
+ *Security: Prevents attestation replay attacks by tracking
  * which attestation UIDs have been used for which transactions.
  *
- * SECURITY FIX (NEW-H-2): LRU-style cache with max size to prevent DoS
+ *Security: LRU-style cache with max size to prevent DoS
  *
  * WARNING: In-memory only. For production:
  * - Use persistent storage (Redis, PostgreSQL, etc.)
@@ -66,7 +66,7 @@ export class InMemoryUsedAttestationTracker implements IUsedAttestationTracker {
   // Map: attestationUID -> txId
   private usedAttestations: Map<string, string> = new Map();
 
-  // SECURITY FIX (NEW-H-2): Maximum size to prevent memory exhaustion DoS
+  // Security: Maximum size to prevent memory exhaustion DoS
   private readonly maxSize: number;
 
   /**
@@ -86,8 +86,8 @@ export class InMemoryUsedAttestationTracker implements IUsedAttestationTracker {
    * @param txId - Transaction ID (bytes32)
    * @returns true if recorded, false if already used for different transaction
    *
-   * SECURITY FIX (NEW-H-2): LRU eviction when max size reached
-   * SECURITY FIX (HIGH-1): Now async for interface consistency
+   *Security: LRU eviction when max size reached
+   *Security: Now async for interface consistency
    */
   async recordUsage(attestationUID: string, txId: string): Promise<boolean> {
     return this.recordUsageSync(attestationUID, txId);
@@ -110,7 +110,7 @@ export class InMemoryUsedAttestationTracker implements IUsedAttestationTracker {
       return false;
     }
 
-    // SECURITY FIX (NEW-H-2): Enforce max size limit with true LRU behavior
+    // Security: Enforce max size limit with true LRU behavior
     if (this.usedAttestations.size >= this.maxSize && !existingTxId) {
       // Remove oldest entry (first entry in Map)
       const firstKey = this.usedAttestations.keys().next().value;
@@ -118,7 +118,7 @@ export class InMemoryUsedAttestationTracker implements IUsedAttestationTracker {
         this.usedAttestations.delete(firstKey);
       }
     } else if (existingTxId) {
-      // SECURITY FIX (M-3): True LRU - delete and re-add to move to end
+      // Security: True LRU - delete and re-add to move to end
       this.usedAttestations.delete(normalizedUID);
     }
 
@@ -132,14 +132,14 @@ export class InMemoryUsedAttestationTracker implements IUsedAttestationTracker {
    * @param attestationUID - EAS attestation UID (bytes32)
    * @returns Transaction ID if used, null if not used
    *
-   * SECURITY FIX (MEDIUM-4): Updates access order for true LRU behavior
+   *Security: Updates access order for true LRU behavior
    * Accessed items are moved to end of Map (most recently used)
    */
   getUsageForAttestation(attestationUID: string): string | null {
     const normalizedUID = attestationUID.toLowerCase();
     const txId = this.usedAttestations.get(normalizedUID);
 
-    // SECURITY FIX (MEDIUM-4): True LRU - move accessed item to end
+    // Security: True LRU - move accessed item to end
     // Without this, eviction uses insertion order, not access order
     if (txId !== undefined) {
       this.usedAttestations.delete(normalizedUID);
@@ -155,7 +155,7 @@ export class InMemoryUsedAttestationTracker implements IUsedAttestationTracker {
    * @param txId - Transaction ID
    * @returns true if attestation is unused or already used for this txId
    *
-   * SECURITY FIX (MEDIUM-4): Updates access order for true LRU behavior
+   *Security: Updates access order for true LRU behavior
    */
   isValidForTransaction(attestationUID: string, txId: string): boolean {
     const normalizedUID = attestationUID.toLowerCase();
@@ -163,7 +163,7 @@ export class InMemoryUsedAttestationTracker implements IUsedAttestationTracker {
 
     const existingTxId = this.usedAttestations.get(normalizedUID);
 
-    // SECURITY FIX (MEDIUM-4): True LRU - move accessed item to end
+    // Security: True LRU - move accessed item to end
     if (existingTxId !== undefined) {
       this.usedAttestations.delete(normalizedUID);
       this.usedAttestations.set(normalizedUID, existingTxId);
@@ -197,7 +197,7 @@ export class InMemoryUsedAttestationTracker implements IUsedAttestationTracker {
   /**
    * Cleanup old entries based on timestamp (optional)
    *
-   * SECURITY FIX (NEW-H-2): Manual cleanup for old entries
+   *Security: Manual cleanup for old entries
    * Note: This requires external timestamp tracking. For automatic cleanup,
    * use FileBasedUsedAttestationTracker with periodic cleanup.
    *
@@ -214,8 +214,8 @@ export class InMemoryUsedAttestationTracker implements IUsedAttestationTracker {
 /**
  * File-based Used Attestation Tracker for persistence
  *
- * SECURITY FIX (C-1): Persistent storage for attestation tracking
- * SECURITY FIX (NEW-H-4): File locking to prevent concurrent write corruption
+ *Security: Persistent storage for attestation tracking
+ *Security: File locking to prevent concurrent write corruption
  *
  * Survives process restarts.
  */
@@ -230,7 +230,7 @@ export class FileBasedUsedAttestationTracker implements IUsedAttestationTracker 
     this.inMemory = new InMemoryUsedAttestationTracker();
     this.fs = require('fs');
     this.path = require('path');
-    // SECURITY FIX (NEW-H-4): File locking to prevent race conditions
+    // Security: File locking to prevent race conditions
     this.lockfile = require('proper-lockfile');
 
     // Ensure directory exists
@@ -275,18 +275,18 @@ export class FileBasedUsedAttestationTracker implements IUsedAttestationTracker 
   /**
    * Save data to file with file locking
    *
-   * SECURITY FIX (NEW-H-4): File locking prevents concurrent write corruption
-   * SECURITY FIX (NEW-HIGH-1): Create file before locking if it doesn't exist
+   *Security: File locking prevents concurrent write corruption
+   *Security: Create file before locking if it doesn't exist
    */
   private async saveToFile(): Promise<void> {
     const data = this.inMemory.getAllUsages();
     const tempPath = `${this.filePath}.tmp`;
 
-    // SECURITY FIX (NEW-HIGH-1): Ensure file exists before locking
+    // Security: Ensure file exists before locking
     // proper-lockfile.lock() fails on non-existent files
     ensureSafeFile(this.filePath, '{}', 0o644);
 
-    // SECURITY FIX (NEW-H-4): Acquire file lock before writing
+    // Security: Acquire file lock before writing
     let release: (() => Promise<void>) | null = null;
     try {
       release = await this.lockfile.lock(this.filePath, {
@@ -329,12 +329,12 @@ export class FileBasedUsedAttestationTracker implements IUsedAttestationTracker 
   /**
    * Record attestation usage with guaranteed persistence
    *
-   * SECURITY FIX (HIGH-1): Now properly awaits persistence to prevent data loss
+   *Security: Now properly awaits persistence to prevent data loss
    */
   async recordUsage(attestationUID: string, txId: string): Promise<boolean> {
     const result = this.inMemory.recordUsageSync(attestationUID, txId);
     if (result) {
-      // SECURITY FIX (HIGH-1): Await persistence to ensure data is saved
+      // Security: Await persistence to ensure data is saved
       await this.saveToFile();
     }
     return result;

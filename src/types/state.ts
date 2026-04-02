@@ -18,7 +18,7 @@ export class StateMachine {
   /**
    * Valid state transitions per Yellow Paper §3.2.2
    *
-   * SECURITY FIX (AUDIT-2026-02): State machine must match ACTPKernel contract exactly
+   * Security: State machine must match ACTPKernel contract exactly
    *
    * Per on-chain ACTPKernel contract:
    * - COMMITTED must go through IN_PROGRESS before DELIVERED (cannot skip)

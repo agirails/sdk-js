@@ -304,7 +304,7 @@ export abstract class BaseAdapter {
   /**
    * Validate and normalize dispute window.
    *
-   * SECURITY FIX (L-1): Enforces bounds on dispute window:
+   *Security: Enforces bounds on dispute window:
    * - Minimum: 1 hour (prevents skipping disputes)
    * - Maximum: 30 days (prevents indefinite fund locking)
    *
@@ -345,7 +345,7 @@ export abstract class BaseAdapter {
   /**
    * Validate bytes32 hex string format.
    *
-   * SECURITY FIX (L-2): Validates that a string is a valid bytes32 hex.
+   *Security: Validates that a string is a valid bytes32 hex.
    * Used for transaction IDs, escrow IDs, attestation UIDs, etc.
    *
    * @param value - Value to validate
@@ -393,7 +393,7 @@ export abstract class BaseAdapter {
   /**
    * Validate Unix timestamp is reasonable.
    *
-   * SECURITY FIX (L-6): Validates timestamps to prevent overflow/underflow.
+   *Security: Validates timestamps to prevent overflow/underflow.
    *
    * @param timestamp - Unix timestamp in seconds
    * @param paramName - Parameter name for error message

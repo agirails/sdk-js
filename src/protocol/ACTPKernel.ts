@@ -68,7 +68,7 @@ export class ACTPKernel {
   /**
    * Get the underlying ethers Contract instance.
    *
-   * SECURITY FIX (C-3): Provides public access to contract for EventMonitor
+   *Security: Provides public access to contract for EventMonitor
    * instead of accessing private field via bracket notation.
    *
    * @returns ethers Contract instance
@@ -100,14 +100,14 @@ export class ACTPKernel {
    * Build transaction options with gas settings and estimated gas
    * V6 Enhancement: Dynamic buffer based on operation type
    *
-   * SECURITY FIX (C-3): Gas estimation manipulation attack protection
+   *Security: Gas estimation manipulation attack protection
    * - Enforces operation-specific minimum gas floors (not global 100k)
    * - Validates gas limit doesn't exceed block gas limit (DoS prevention)
    * - Uses safe BigInt arithmetic with overflow detection
    * - Prevents floating-point arithmetic (uses BPS - basis points)
    */
   private buildTxOptions(estimatedGas: bigint, operation: string = 'default'): any {
-    // SECURITY FIX (C-3): Operation-specific minimum gas floors
+    // Security: Operation-specific minimum gas floors
     // Malicious contracts could return artificially low gas estimates to cause txs to fail
     const MIN_GAS_FLOORS: Record<string, bigint> = {
       'createTransaction': 120000n,   // Create + event emission
@@ -125,7 +125,7 @@ export class ACTPKernel {
 
     const bufferMultiplier = this.getGasBufferMultiplier(operation);
 
-    // SECURITY FIX (C-3): Safe BigInt arithmetic using BPS (basis points)
+    // Security: Safe BigInt arithmetic using BPS (basis points)
     // Multiply by (bufferMultiplier * 10000) and divide by 10000
     // Example: 1.15x = (115 * 10000) / 10000 = 11500 / 10000
     // This avoids floating-point precision issues entirely
@@ -133,7 +133,7 @@ export class ACTPKernel {
     const bufferDenominator = 10000n;
     const gasLimit = (safeEstimate * bufferNumerator) / bufferDenominator;
 
-    // SECURITY FIX (C-3): Overflow detection
+    // Security: Overflow detection
     // After multiplication and division, result MUST be >= original estimate
     if (gasLimit < safeEstimate) {
       throw new Error(
@@ -143,7 +143,7 @@ export class ACTPKernel {
       );
     }
 
-    // SECURITY FIX (C-3): Block gas limit check (Base L2 = 30M gas)
+    // Security: Block gas limit check (Base L2 = 30M gas)
     // Prevents DoS by requesting excessive gas that can never be included
     const MAX_BLOCK_GAS_LIMIT = 30_000_000n;
     if (gasLimit > MAX_BLOCK_GAS_LIMIT) {
@@ -423,7 +423,7 @@ export class ACTPKernel {
   /**
    * Release milestone payment
    *
-   * SECURITY FIX (CRITICAL-2): Contract ABI has only 2 params (txId, amount), not 3.
+   *Security: Contract ABI has only 2 params (txId, amount), not 3.
    * The milestoneId is NOT part of the current ACTPKernel V1 contract.
    * Per ABI: releaseMilestone(bytes32 transactionId, uint256 amount)
    *
@@ -443,7 +443,7 @@ export class ACTPKernel {
       // ethers v6: use getFunction()
       const releaseMilestoneFunc = this.contract.getFunction('releaseMilestone');
 
-      // SECURITY FIX (CRITICAL-2): Contract only takes 2 params (txId, amount)
+      // Security: Contract only takes 2 params (txId, amount)
       // Estimate gas with safety buffer (30% for escrow release operations)
       const estimatedGas = await releaseMilestoneFunc.estimateGas(txId, amount);
       const txOptions = this.buildTxOptions(estimatedGas, 'releaseEscrow');
@@ -605,12 +605,12 @@ export class ACTPKernel {
   /**
    * Get economic parameters (fee structure)
    *
-   * SECURITY FIX (CRITICAL-4): Contract doesn't have getEconomicParams() function.
+   *Security: Contract doesn't have getEconomicParams() function.
    * Must call individual getters: platformFeeBps(), requesterPenaltyBps(), feeRecipient()
    * Per ACTPKernel.json ABI lines 576-586, 619-630, 351-361
    */
   async getEconomicParams(): Promise<EconomicParams> {
-    // SECURITY FIX (CRITICAL-4): Call individual view functions in parallel
+    // Security: Call individual view functions in parallel
     // Contract ABI has: platformFeeBps(), requesterPenaltyBps(), feeRecipient()
     // NOT a combined getEconomicParams() function
     const [platformFeeBps, requesterPenaltyBps, feeRecipient] = await Promise.all([

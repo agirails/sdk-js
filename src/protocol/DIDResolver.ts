@@ -269,7 +269,7 @@ export class DIDResolver {
         };
       }
 
-      // SECURITY FIX (MEDIUM): Domain separation to prevent cross-protocol replay attacks
+      // Security: Domain separation to prevent cross-protocol replay attacks
       // Default to true for security, but allow opt-out for backwards compatibility
       const useDomainSeparation = options.useDomainSeparation !== false;
       const messageToVerify = useDomainSeparation
@@ -290,7 +290,7 @@ export class DIDResolver {
         };
       }
 
-      // SECURITY FIX (MEDIUM): Implement delegate validation
+      // Security: Implement delegate validation
       // Check if signer is a valid delegate in the DID Document
       const resolution = await this.resolve(did);
       if (resolution.didDocument && resolution.didDocument.authentication) {

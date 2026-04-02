@@ -32,14 +32,14 @@ export class EASHelper {
    * @param config - EAS configuration
    * @param attestationTracker - Optional tracker for replay attack prevention (C-1 fix)
    *
-   * SECURITY FIX (NEW-M-2): Validates schema UID format in constructor
+   *Security: Validates schema UID format in constructor
    */
   constructor(
     signer: Signer,
     private readonly config: EASConfig,
     attestationTracker?: IUsedAttestationTracker
   ) {
-    // SECURITY FIX (NEW-M-2): Validate schema UID format
+    // Security: Validate schema UID format
     if (!config.deliveryProofSchemaId || !/^0x[a-fA-F0-9]{64}$/.test(config.deliveryProofSchemaId)) {
       throw new Error(
         `Invalid deliveryProofSchemaId: must be bytes32 hex string (0x...). ` +
@@ -55,7 +55,7 @@ export class EASHelper {
     // (includes fields like revocationTime that are required for security checks).
     this.eas = new EAS(config.contractAddress);
     this.eas.connect(signer as any);
-    // SECURITY FIX (C-1): Use provided tracker or create new in-memory one
+    // Security: Use provided tracker or create new in-memory one
     if (!attestationTracker) {
       // SECURITY WARNING (HIGH-5): In-memory tracker does not persist across restarts!
       // For production use, provide a FileBasedUsedAttestationTracker with a stateDirectory:
@@ -334,7 +334,7 @@ export class EASHelper {
       );
     }
 
-    // SECURITY FIX (C-1): Check if attestation has been used for a different transaction
+    // Security: Check if attestation has been used for a different transaction
     if (!this.attestationTracker.isValidForTransaction(attestationUID, txId)) {
       const usedFor = this.attestationTracker.getUsageForAttestation(attestationUID);
       throw new Error(
@@ -361,7 +361,7 @@ export class EASHelper {
   /**
    * Verify attestation for escrow release with mandatory replay protection
    *
-   * SECURITY FIX (C-4): This method MUST be called before releaseEscrow()
+   *Security: This method MUST be called before releaseEscrow()
    * to prevent attestation replay attacks.
    *
    * @param txId - Expected transaction ID (bytes32)

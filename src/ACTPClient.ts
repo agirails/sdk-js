@@ -186,7 +186,7 @@ function validateStateDirectory(stateDirectory: string): void {
   const homeDir = os.homedir();
   const cwd = process.cwd();
 
-  // SECURITY FIX (C-5): Use path.relative() instead of startsWith()
+  // Security: Use path.relative() instead of startsWith()
   // to handle case-insensitive filesystems (macOS, Windows) correctly.
   // path.relative() returns a path starting with '..' if target is outside base.
   const relativeToHome = path.relative(homeDir, effectivePath);
@@ -378,7 +378,7 @@ export interface ACTPClientConfig {
   /**
    * Optional: EAS (Ethereum Attestation Service) configuration.
    *
-   * SECURITY FIX (C-4): Required for attestation verification in testnet/mainnet modes.
+   *Security: Required for attestation verification in testnet/mainnet modes.
    * If not provided, attestation verification in releaseEscrow() will be skipped.
    *
    * Used in 'testnet' and 'mainnet' modes.
@@ -539,7 +539,7 @@ export class ACTPClient {
   public readonly info: ACTPClientInfo;
 
   /**
-   * SECURITY FIX (C-4): EAS helper for attestation verification.
+   *Security: EAS helper for attestation verification.
    * Only available in testnet/mainnet modes when easConfig is provided.
    */
   public readonly easHelper?: EASHelper;
@@ -748,7 +748,7 @@ export class ACTPClient {
             requesterAddress = ethers.Wallet.createRandom().address;
           }
 
-          // SECURITY FIX: Enhanced path validation to prevent path traversal attacks
+          // Security: Enhanced path validation to prevent path traversal attacks
           if (config.stateDirectory) {
             validateStateDirectory(config.stateDirectory);
           }
@@ -964,7 +964,7 @@ export class ACTPClient {
 
           runtime = blockchainRuntime;
 
-          // SECURITY FIX (C-4): Use the runtime's initialized EASHelper so
+          // Security: Use the runtime's initialized EASHelper so
           // adapters and runtime share the same tracker + verification logic.
           if (config.easConfig) {
             easHelper = blockchainRuntime.getEASHelper();
@@ -1155,7 +1155,7 @@ export class ACTPClient {
   /**
    * Custom JSON serialization to prevent private key exposure.
    *
-   * SECURITY FIX (HIGH-4): Prevents accidental private key logging
+   *Security: Prevents accidental private key logging
    * when ACTPClient instance is serialized (e.g., JSON.stringify, console.log).
    *
    * @returns Safe serializable object with sensitive data removed
@@ -1174,7 +1174,7 @@ export class ACTPClient {
   /**
    * Custom string representation for debugging.
    *
-   * SECURITY FIX (HIGH-4): Prevents private key exposure in logs.
+   *Security: Prevents private key exposure in logs.
    */
   toString(): string {
     return `ACTPClient(mode=${this.info.mode}, address=${this.info.address})`;
@@ -1183,7 +1183,7 @@ export class ACTPClient {
   /**
    * Custom inspect for Node.js util.inspect (console.log).
    *
-   * SECURITY FIX (HIGH-4): Prevents private key exposure in console output.
+   *Security: Prevents private key exposure in console output.
    */
   [Symbol.for('nodejs.util.inspect.custom')](): string {
     return this.toString();

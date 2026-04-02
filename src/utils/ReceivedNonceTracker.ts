@@ -228,9 +228,9 @@ export class InMemoryReceivedNonceTracker implements IReceivedNonceTracker {
  * - Reject duplicate nonces (replay attack)
  * - Allows non-sequential nonces (nonce gaps are OK)
  *
- * SECURITY FIX (NEW-H-2): Max size enforcement to prevent memory exhaustion
- * SECURITY FIX (HIGH-2): Global total entries limit to prevent DoS via many sender combinations
- * SECURITY FIX (H-2): Rate limiting per sender to prevent flood attacks
+ *Security: Max size enforcement to prevent memory exhaustion
+ *Security: Global total entries limit to prevent DoS via many sender combinations
+ *Security: Rate limiting per sender to prevent flood attacks
  *
  * Trade-off:
  * - Higher memory usage (stores every nonce)
@@ -241,14 +241,14 @@ export class SetBasedReceivedNonceTracker implements IReceivedNonceTracker {
   // Map: sender -> messageType -> Set of used nonces
   private usedNonces: Map<string, Map<string, Set<string>>> = new Map();
 
-  // SECURITY FIX (NEW-H-2): Maximum entries per sender+messageType
+  // Security: Maximum entries per sender+messageType
   private readonly maxSizePerType: number;
 
-  // SECURITY FIX (HIGH-2): Global limit across ALL sender+messageType combinations
+  // Security: Global limit across ALL sender+messageType combinations
   private readonly maxTotalEntries: number;
   private totalEntries: number = 0;
 
-  // SECURITY FIX (H-2): Rate limiting per sender
+  // Security: Rate limiting per sender
   // Map: sender -> { count: number, windowStart: number }
   private rateLimitState: Map<string, { count: number; windowStart: number }> = new Map();
   private readonly maxNoncesPerMinute: number;
@@ -280,7 +280,7 @@ export class SetBasedReceivedNonceTracker implements IReceivedNonceTracker {
   }
 
   /**
-   * SECURITY FIX (H-2): Check rate limit for sender
+   *Security: Check rate limit for sender
    * @param sender - Sender DID
    * @returns true if rate limit exceeded
    */
@@ -309,7 +309,7 @@ export class SetBasedReceivedNonceTracker implements IReceivedNonceTracker {
   }
 
   /**
-   * SECURITY FIX (H-2): Periodic cleanup of rate limit state
+   *Security: Periodic cleanup of rate limit state
    * Removes expired rate limit entries (older than 5 minutes)
    */
   private cleanupRateLimitState(): void {
@@ -326,9 +326,9 @@ export class SetBasedReceivedNonceTracker implements IReceivedNonceTracker {
   /**
    * Validate and record a received nonce
    *
-   * SECURITY FIX (NEW-H-2): Automatic cleanup when max size reached
-   * SECURITY FIX (HIGH-2): Global limit check to prevent DoS
-   * SECURITY FIX (H-2): Rate limiting per sender (max 100 nonces/minute)
+   *Security: Automatic cleanup when max size reached
+   *Security: Global limit check to prevent DoS
+   *Security: Rate limiting per sender (max 100 nonces/minute)
    */
   validateAndRecord(sender: string, messageType: string, nonce: string): NonceValidationResult {
     // Validate nonce format
@@ -340,7 +340,7 @@ export class SetBasedReceivedNonceTracker implements IReceivedNonceTracker {
       };
     }
 
-    // SECURITY FIX (H-2): Rate limit check (BEFORE global limit to avoid unnecessary work)
+    // Security: Rate limit check (BEFORE global limit to avoid unnecessary work)
     if (this.checkRateLimit(sender)) {
       return {
         valid: false,
@@ -352,12 +352,12 @@ export class SetBasedReceivedNonceTracker implements IReceivedNonceTracker {
       };
     }
 
-    // SECURITY FIX (H-2): Periodic cleanup every 100 validations (amortized cost)
+    // Security: Periodic cleanup every 100 validations (amortized cost)
     if (this.totalEntries % 100 === 0) {
       this.cleanupRateLimitState();
     }
 
-    // SECURITY FIX (HIGH-2): Check global limit BEFORE adding
+    // Security: Check global limit BEFORE adding
     if (this.totalEntries >= this.maxTotalEntries) {
       return {
         valid: false,
@@ -391,7 +391,7 @@ export class SetBasedReceivedNonceTracker implements IReceivedNonceTracker {
       };
     }
 
-    // SECURITY FIX (NEW-H-2): Auto-cleanup if max size per type reached
+    // Security: Auto-cleanup if max size per type reached
     if (usedSet.size >= this.maxSizePerType) {
       // Keep only last 80% of entries (sorted by nonce value)
       const keepCount = Math.floor(this.maxSizePerType * 0.8);
@@ -403,20 +403,20 @@ export class SetBasedReceivedNonceTracker implements IReceivedNonceTracker {
       const removedCount = usedSet.size - keepCount;
       usedSet = new Set(sortedNonces.slice(-keepCount));
       senderNonces.set(messageType, usedSet);
-      // SECURITY FIX (HIGH-2): Update global counter
+      // Security: Update global counter
       this.totalEntries -= removedCount;
     }
 
     // Valid nonce - record it
     usedSet.add(nonce);
-    // SECURITY FIX (HIGH-2): Update global counter
+    // Security: Update global counter
     this.totalEntries++;
     return { valid: true };
   }
 
   /**
    * Get number of sender+messageType combinations (for monitoring)
-   * SECURITY FIX (HIGH-2): Monitoring method
+   *Security: Monitoring method
    */
   private getCombinationCount(): number {
     let count = 0;
@@ -428,7 +428,7 @@ export class SetBasedReceivedNonceTracker implements IReceivedNonceTracker {
 
   /**
    * Get memory usage statistics
-   * SECURITY FIX (HIGH-2): Monitoring method for DoS detection
+   *Security: Monitoring method for DoS detection
    */
   getMemoryUsage(): { totalEntries: number; combinations: number; maxTotalEntries: number } {
     return {
@@ -489,7 +489,7 @@ export class SetBasedReceivedNonceTracker implements IReceivedNonceTracker {
     if (senderNonces) {
       const usedSet = senderNonces.get(messageType);
       if (usedSet) {
-        // SECURITY FIX (HIGH-2): Update global counter
+        // Security: Update global counter
         this.totalEntries -= usedSet.size;
       }
       senderNonces.delete(messageType);
@@ -504,7 +504,7 @@ export class SetBasedReceivedNonceTracker implements IReceivedNonceTracker {
    */
   clearAll(): void {
     this.usedNonces.clear();
-    // SECURITY FIX (HIGH-2): Reset global counter
+    // Security: Reset global counter
     this.totalEntries = 0;
   }
 
@@ -547,7 +547,7 @@ export class SetBasedReceivedNonceTracker implements IReceivedNonceTracker {
     const removedCount = usedSet.size - keepLast;
     const toKeep = new Set(sortedNonces.slice(-keepLast));
     senderNonces.set(messageType, toKeep);
-    // SECURITY FIX (HIGH-2): Update global counter
+    // Security: Update global counter
     this.totalEntries -= removedCount;
   }
 }

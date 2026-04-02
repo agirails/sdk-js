@@ -1,7 +1,7 @@
 /**
  * Semaphore - Concurrency limiter for ACTP SDK
  *
- * SECURITY FIX (MEDIUM-4): Prevents unbounded concurrent execution
+ *Security: Prevents unbounded concurrent execution
  * which could lead to resource exhaustion (memory/CPU DoS).
  *
  * @module utils/Semaphore
@@ -167,7 +167,7 @@ export class Semaphore {
 /**
  * Rate limiter using sliding window algorithm
  *
- * SECURITY FIX (MEDIUM-4): Complements semaphore for rate-based limiting
+ *Security: Complements semaphore for rate-based limiting
  */
 export class RateLimiter {
   private readonly timestamps: number[] = [];

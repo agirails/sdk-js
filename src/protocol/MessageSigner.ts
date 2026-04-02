@@ -40,7 +40,7 @@ export class MessageSigner {
   private domain: EIP712Domain | null = null;
 
   /**
-   * SECURITY FIX (H-5): Private constructor - MUST use MessageSigner.create() factory method
+   *Security: Private constructor - MUST use MessageSigner.create() factory method
    *
    * This ensures EIP-712 domain is ALWAYS initialized before use (prevents race conditions).
    * Direct construction would allow calling sign/verify without domain initialization.
@@ -51,7 +51,7 @@ export class MessageSigner {
   ) {}
 
   /**
-   * SECURITY FIX (H-4): Factory method to create MessageSigner with guaranteed domain initialization
+   *Security: Factory method to create MessageSigner with guaranteed domain initialization
    *
    * This factory ensures the EIP-712 domain is always properly initialized before use.
    * Prevents the common bug of calling sign/verify without initializing domain first.
@@ -132,7 +132,7 @@ export class MessageSigner {
       }
     }
 
-    // SECURITY FIX (H-6): Standardize domain name to 'AGIRAILS' for brand consistency
+    // Security: Standardize domain name to 'AGIRAILS' for brand consistency
     // Note: This change requires coordination with any existing signed messages
     this.domain = {
       name: 'AGIRAILS',
@@ -146,7 +146,7 @@ export class MessageSigner {
    * Sign ACTP message using EIP-712 typed data
    * Uses ECDSA (secp256k1) with domain separation per Yellow Paper §11.4.2
    *
-   * SECURITY FIX (H-3): Validates nonce format and warns about sequential nonces
+   *Security: Validates nonce format and warns about sequential nonces
    *
    * Generic ACTPMessage format (backward compatible).
    * For strict typed AIP messages, use signQuoteRequest/signQuoteResponse/signDeliveryProof
@@ -160,7 +160,7 @@ export class MessageSigner {
 
     const { type, version, from, to, timestamp, nonce, signature: _sig, ...payload } = message;
 
-    // SECURITY FIX (H-3): Validate nonce format (must be bytes32)
+    // Security: Validate nonce format (must be bytes32)
     if (!nonce || !/^0x[a-fA-F0-9]{64}$/.test(nonce)) {
       throw new Error(
         `Invalid nonce format: "${nonce}". ` +
@@ -170,7 +170,7 @@ export class MessageSigner {
       );
     }
 
-    // SECURITY FIX (H-3): Warn about sequential nonces (low entropy)
+    // Security: Warn about sequential nonces (low entropy)
     // Sequential nonces like 0x0000...0001, 0x0000...0002 are weak
     // Check if nonce has low entropy (e.g., last 8 bytes are zero, or all same digits)
     const nonceValue = BigInt(nonce);
@@ -414,7 +414,7 @@ export class MessageSigner {
   /**
    * Convert DID to Ethereum address
    *
-   * SECURITY FIX (DID-FORMAT): Handles both DID formats:
+   *Security: Handles both DID formats:
    * - Legacy: did:ethr:<address>
    * - Canonical (EIP-3770): did:ethr:<chainId>:<address>
    *
@@ -489,7 +489,7 @@ export class MessageSigner {
   /**
    * Convert Ethereum address to DID
    *
-   * SECURITY FIX (DID-FORMAT): Now generates canonical DID format
+   *Security: Now generates canonical DID format
    * with chainId when domain is initialized: did:ethr:<chainId>:<address>
    *
    * Falls back to legacy format if domain not initialized.

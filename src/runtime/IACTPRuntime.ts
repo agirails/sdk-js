@@ -107,7 +107,7 @@ export interface IACTPRuntime {
    *
    * Validates the transition against the ACTP 8-state machine.
    *
-   * SECURITY FIX (PROOF-PARAM): Added optional proof parameter for DELIVERED state.
+   *Security: Added optional proof parameter for DELIVERED state.
    * The kernel contract uses proof data for dispute window configuration and
    * delivery verification. Without proof, default dispute window applies.
    *

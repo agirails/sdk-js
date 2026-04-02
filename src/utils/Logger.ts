@@ -1,7 +1,7 @@
 /**
  * Logger - Structured Logging Framework for ACTP SDK
  *
- * SECURITY FIX (M-6): Comprehensive logging with:
+ *Security: Comprehensive logging with:
  * - Log levels (debug, info, warn, error)
  * - Structured metadata
  * - Sensitive data filtering
@@ -58,7 +58,7 @@ export interface LoggerConfig {
 /**
  * Sensitive key name patterns (for checking object keys)
  *
- * SECURITY FIX (NEW-HIGH-3): NO GLOBAL FLAG on patterns used with .test()
+ *Security: NO GLOBAL FLAG on patterns used with .test()
  * Global regex maintains lastIndex state, causing alternating match/no-match
  * on consecutive calls, potentially leaking sensitive data intermittently.
  */
@@ -75,7 +75,7 @@ const SENSITIVE_KEY_PATTERNS: RegExp[] = [
 /**
  * Sensitive value patterns (for redacting from string values)
  *
- * SECURITY FIX (NEW-HIGH-3): These are PATTERN STRINGS that get converted
+ *Security: These are PATTERN STRINGS that get converted
  * to fresh RegExp instances with /g flag for each replace() call.
  * This avoids lastIndex state pollution between calls.
  */
@@ -207,7 +207,7 @@ export class Logger {
   /**
    * Filter sensitive data from metadata
    *
-   * SECURITY FIX (NEW-HIGH-3): Uses separate pattern arrays for keys and values.
+   *Security: Uses separate pattern arrays for keys and values.
    * Key patterns have no /g flag (used with .test()).
    * Value patterns are strings converted to fresh RegExp instances per call.
    */
@@ -215,7 +215,7 @@ export class Logger {
     const filtered: Record<string, unknown> = {};
 
     for (const [key, value] of Object.entries(obj)) {
-      // SECURITY FIX (NEW-HIGH-3): Check if key matches sensitive pattern
+      // Security: Check if key matches sensitive pattern
       // Using patterns without /g flag - safe to use with .test()
       const isSensitiveKey = SENSITIVE_KEY_PATTERNS.some((pattern) => pattern.test(key));
 
@@ -228,7 +228,7 @@ export class Logger {
       if (value && typeof value === 'object' && !Array.isArray(value)) {
         filtered[key] = this.filterSensitiveData(value as Record<string, unknown>);
       } else if (Array.isArray(value)) {
-        // SECURITY FIX: Also filter arrays
+        // Security: Also filter arrays
         filtered[key] = value.map((item) => {
           if (typeof item === 'string') {
             return this.redactSensitiveValues(item);
@@ -238,7 +238,7 @@ export class Logger {
           return item;
         });
       } else if (typeof value === 'string') {
-        // SECURITY FIX (NEW-HIGH-3): Redact sensitive patterns from values
+        // Security: Redact sensitive patterns from values
         filtered[key] = this.redactSensitiveValues(value);
       } else {
         filtered[key] = value;
@@ -251,7 +251,7 @@ export class Logger {
   /**
    * Redact sensitive patterns from a string value
    *
-   * SECURITY FIX (NEW-HIGH-3): Creates fresh RegExp instances with /gi flag
+   *Security: Creates fresh RegExp instances with /gi flag
    * for each call, avoiding lastIndex state pollution.
    */
   private redactSensitiveValues(value: string): string {
@@ -327,7 +327,7 @@ export const sdkLogger = new Logger({
 /**
  * Metrics/monitoring hook interface
  *
- * SECURITY FIX (M-7): Metrics and monitoring hooks
+ *Security: Metrics and monitoring hooks
  */
 export interface MetricsHook {
   /** Called when a transaction is created */

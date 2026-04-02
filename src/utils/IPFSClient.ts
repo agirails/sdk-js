@@ -75,13 +75,13 @@ export interface IPFSClientConfig {
   timeout?: number;
 
   /**
-   * SECURITY FIX (MEDIUM-3): Maximum content size in bytes
+   *Security: Maximum content size in bytes
    * Default: 50MB (50 * 1024 * 1024)
    */
   maxSize?: number;
 
   /**
-   * SECURITY FIX (MEDIUM-3): Allowed URL protocols
+   *Security: Allowed URL protocols
    * Default: ['http:', 'https:'] (http for localhost, https for remote)
    */
   allowedProtocols?: string[];
@@ -115,14 +115,14 @@ export const IPFS_CONFIGS = {
  * IPFS HTTP Client Implementation
  * Uses ipfs-http-client library
  *
- * SECURITY FIX (MEDIUM-3): Now includes URL and size validation
+ *Security: Now includes URL and size validation
  */
 export class IPFSHTTPClientImpl implements IPFSClient {
   private clientPromise: Promise<KuboRPCClient> | null = null;
   private clientOptions: Options;
   private config: Required<IPFSClientConfig>;
 
-  // SECURITY FIX (MEDIUM-3): Default security settings
+  // Security: Default security settings
   private static readonly DEFAULT_MAX_SIZE = 50 * 1024 * 1024; // 50MB
   private static readonly DEFAULT_ALLOWED_PROTOCOLS = ['http:', 'https:'];
   private static readonly BLOCKED_HOSTS = [
@@ -134,7 +134,7 @@ export class IPFSHTTPClientImpl implements IPFSClient {
   /**
    * Create IPFS client
    *
-   * SECURITY FIX (MEDIUM-3): Validates URL and adds size limits
+   *Security: Validates URL and adds size limits
    *
    * @param config - IPFS client configuration
    * @throws Error if URL is invalid or blocked
@@ -142,7 +142,7 @@ export class IPFSHTTPClientImpl implements IPFSClient {
   constructor(config: IPFSClientConfig = {}) {
     const url = config.url || 'http://localhost:5001';
 
-    // SECURITY FIX (MEDIUM-3): Validate URL
+    // Security: Validate URL
     this.validateUrl(url, config.allowLocalhost ?? false, config.allowedProtocols);
 
     this.config = {
@@ -183,7 +183,7 @@ export class IPFSHTTPClientImpl implements IPFSClient {
   }
 
   /**
-   * SECURITY FIX (MEDIUM-3): Validate IPFS endpoint URL
+   *Security: Validate IPFS endpoint URL
    */
   private validateUrl(
     url: string,
@@ -235,7 +235,7 @@ export class IPFSHTTPClientImpl implements IPFSClient {
   /**
    * Upload data to IPFS
    *
-   * SECURITY FIX (MEDIUM-3): Validates size before upload
+   *Security: Validates size before upload
    *
    * @param data - JSON string or buffer
    * @returns CIDv1 string (base32)
@@ -246,7 +246,7 @@ export class IPFSHTTPClientImpl implements IPFSClient {
       const client = await this.getClient();
       const content = typeof data === 'string' ? Buffer.from(data, 'utf-8') : data;
 
-      // SECURITY FIX (MEDIUM-3): Check size before upload
+      // Security: Check size before upload
       if (content.length > this.config.maxSize) {
         throw new Error(
           `Content too large: ${content.length} bytes exceeds maximum of ${this.config.maxSize} bytes`
@@ -282,7 +282,7 @@ export class IPFSHTTPClientImpl implements IPFSClient {
   /**
    * Retrieve content from IPFS
    *
-   * SECURITY FIX (MEDIUM-3): Validates size during retrieval
+   *Security: Validates size during retrieval
    *
    * @param cid - IPFS CID
    * @returns Content as string
@@ -297,7 +297,7 @@ export class IPFSHTTPClientImpl implements IPFSClient {
       for await (const chunk of client.cat(cid)) {
         totalLength += chunk.length;
 
-        // SECURITY FIX (MEDIUM-3): Check size during streaming to prevent DoS
+        // Security: Check size during streaming to prevent DoS
         if (totalLength > this.config.maxSize) {
           throw new Error(
             `Content too large: ${totalLength}+ bytes exceeds maximum of ${this.config.maxSize} bytes. ` +
