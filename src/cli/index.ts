@@ -122,13 +122,13 @@ program.addCommand(createTestCommand());
 program.addCommand(createClaimCommand());
 program.addCommand(createClaimCodeCommand());
 
-// Phase 2: Agent discovery
+// Agent discovery
 program.addCommand(createFindCommand());
 
-// Phase 2: Autonomous negotiation
+// Autonomous negotiation
 program.addCommand(createNegotiateCommand());
 
-// Phase 2: Auto-publish on save
+// Auto-publish on save
 program.addCommand(createAutopublishCommand());
 
 // Phase 3: Health check

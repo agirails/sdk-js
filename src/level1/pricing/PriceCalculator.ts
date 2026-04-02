@@ -216,7 +216,7 @@ function estimateUnits(job: Job, unit: string): number {
  */
 function estimateApiCost(_api: string, _job: Job): number {
   // MVP: Returns 0 (API costs tracked externally by agent)
-  // V2: Integrate with OpenAI/Anthropic pricing APIs
+  // TODO: Integrate with LLM provider pricing APIs
 
   // Example V2 implementation:
   // const [provider, model] = api.split(':');
