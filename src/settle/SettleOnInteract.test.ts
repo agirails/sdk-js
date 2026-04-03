@@ -47,7 +47,7 @@ describe('SettleOnInteract', () => {
       const txId = await createDeliveredTx(3600); // 1 hour window
 
       // Advance time past dispute window
-      runtime.time.advanceTime(3601);
+      await runtime.time.advanceTime(3601);
 
       const settler = new SettleOnInteract(runtime, providerAddress, 0);
       await settler.sweepNow();
@@ -77,7 +77,7 @@ describe('SettleOnInteract', () => {
       const otherProvider = '0x3333333333333333333333333333333333333333';
       const txId = await createDeliveredTx(3600);
 
-      runtime.time.advanceTime(3601);
+      await runtime.time.advanceTime(3601);
 
       // Sweep for a different provider
       const settler = new SettleOnInteract(runtime, otherProvider, 0);
@@ -94,7 +94,7 @@ describe('SettleOnInteract', () => {
       const txId1 = await createDeliveredTx(3600);
       const txId2 = await createDeliveredTx(3600);
 
-      runtime.time.advanceTime(3601);
+      await runtime.time.advanceTime(3601);
 
       const settler = new SettleOnInteract(runtime, providerAddress, 0);
       await settler.sweepNow();
@@ -129,7 +129,7 @@ describe('SettleOnInteract', () => {
 
     test('sweepNow() bypasses cooldown', async () => {
       const txId1 = await createDeliveredTx(3600);
-      runtime.time.advanceTime(3601);
+      await runtime.time.advanceTime(3601);
 
       const settler = new SettleOnInteract(runtime, providerAddress, 60_000);
 
@@ -140,7 +140,7 @@ describe('SettleOnInteract', () => {
 
       // Create another expired tx and sweep again immediately
       const txId2 = await createDeliveredTx(3600);
-      runtime.time.advanceTime(3601);
+      await runtime.time.advanceTime(3601);
 
       await settler.sweepNow(); // Bypasses cooldown
       const tx2 = await runtime.getTransaction(txId2);
