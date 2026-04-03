@@ -591,6 +591,27 @@ export class BlockchainRuntime implements IACTPRuntime {
   }
 
   /**
+   * Returns DELIVERED transactions for a provider whose dispute window has expired.
+   * Used by SettleOnInteract for background settlement sweeps.
+   *
+   * Note: disputeWindow from on-chain is an absolute timestamp (deliveredAt + windowDuration).
+   *
+   * @param providerAddress - Provider's Ethereum address
+   * @returns Transactions eligible for permissionless settlement
+   */
+  async getExpiredDeliveredTransactions(providerAddress: string): Promise<{ txId: string }[]> {
+    const txs = await this.events.getTransactionHistory(providerAddress, 'provider');
+    const now = Math.floor(Date.now() / 1000);
+    return txs
+      .filter(tx =>
+        tx.state === 4 && // State.DELIVERED
+        tx.disputeWindow > 0 &&
+        now > tx.disputeWindow
+      )
+      .map(tx => ({ txId: tx.txId }));
+  }
+
+  /**
    * Releases escrow funds to provider by settling the transaction
    *
    *Security: This method now validates:

@@ -531,6 +531,19 @@ export class MockRuntime implements IACTPRuntime {
   }
 
   /**
+   * Sweep all expired DELIVERED transactions for a provider.
+   * Called by SettleOnInteract when operating on MockRuntime.
+   *
+   * @param providerAddress - Provider address to sweep for
+   */
+  async sweepExpiredDeliveredForProvider(providerAddress: string): Promise<void> {
+    const txs = await this.getTransactionsByProvider(providerAddress, 'DELIVERED');
+    for (const tx of txs) {
+      await this.autoSettleIfReady(tx.id);
+    }
+  }
+
+  /**
    * Gets all transactions.
    *
    * @returns Promise resolving to array of all transactions

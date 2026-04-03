@@ -63,6 +63,7 @@ import { SmartWalletRouter, createSmartWalletRouter } from './wallet/SmartWallet
 import { buildActivationBatch, ActivationScenario } from './wallet/aa/TransactionBatcher';
 import { loadPendingPublish, deletePendingPublish, PendingPublish } from './config/pendingPublish';
 import { sdkLogger } from './utils/Logger';
+import { SettleOnInteract } from './settle/SettleOnInteract';
 
 // ============================================================================
 // Security: Path Validation
@@ -566,6 +567,13 @@ export class ACTPClient {
   private readonly reputationReporter?: ReputationReporter;
 
   /**
+   * Settle-on-interact: background sweep for expired DELIVERED transactions.
+   * Fires on pay(), startWork(), deliver(). Best-effort, never blocks.
+   * @internal
+   */
+  private readonly settleOnInteract: SettleOnInteract;
+
+  /**
    * AIP-12: Wallet provider (Tier 1 Auto or Tier 2 EOA).
    * Only set in testnet/mainnet modes.
    * @internal
@@ -662,6 +670,11 @@ export class ACTPClient {
     this.registry.register(this.basic);
     this.registry.register(this.standard);
     this.router = new AdapterRouter(this.registry, erc8004Bridge);
+
+    // Settle-on-interact: sweep expired DELIVERED transactions on each interaction.
+    // requesterAddress is the local agent's address — it acts as provider in startWork/deliver flows,
+    // so the sweep finds transactions where this address is the provider with expired dispute windows.
+    this.settleOnInteract = new SettleOnInteract(runtime, requesterAddress);
   }
 
   // ==========================================================================
@@ -1295,6 +1308,7 @@ export class ACTPClient {
    * ```
    */
   async pay(params: UnifiedPayParams): Promise<UnifiedPayResult> {
+    this.settleOnInteract.trigger();
     const { adapter, resolvedParams } = await this.router.selectAndResolve(params);
 
     // When a wallet provider with batched support is available (AA/Smart Wallet)
@@ -1372,6 +1386,7 @@ export class ACTPClient {
    * ```
    */
   async startWork(txId: string): Promise<void> {
+    this.settleOnInteract.trigger();
     if (this.smartWalletRouter?.shouldRoute()) {
       await this.smartWalletRouter.sendTransition(txId, TransactionStateValue.IN_PROGRESS, '0x', 'startWork');
       return;
@@ -1403,6 +1418,7 @@ export class ACTPClient {
    * ```
    */
   async deliver(txId: string, disputeWindowSeconds?: number): Promise<void> {
+    this.settleOnInteract.trigger();
     // Fetch transaction
     const tx = await this.runtime.getTransaction(txId);
     if (!tx) {
