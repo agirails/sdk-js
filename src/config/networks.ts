@@ -114,8 +114,8 @@ export const BASE_SEPOLIA: NetworkConfig = {
   rpcUrl: BASE_SEPOLIA_RPC_URL,
   blockExplorer: 'https://sepolia.basescan.org',
   contracts: {
-    actpKernel: '0x90a1Bcc218c148F63D036aB2f7B5329C9ee7868d',
-    escrowVault: '0xA336967F4481EeE4A8Bb59e35423D273fbf9f5e7',
+    actpKernel: '0xE151C35EAda9d05830aE3e3d81bE61dfe1953ED4',
+    escrowVault: '0xA73e357647Db4cDcfD1aDbbE0422fA7D1B792FeF',
     usdc: '0x444b4e1A65949AB2ac75979D5d0166Eb7A248Ccb', // MockUSDC
     eas: '0x4200000000000000000000000000000000000021',
     easSchemaRegistry: '0x4200000000000000000000000000000000000020',
