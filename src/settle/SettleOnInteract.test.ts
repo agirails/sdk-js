@@ -149,11 +149,13 @@ describe('SettleOnInteract', () => {
   });
 
   describe('error handling', () => {
-    test('trigger() never throws', () => {
+    test('trigger() never throws', async () => {
       // Create settler with a provider address that doesn't match anything
       const settler = new SettleOnInteract(runtime, providerAddress, 0);
       // Should not throw even if runtime is in unexpected state
       expect(() => settler.trigger()).not.toThrow();
+      // Wait for fire-and-forget sweep to complete before afterEach cleanup
+      await new Promise(r => setTimeout(r, 50));
     });
 
     test('sweepNow() swallows per-transaction errors (blockchain path)', async () => {
