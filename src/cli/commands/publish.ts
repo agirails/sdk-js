@@ -498,11 +498,11 @@ async function runPublish(
 
     // ================================================================
     // Phase 1: API upsert to agirails.app (post-chain, non-blocking)
-    // Requires agent_id — skipped on first publish (agent_id assigned
-    // on-chain, written back to YAML, available on re-publish).
+    // Uses agent_id from YAML or freshly minted (publishMetadata).
     // API routes: POST /api/v1/agents (dual auth: session + wallet-sig)
     // ================================================================
-    if (v4Config && v4Config.agent_id && walletAddress) {
+    const effectiveAgentId = v4Config?.agent_id || publishMetadata.agent_id;
+    if (v4Config && effectiveAgentId && walletAddress) {
       const apiSpinner = output.spinner('Syncing with agirails.app...');
       try {
         const publishTimestamp = Math.floor(Date.now() / 1000);
@@ -517,7 +517,7 @@ async function runPublish(
           const sig = await signer.signMessage(upsertMessage);
           const apiResult = await upsertAgent({
             slug: v4Config.slug,
-            agentId: v4Config.agent_id,
+            agentId: effectiveAgentId,
             wallet: smartWalletAddress || existingWallet || walletAddress,
             signer: walletAddress, // EOA that signed the message
             configCid: cid,
