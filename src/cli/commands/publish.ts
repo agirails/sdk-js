@@ -409,7 +409,9 @@ async function runPublish(
       );
     }
 
-    // Always save mainnet pending (lazy — activates on first mainnet payment)
+    // Save mainnet pending (lazy — activates on first mainnet payment).
+    // This is intentional even when config mode is testnet: the agent may later
+    // switch to mainnet, and the pending file ensures activation happens automatically.
     savePendingPublish({ ...pendingData, network: 'base-mainnet' });
 
     // ================================================================
