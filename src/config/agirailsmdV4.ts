@@ -320,7 +320,11 @@ function getBoolean(obj: Record<string, unknown> | undefined, key: string): bool
 
 function getStringArray(obj: Record<string, unknown> | undefined, key: string): string[] {
   if (!obj || !Array.isArray(obj[key])) return [];
-  return (obj[key] as unknown[]).map(String);
+  return (obj[key] as unknown[]).map((item) => {
+    if (typeof item === 'string') return item;
+    if (item && typeof item === 'object' && 'type' in item) return String((item as Record<string, unknown>).type);
+    return String(item);
+  });
 }
 
 function getObject(obj: Record<string, unknown> | undefined, key: string): Record<string, unknown> {
