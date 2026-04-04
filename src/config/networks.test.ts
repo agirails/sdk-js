@@ -129,7 +129,7 @@ describe('Networks Config', () => {
 
     it('should have correct ACTPKernel on base-sepolia', () => {
       const config = getNetwork('base-sepolia');
-      expect(config.contracts.actpKernel).toBe('0x90a1Bcc218c148F63D036aB2f7B5329C9ee7868d');
+      expect(config.contracts.actpKernel).toBe('0xE151C35EAda9d05830aE3e3d81bE61dfe1953ED4');
     });
 
     it('should have correct ACTPKernel on base-mainnet', () => {
@@ -139,7 +139,7 @@ describe('Networks Config', () => {
 
     it('should have correct EscrowVault on base-sepolia', () => {
       const config = getNetwork('base-sepolia');
-      expect(config.contracts.escrowVault).toBe('0xA336967F4481EeE4A8Bb59e35423D273fbf9f5e7');
+      expect(config.contracts.escrowVault).toBe('0xA73e357647Db4cDcfD1aDbbE0422fA7D1B792FeF');
     });
 
     it('should have correct EscrowVault on base-mainnet', () => {
