@@ -26,7 +26,7 @@ describe('EventMonitor', () => {
           fragment: 'StateTransitioned',
           args: [txId],
         })),
-        TransactionCreated: jest.fn((txId?: string, requester?: string, provider?: string) => ({
+        TransactionCreated: jest.fn((txId?: string | null, requester?: string | null, provider?: string | null) => ({
           fragment: 'TransactionCreated',
           args: [txId, requester, provider],
         })),
@@ -386,6 +386,84 @@ describe('EventMonitor', () => {
 
       cleanup();
       expect(mockKernel.off).toHaveBeenCalled();
+    });
+
+    it('should pass null for all indexed params when no filter given', () => {
+      const mockKernel = createMockContract();
+      const mockEscrow = createMockContract();
+      const monitor = new EventMonitor(mockKernel as any, mockEscrow as any);
+
+      monitor.onTransactionCreated(jest.fn());
+
+      // No filter = null for all three indexed params (txId, requester, provider)
+      expect(mockKernel.filters.TransactionCreated).toHaveBeenCalledWith(null, null, null);
+    });
+
+    it('should filter by provider address at RPC level', () => {
+      const mockKernel = createMockContract();
+      const mockEscrow = createMockContract();
+      const monitor = new EventMonitor(mockKernel as any, mockEscrow as any);
+
+      const providerAddress = '0x' + 'b'.repeat(40);
+      monitor.onTransactionCreated({ provider: providerAddress }, jest.fn());
+
+      // Filter order: TransactionCreated(txId, requester, provider)
+      expect(mockKernel.filters.TransactionCreated).toHaveBeenCalledWith(null, null, providerAddress);
+    });
+
+    it('should filter by requester address at RPC level', () => {
+      const mockKernel = createMockContract();
+      const mockEscrow = createMockContract();
+      const monitor = new EventMonitor(mockKernel as any, mockEscrow as any);
+
+      const requesterAddress = '0x' + 'a'.repeat(40);
+      monitor.onTransactionCreated({ requester: requesterAddress }, jest.fn());
+
+      expect(mockKernel.filters.TransactionCreated).toHaveBeenCalledWith(null, requesterAddress, null);
+    });
+
+    it('should filter by both requester and provider', () => {
+      const mockKernel = createMockContract();
+      const mockEscrow = createMockContract();
+      const monitor = new EventMonitor(mockKernel as any, mockEscrow as any);
+
+      const requesterAddress = '0x' + 'a'.repeat(40);
+      const providerAddress = '0x' + 'b'.repeat(40);
+      monitor.onTransactionCreated(
+        { requester: requesterAddress, provider: providerAddress },
+        jest.fn(),
+      );
+
+      expect(mockKernel.filters.TransactionCreated).toHaveBeenCalledWith(
+        null,
+        requesterAddress,
+        providerAddress,
+      );
+    });
+
+    it('should call filtered callback with transaction data', () => {
+      const mockKernel = createMockContract();
+      const mockEscrow = createMockContract();
+      const monitor = new EventMonitor(mockKernel as any, mockEscrow as any);
+
+      const providerAddress = '0x' + 'b'.repeat(40);
+      const callback = jest.fn();
+      monitor.onTransactionCreated({ provider: providerAddress }, callback);
+
+      const filter = mockKernel.filters.TransactionCreated(null, null, providerAddress);
+      const txId = '0x' + '1'.repeat(64);
+      const requester = '0x' + 'a'.repeat(40);
+      const amount = BigInt(1000000);
+
+      mockKernel._emit(filter, txId, requester, providerAddress, amount, '0x');
+
+      expect(callback).toHaveBeenCalledWith({
+        txId,
+        requester,
+        provider: providerAddress,
+        amount,
+        serviceHash: '0x',
+      });
     });
   });
 

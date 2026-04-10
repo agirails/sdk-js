@@ -136,16 +136,54 @@ export class EventMonitor {
   }
 
   /**
-   * Subscribe to transaction creation events
+   * Subscribe to transaction creation events.
+   *
+   * Optionally filter by requester and/or provider address. Filtering happens
+   * at the RPC node level via indexed event parameters — significantly more
+   * efficient than filtering in the callback, especially for high-volume agents.
    *
    *Security: Corrected event parameter order.
    * Per ACTPKernel.json ABI:
    *   TransactionCreated(bytes32 indexed transactionId, address indexed requester, address indexed provider, uint256 amount, bytes32 serviceHash)
+   *
+   * @example
+   * ```typescript
+   * // Listen to ALL transactions (legacy, inefficient at scale)
+   * monitor.onTransactionCreated((tx) => console.log(tx));
+   *
+   * // Listen only to transactions where I am the provider (recommended for listeners)
+   * monitor.onTransactionCreated({ provider: myAddress }, (tx) => handleJob(tx));
+   *
+   * // Listen only to my outgoing transactions
+   * monitor.onTransactionCreated({ requester: myAddress }, (tx) => trackOutbound(tx));
+   * ```
    */
   onTransactionCreated(
     callback: (tx: { txId: string; requester: string; provider: string; amount: bigint; serviceHash?: string }) => void
+  ): () => void;
+  onTransactionCreated(
+    filter: { requester?: string; provider?: string },
+    callback: (tx: { txId: string; requester: string; provider: string; amount: bigint; serviceHash?: string }) => void
+  ): () => void;
+  onTransactionCreated(
+    filterOrCallback:
+      | { requester?: string; provider?: string }
+      | ((tx: { txId: string; requester: string; provider: string; amount: bigint; serviceHash?: string }) => void),
+    maybeCallback?: (tx: { txId: string; requester: string; provider: string; amount: bigint; serviceHash?: string }) => void
   ): () => void {
-    const filter = this.kernelContract.filters.TransactionCreated();
+    // Resolve overload arguments
+    const filterOpts =
+      typeof filterOrCallback === 'function' ? {} : filterOrCallback;
+    const callback =
+      typeof filterOrCallback === 'function' ? filterOrCallback : maybeCallback!;
+
+    // Build indexed filter — null means "any value" for that indexed param
+    // Filter order per ABI: TransactionCreated(transactionId, requester, provider, ...)
+    const filter = this.kernelContract.filters.TransactionCreated(
+      null,
+      filterOpts.requester ?? null,
+      filterOpts.provider ?? null,
+    );
 
     // Event signature per ABI: (txId, requester, provider, amount, serviceHash)
     const listener = async (
