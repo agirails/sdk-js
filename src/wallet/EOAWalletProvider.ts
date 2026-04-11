@@ -70,6 +70,14 @@ export class EOAWalletProvider implements IWalletProvider {
   }
 
   /**
+   * Expose the underlying ethers provider for read-only contract calls.
+   * Used by X402Adapter to check USDC.allowance() before Permit2 approve.
+   */
+  getReadProvider(): unknown {
+    return this.wallet.provider;
+  }
+
+  /**
    * Sign EIP-712 typed data via ethers.Wallet.signTypedData.
    *
    * Ethers v6 rejects an explicit `EIP712Domain` entry in the types bag

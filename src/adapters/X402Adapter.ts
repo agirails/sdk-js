@@ -31,6 +31,7 @@ import {
 } from '@x402/fetch';
 import {
   ExactEvmScheme,
+  PERMIT2_ADDRESS,
   createPermit2ApprovalTx,
   type ClientEvmSigner,
 } from '@x402/evm';
@@ -106,6 +107,40 @@ export interface X402AdapterConfig {
   maxAuthorizationValidSec?: number;
 
   /**
+   * Allowlist of asset token contract addresses the adapter will pay.
+   *
+   * Undefined (default) = all canonical USDC addresses on the configured
+   * `allowedNetworks` (see `DEFAULT_USDC_BY_NETWORK`). Set to a specific
+   * list to restrict further, or pass an empty array to allow any asset
+   * (NOT recommended — removes the safety check entirely).
+   *
+   * P1-1: prevents a server from advertising a different token (e.g., USDT
+   * on the same network, or a scam token) and having the adapter sign a
+   * payment for it. The cap check in `parseUsdcAmount` / `formatUsdcAmount`
+   * assumes 6 decimals, which is only accurate for USDC-family stables.
+   * Honoring a non-USDC asset with different decimals would also break the
+   * `maxAmountPerTx` cap.
+   *
+   * Addresses are compared case-insensitively.
+   */
+  allowedAssets?: ReadonlyArray<string>;
+
+  /**
+   * Allowlist of HTTPS hosts the adapter will pay without requiring explicit
+   * opt-in via `metadata.paymentMethod === 'x402'`.
+   *
+   * Undefined or empty (default) = no host allowlist; callers must always
+   * opt in explicitly unless they trust every HTTPS URL their code hits.
+   * Set to specific hostnames (e.g. `['x402.org', 'api.mycoinbase.com']`) to
+   * whitelist trusted servers for auto-pay.
+   *
+   * P1-3: prevents accidental `client.pay({ to: 'https://unrelated.com' })`
+   * from triggering a silent x402 charge. See `routeHttpsWithOptIn` flow in
+   * selectRequirements gate.
+   */
+  allowedHosts?: ReadonlyArray<string>;
+
+  /**
    * Optional fetch override for tests. Defaults to global fetch.
    */
   fetchImpl?: typeof fetch;
@@ -126,6 +161,25 @@ const DEFAULT_EVM_NETWORKS: ReadonlyArray<string> = [
   'eip155:42161', // Arbitrum One
   'eip155:137', // Polygon
 ];
+
+/**
+ * Canonical USDC contract address per supported EVM network (CAIP-2 keys).
+ *
+ * Source: Circle's official deployment list as of 2026-04. Keep in sync with
+ * `DEFAULT_EVM_NETWORKS`. Used as the default `allowedAssets` allowlist so
+ * the adapter refuses to sign payments in any other token.
+ *
+ * Addresses stored lowercase so comparisons can use `.toLowerCase()` on
+ * server-provided asset addresses directly.
+ */
+const DEFAULT_USDC_BY_NETWORK: Record<string, string> = {
+  'eip155:1':     '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48', // Ethereum USDC
+  'eip155:8453':  '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913', // Base USDC
+  'eip155:84532': '0x036cbd53842c5426634e7929541ec2318f3dcf7e', // Base Sepolia USDC
+  'eip155:10':    '0x0b2c639c533813f4aa9d7837caf62653d097ff85', // Optimism USDC
+  'eip155:42161': '0xaf88d065e77c8cc2239327c5edb3a432268e5831', // Arbitrum USDC
+  'eip155:137':   '0x3c499c542cef5e3811e1192ce70d8cc03d5c3359', // Polygon USDC
+};
 
 /**
  * Internal record of a completed x402 payment, kept for `getStatus` lookups.
@@ -164,6 +218,19 @@ export class X402Adapter implements IAdapter {
    */
   private readonly allowedNetworks: ReadonlyArray<string>;
 
+  /**
+   * Cached lowercase set of allowed asset (token contract) addresses.
+   * Undefined means user explicitly passed an empty array, which is our
+   * sentinel for "any asset" (NOT recommended — skips the safety check).
+   */
+  private readonly allowedAssetsLc: ReadonlySet<string> | undefined;
+
+  /**
+   * Cached lowercase set of allowed host names. Empty means no host allowlist
+   * (user must always opt in via metadata.paymentMethod for every URL).
+   */
+  private readonly allowedHostsLc: ReadonlySet<string>;
+
   /** network:tokenAddress → cached approved state */
   private readonly permit2ApprovedCache = new Set<string>();
 
@@ -187,6 +254,25 @@ export class X402Adapter implements IAdapter {
     // runs on every payment, so we must avoid re-resolving per-call.
     this.allowedNetworks = resolveAllowedNetworks(config.allowedNetworks);
 
+    // P1-1: resolve allowed assets. Undefined → canonical USDC per network.
+    // Empty array → sentinel for "allow any asset" (explicit opt-out).
+    // Non-empty array → user-provided override.
+    if (config.allowedAssets === undefined) {
+      const defaults = this.allowedNetworks
+        .map((n) => DEFAULT_USDC_BY_NETWORK[n])
+        .filter((a): a is string => typeof a === 'string');
+      this.allowedAssetsLc = new Set(defaults.map((a) => a.toLowerCase()));
+    } else if (config.allowedAssets.length === 0) {
+      this.allowedAssetsLc = undefined; // sentinel: any asset
+    } else {
+      this.allowedAssetsLc = new Set(config.allowedAssets.map((a) => a.toLowerCase()));
+    }
+
+    // P1-3: resolve allowed hosts. Default empty = always require opt-in.
+    this.allowedHostsLc = new Set(
+      (config.allowedHosts ?? []).map((h) => h.toLowerCase())
+    );
+
     // Build x402 client via fromConfig with all scheme registrations up front,
     // plus our paymentRequirementsSelector. Hook is registered on the returned
     // client instance (fromConfig does not take hooks).
@@ -207,7 +293,10 @@ export class X402Adapter implements IAdapter {
       this.x402
     );
 
-    this.maxAmountPerTx = parseUsdcAmount(config.maxAmountPerTx ?? '10');
+    // P1-3: hardened default cap lowered from $10 → $1. Reduces blast radius
+    // of accidental `client.pay({to: 'https://...'})` calls. Users who need
+    // higher caps must opt in explicitly via config.
+    this.maxAmountPerTx = parseUsdcAmount(config.maxAmountPerTx ?? '1');
     this.maxAuthorizationValidSec = config.maxAuthorizationValidSec ?? 300;
   }
 
@@ -219,6 +308,11 @@ export class X402Adapter implements IAdapter {
    * STRICT HTTPS ONLY. `http://` is rejected at the canHandle level to prevent
    * MITM interception of signed payment payloads. Integration tests that need
    * localhost use a dedicated test flag (not exposed to end users).
+   *
+   * P1-3: canHandle returns true for any HTTPS URL so the router can select
+   * this adapter, but `validate()` enforces explicit opt-in before payment
+   * actually executes. This keeps the declarative "any HTTPS is x402-capable"
+   * shape while protecting against accidental auto-pay.
    */
   canHandle(params: UnifiedPayParams): boolean {
     return /^https:\/\//i.test(params.to);
@@ -232,6 +326,32 @@ export class X402Adapter implements IAdapter {
       throw new X402ConfigError(
         `x402: refusing non-HTTPS target ${params.to}. Only https:// URLs are supported ` +
           `to prevent MITM interception of signed payment payloads.`
+      );
+    }
+
+    // P1-3: Explicit opt-in gate. A URL is allowed to trigger a payment only if:
+    //   (a) caller set `metadata.paymentMethod === 'x402'`, OR
+    //   (b) the target host is in the allowedHosts allowlist.
+    // Without one of these, throw so an accidental `client.pay({to: 'https://...'})`
+    // call doesn't silently cost money.
+    const explicitOptIn = params.metadata?.paymentMethod === 'x402';
+    let hostAllowed = false;
+    if (this.allowedHostsLc.size > 0) {
+      try {
+        const host = new URL(params.to).hostname.toLowerCase();
+        hostAllowed = this.allowedHostsLc.has(host);
+      } catch {
+        // fall through — invalid URL will surface below
+      }
+    }
+
+    if (!explicitOptIn && !hostAllowed) {
+      throw new X402ConfigError(
+        `x402: refusing to auto-pay ${params.to}. HTTPS URLs trigger x402 payments ` +
+          `only when the caller explicitly opts in. Either:\n` +
+          `  (a) pass metadata: { paymentMethod: 'x402' } to client.pay(), or\n` +
+          `  (b) add the host to ACTPClientConfig.x402.allowedHosts.\n` +
+          `This safeguard prevents accidental charges from unrelated HTTPS calls.`
       );
     }
   }
@@ -374,15 +494,31 @@ export class X402Adapter implements IAdapter {
     requirements: ReadonlyArray<PaymentRequirements>
   ): PaymentRequirements {
     const allowed = this.allowedNetworks; // I1: cached
-    const candidates = requirements.filter(
-      (r) => r.scheme === 'exact' && allowed.includes(r.network)
-    );
+
+    // P1-1: filter by scheme + network + asset. Asset check rejects any
+    // token that's not in our allowlist (canonical USDC per chain by default).
+    // Without this, a malicious or misconfigured server could advertise
+    // USDT/DAI/scam-token and we'd sign a payment with wrong decimals,
+    // bypassing the maxAmountPerTx cap silently.
+    const candidates = requirements.filter((r) => {
+      if (r.scheme !== 'exact') return false;
+      if (!allowed.includes(r.network)) return false;
+      if (this.allowedAssetsLc && typeof r.asset === 'string') {
+        if (!this.allowedAssetsLc.has(r.asset.toLowerCase())) return false;
+      }
+      return true;
+    });
 
     if (candidates.length === 0) {
-      const seen = requirements.map((r) => `${r.scheme}@${r.network}`).join(', ');
+      const seen = requirements
+        .map((r) => `${r.scheme}@${r.network}(${(r.asset ?? '').slice(0, 10)}...)`)
+        .join(', ');
+      const assetInfo = this.allowedAssetsLc
+        ? `, allowed assets: [${[...this.allowedAssetsLc].map((a) => a.slice(0, 10) + '...').join(', ')}]`
+        : '';
       throw new X402NetworkNotAllowedError(
         `x402: no accepted requirement. Server offered [${seen}], ` +
-          `allowed networks: [${allowed.join(', ')}].`
+          `allowed networks: [${allowed.join(', ')}]${assetInfo}.`
       );
     }
 
@@ -441,6 +577,21 @@ export class X402Adapter implements IAdapter {
 
     const doApprove = async (): Promise<void> => {
       try {
+        // P1-2: check on-chain allowance BEFORE sending approve. The in-memory
+        // `permit2ApprovedCache` is only a fast path — after a process restart
+        // or horizontal scale, the cache is empty but the on-chain allowance
+        // may already be set from a prior run. Without this check we'd pay
+        // for the approve again.
+        const alreadyApproved = await this.readPermit2AllowanceIsSet(token);
+        if (alreadyApproved) {
+          this.permit2ApprovedCache.add(key);
+          sdkLogger.debug('x402 Permit2 approve: allowance already set on-chain, skipping', {
+            network,
+            token,
+          });
+          return;
+        }
+
         sdkLogger.info('x402 Permit2 approve: submitting one-time USDC approve', {
           network,
           token,
@@ -477,6 +628,53 @@ export class X402Adapter implements IAdapter {
     const approvalPromise = doApprove();
     this.permit2InflightApprovals.set(key, approvalPromise);
     return await approvalPromise;
+  }
+
+  /**
+   * P1-2: Read `USDC.allowance(smartWallet, PERMIT2_ADDRESS)` via the wallet
+   * provider's read provider and return true if already >= a sensible threshold
+   * (half of max uint256 — Permit2 approves are typically MAX_UINT256).
+   *
+   * Returns false if the wallet provider doesn't expose a read provider
+   * (older wallet implementations) — callers then fall back to submitting
+   * the approve unconditionally, which is the safe (but slightly wasteful)
+   * default.
+   *
+   * Uses eth_call with the standard ERC-20 allowance ABI selector to avoid
+   * pulling in additional contract ABIs.
+   */
+  private async readPermit2AllowanceIsSet(token: string): Promise<boolean> {
+    if (typeof this.config.walletProvider.getReadProvider !== 'function') {
+      return false; // no read capability — submit approve unconditionally
+    }
+    const rawProvider = this.config.walletProvider.getReadProvider();
+    // Duck-type: ethers v6 provider has `.call({to, data}): Promise<string>`.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const providerAny = rawProvider as any;
+    if (!providerAny || typeof providerAny.call !== 'function') return false;
+
+    // ERC-20 allowance(address owner, address spender) — selector 0xdd62ed3e
+    const owner = this.config.walletProvider.getAddress().toLowerCase().replace(/^0x/, '');
+    const spender = PERMIT2_ADDRESS.toLowerCase().replace(/^0x/, '');
+    const data =
+      '0xdd62ed3e' +
+      owner.padStart(64, '0') +
+      spender.padStart(64, '0');
+
+    try {
+      const result: string = await providerAny.call({ to: token, data });
+      if (!result || result === '0x') return false;
+      const allowance = BigInt(result);
+      // Permit2 approve is typically MAX_UINT256. Treat any value above
+      // half-max as "already approved" to tolerate partial-spend scenarios.
+      const THRESHOLD = (1n << 255n);
+      return allowance >= THRESHOLD;
+    } catch (e) {
+      sdkLogger.debug('x402 allowance read failed, falling back to submit', {
+        error: e instanceof Error ? e.message : String(e),
+      });
+      return false;
+    }
   }
 
   // ==========================================================================

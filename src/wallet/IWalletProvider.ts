@@ -194,4 +194,21 @@ export interface IWalletProvider {
    * @returns 0x-prefixed hex signature bytes
    */
   signTypedData?(typedData: EIP712TypedData): Promise<string>;
+
+  /**
+   * Get the underlying read-only provider for on-chain contract calls.
+   *
+   * Optional — used by adapters that need to read chain state before
+   * submitting transactions (e.g. X402Adapter checks USDC.allowance() to
+   * avoid sending a redundant Permit2 approve after restart).
+   *
+   * Returned value is typed `unknown` to respect the "no library types at
+   * the interface boundary" convention. Callers that know the concrete
+   * wallet type (EOA / Auto) can duck-type against the ethers v6 provider
+   * shape (`call({to, data}): Promise<string>`).
+   *
+   * Consumers should check `typeof walletProvider.getReadProvider === 'function'`
+   * before calling.
+   */
+  getReadProvider?(): unknown;
 }

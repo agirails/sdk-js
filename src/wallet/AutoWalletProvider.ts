@@ -200,6 +200,15 @@ export class AutoWalletProvider implements IWalletProvider {
   }
 
   /**
+   * Expose the underlying ethers JsonRpcProvider for read-only contract calls.
+   * Used by X402Adapter to check USDC.allowance() before Permit2 approve so
+   * we don't re-sponsor the same approve across restarts or horizontal scale.
+   */
+  getReadProvider(): unknown {
+    return this.provider;
+  }
+
+  /**
    * Sign EIP-712 typed data via viem's `toCoinbaseSmartAccount`.
    *
    * Handles the full Smart Wallet signing flow automatically:

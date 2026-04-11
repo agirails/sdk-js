@@ -234,8 +234,45 @@ describe('X402Adapter — validate', () => {
     );
   });
 
-  it('accepts HTTPS URLs', () => {
-    expect(() => adapter.validate({ to: 'https://example.com' })).not.toThrow();
+  it('P1-3: rejects bare HTTPS URLs without opt-in', () => {
+    // HTTPS URL alone is not enough — caller must explicitly opt in via
+    // metadata.paymentMethod='x402' or configure allowedHosts. This
+    // prevents accidental charges from unrelated HTTPS calls.
+    expect(() => adapter.validate({ to: 'https://example.com' })).toThrow(
+      /refusing to auto-pay/i
+    );
+  });
+
+  it('P1-3: accepts HTTPS URLs when metadata.paymentMethod === x402', () => {
+    expect(() =>
+      adapter.validate({
+        to: 'https://example.com',
+        metadata: { paymentMethod: 'x402' },
+      })
+    ).not.toThrow();
+  });
+
+  it('P1-3: accepts HTTPS URLs when host is in allowedHosts', () => {
+    const scopedAdapter = new X402Adapter({
+      walletProvider: createMockEoaProvider(),
+      allowedHosts: ['example.com', 'api.example.org'],
+    });
+    expect(() => scopedAdapter.validate({ to: 'https://example.com/foo' })).not.toThrow();
+    expect(() =>
+      scopedAdapter.validate({ to: 'https://api.example.org/bar' })
+    ).not.toThrow();
+    // Different host → still rejected
+    expect(() =>
+      scopedAdapter.validate({ to: 'https://untrusted.com' })
+    ).toThrow(/refusing to auto-pay/i);
+  });
+
+  it('P1-3: allowedHosts comparison is case-insensitive', () => {
+    const scopedAdapter = new X402Adapter({
+      walletProvider: createMockEoaProvider(),
+      allowedHosts: ['Example.COM'],
+    });
+    expect(() => scopedAdapter.validate({ to: 'https://EXAMPLE.com' })).not.toThrow();
   });
 });
 
@@ -334,6 +371,62 @@ describe('X402Adapter — mock server round-trip', () => {
     const required = res.headers.get('payment-required');
     const decoded = JSON.parse(Buffer.from(required!, 'base64').toString());
     expect(decoded.accepts[0].extra.assetTransferMethod).toBeUndefined();
+  });
+});
+
+// ============================================================================
+// P1-1 / P1-3 config surface
+// ============================================================================
+
+describe('X402Adapter — P1-1 asset allowlist config', () => {
+  it('defaults to canonical USDC addresses when allowedAssets is undefined', () => {
+    // Construction succeeds — the adapter keeps USDC-only default internally.
+    // End-to-end asset filtering is exercised via the mock server round-trip
+    // (server advertises Base Sepolia USDC by default, which matches the allowlist).
+    expect(
+      () => new X402Adapter({ walletProvider: createMockEoaProvider() })
+    ).not.toThrow();
+  });
+
+  it('accepts explicit allowedAssets override', () => {
+    expect(
+      () =>
+        new X402Adapter({
+          walletProvider: createMockEoaProvider(),
+          allowedAssets: ['0x036cbd53842c5426634e7929541ec2318f3dcf7e'],
+        })
+    ).not.toThrow();
+  });
+
+  it('accepts empty allowedAssets (sentinel for any asset, opt-out)', () => {
+    expect(
+      () =>
+        new X402Adapter({
+          walletProvider: createMockEoaProvider(),
+          allowedAssets: [],
+        })
+    ).not.toThrow();
+  });
+});
+
+describe('X402Adapter — P1-3 default cap lowered to $1', () => {
+  it('constructs with default cap of $1 when maxAmountPerTx is unset', () => {
+    // Can't directly inspect the private field, but we can verify construction
+    // succeeds and doesn't throw for the tightened default. This is an assert
+    // that the default doesn't break typing or config validation.
+    expect(
+      () => new X402Adapter({ walletProvider: createMockEoaProvider() })
+    ).not.toThrow();
+  });
+
+  it('allows higher cap when user opts in explicitly', () => {
+    expect(
+      () =>
+        new X402Adapter({
+          walletProvider: createMockEoaProvider(),
+          maxAmountPerTx: '100',
+        })
+    ).not.toThrow();
   });
 });
 
