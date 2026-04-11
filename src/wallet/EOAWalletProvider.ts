@@ -14,7 +14,9 @@ import {
   TransactionRequest,
   TransactionReceipt,
   WalletInfo,
+  EIP712TypedData,
 } from './IWalletProvider';
+import { X402SignatureFailedError } from '../errors/X402Errors';
 
 export class EOAWalletProvider implements IWalletProvider {
   private readonly wallet: ethers.Wallet;
@@ -65,5 +67,30 @@ export class EOAWalletProvider implements IWalletProvider {
       gasSponsored: false,
       chainId: this.chainId,
     };
+  }
+
+  /**
+   * Sign EIP-712 typed data via ethers.Wallet.signTypedData.
+   *
+   * Ethers v6 rejects an explicit `EIP712Domain` entry in the types bag
+   * (it infers the domain type internally), so we strip it before calling.
+   */
+  async signTypedData(typedData: EIP712TypedData): Promise<string> {
+    try {
+      // Strip EIP712Domain — ethers v6 derives it from the domain argument.
+      const { EIP712Domain: _omit, ...types } = typedData.types as Record<
+        string,
+        Array<{ name: string; type: string }>
+      >;
+      return await this.wallet.signTypedData(
+        typedData.domain as ethers.TypedDataDomain,
+        types,
+        typedData.message
+      );
+    } catch (e) {
+      throw new X402SignatureFailedError(
+        `EOA signTypedData failed: ${e instanceof Error ? e.message : String(e)}`
+      );
+    }
   }
 }

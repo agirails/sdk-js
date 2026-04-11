@@ -132,8 +132,15 @@ export interface UnifiedPayParams {
   /** Recipient - address, HTTP endpoint, or ERC-8004 agent ID */
   to: string;
 
-  /** Amount in human-readable format */
-  amount: string | number;
+  /**
+   * Amount in human-readable format.
+   *
+   * - REQUIRED for ACTP adapters (basic, standard) — client sets the price
+   * - OPTIONAL for x402 URL targets — amount comes from the server's
+   *   payment-required response; this field is ignored. The x402 adapter
+   *   enforces its own per-tx safety cap via `ACTPClientConfig.x402.maxAmountPerTx`.
+   */
+  amount?: string | number;
 
   /** Deadline (relative like '+24h' or unix timestamp) */
   deadline?: string | number;
@@ -172,7 +179,9 @@ const MAX_DISPUTE_WINDOW = 30 * 24 * 3600;
  */
 export const UnifiedPayParamsSchema = z.object({
   to: z.string().min(1),
-  amount: z.union([z.string().min(1), z.number().positive()]),
+  // Optional — x402 URL targets derive amount from server response.
+  // ACTP adapters (basic, standard) validate presence at pay() time.
+  amount: z.union([z.string().min(1), z.number().positive()]).optional(),
   deadline: z.union([z.string(), z.number()]).optional(),
   disputeWindow: z
     .number()

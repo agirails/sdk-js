@@ -45,6 +45,7 @@ import { BlockchainRuntime } from './runtime/BlockchainRuntime';
 import { IACTPRuntime, IMockRuntime } from './runtime/IACTPRuntime';
 import { BasicAdapter } from './adapters/BasicAdapter';
 import { StandardAdapter } from './adapters/StandardAdapter';
+import { X402Adapter } from './adapters/X402Adapter';
 import { AdapterRegistry } from './adapters/AdapterRegistry';
 import { AdapterRouter } from './adapters/AdapterRouter';
 import { IAdapter, TransactionStatus } from './adapters/IAdapter';
@@ -669,6 +670,29 @@ export class ACTPClient {
     this.registry = new AdapterRegistry();
     this.registry.register(this.basic);
     this.registry.register(this.standard);
+
+    // Auto-register X402Adapter (real x402 v2) when wallet provider supports EIP-712 signing.
+    // Both EOAWalletProvider and AutoWalletProvider implement signTypedData in v3.3.0+.
+    //
+    // Uses defaults: allowedNetworks = all supported EVM chains, maxAmountPerTx = $10,
+    // autoApprovePermit2 = true, maxAuthorizationValidSec = 300.
+    //
+    // To override defaults, users can manually construct and register their own instance:
+    //   const x402 = new X402Adapter({ walletProvider, maxAmountPerTx: "100", ... });
+    //   client.registerAdapter(x402);  // replaces the auto-registered one
+    if (walletProvider && typeof walletProvider.signTypedData === 'function') {
+      try {
+        this.registry.register(new X402Adapter({ walletProvider }));
+      } catch (e) {
+        // Auto-registration is best-effort — if X402Adapter construction fails
+        // (e.g., adapter init error), log and continue without it. Users can still
+        // manually register their own instance.
+        sdkLogger.warn('X402Adapter auto-registration skipped', {
+          error: e instanceof Error ? e.message : String(e),
+        });
+      }
+    }
+
     this.router = new AdapterRouter(this.registry, erc8004Bridge);
 
     // Settle-on-interact: sweep expired DELIVERED transactions on each interaction.

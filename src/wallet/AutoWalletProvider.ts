@@ -24,6 +24,7 @@ import {
   BatchedPayResult,
   CreateACTPTransactionParams,
   CreateACTPTransactionResult,
+  EIP712TypedData,
 } from './IWalletProvider';
 import { computeSmartWalletAddress } from './aa/UserOpBuilder';
 import {
@@ -36,6 +37,7 @@ import { PaymasterClient } from './aa/PaymasterClient';
 import { DualNonceManager } from './aa/DualNonceManager';
 import { buildACTPPayBatch, computeTransactionId } from './aa/TransactionBatcher';
 import { sdkLogger } from '../utils/Logger';
+import { X402SignatureFailedError } from '../errors/X402Errors';
 
 // ============================================================================
 // Types
@@ -77,6 +79,13 @@ export class AutoWalletProvider implements IWalletProvider {
   private readonly nonceManager: DualNonceManager;
   private smartWalletAddress: string = '';
   private isDeployed: boolean = false;
+  // Lazy-constructed viem Coinbase Smart Account for EIP-712 signing (x402 v2).
+  // Null until first signTypedData() call. Never reconstructed after creation.
+  // I2: concurrent signTypedData calls share a single init promise to avoid
+  // double-constructing the viem account (which would open two RPC clients
+  // and run parity checks twice).
+  private viemSmartAccount: unknown = null;
+  private viemSmartAccountInit: Promise<unknown> | null = null;
 
   private constructor(
     config: AutoWalletConfig,
@@ -188,6 +197,152 @@ export class AutoWalletProvider implements IWalletProvider {
    */
   getIsDeployed(): boolean {
     return this.isDeployed;
+  }
+
+  /**
+   * Sign EIP-712 typed data via viem's `toCoinbaseSmartAccount`.
+   *
+   * Handles the full Smart Wallet signing flow automatically:
+   *   1. Hash typed data (domain + types + message)
+   *   2. Wrap in Coinbase Smart Wallet replay-safe hash
+   *      (CoinbaseSmartWalletMessage struct with verifyingContract=SmartWallet)
+   *   3. Owner EOA signs the replay-safe hash
+   *   4. Encode as `SignatureWrapper(ownerIndex=0, rawSig)` for deployed wallet
+   *   5. For counterfactual (undeployed) wallet, wrap in ERC-6492 envelope
+   *      so facilitators can validate via simulation before first UserOp
+   *
+   * Required by X402Adapter for x402 v2 payments (EIP-3009 + Permit2 flows).
+   *
+   * Lazy-constructs the viem account on first call and caches it on the
+   * instance via a shared init promise (I2: concurrent callers wait on the
+   * same promise instead of double-constructing). Includes a runtime parity
+   * check between our counterfactual address (`computeSmartWalletAddress`)
+   * and viem's `toCoinbaseSmartAccount.getAddress()` — divergence would mean
+   * signatures validate at the wrong contract, which is a silent failure
+   * we refuse to allow.
+   *
+   * Bundler compatibility note (N3): this method uses `require('viem')` at
+   * runtime so ACTP-only users never pay viem's ~80KB bundle cost. Under
+   * webpack/esbuild/Next.js this `require` will not be resolved unless viem
+   * is declared as an external. For Node applications (the primary target
+   * for @agirails/sdk) it works out of the box.
+   */
+  async signTypedData(typedData: EIP712TypedData): Promise<string> {
+    try {
+      const account = await this.getViemSmartAccount();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const sig: string = await (account as any).signTypedData({
+        domain: typedData.domain,
+        types: typedData.types,
+        primaryType: typedData.primaryType,
+        message: typedData.message,
+      });
+      return sig;
+    } catch (e) {
+      if (e instanceof X402SignatureFailedError) throw e;
+      throw new X402SignatureFailedError(
+        `AutoWallet signTypedData failed: ${e instanceof Error ? e.message : String(e)}`
+      );
+    }
+  }
+
+  /**
+   * Lazily construct (and cache) the viem Smart Account used for EIP-712
+   * signing. Uses an init promise so concurrent calls share the same
+   * construction and parity check.
+   */
+  private async getViemSmartAccount(): Promise<unknown> {
+    if (this.viemSmartAccount) return this.viemSmartAccount;
+
+    if (!this.viemSmartAccountInit) {
+      this.viemSmartAccountInit = this.constructViemSmartAccount();
+    }
+
+    try {
+      const account = await this.viemSmartAccountInit;
+      this.viemSmartAccount = account;
+      return account;
+    } catch (e) {
+      // Reset on failure so the next caller can retry (otherwise a single
+      // RPC hiccup would poison all future signTypedData calls forever).
+      this.viemSmartAccountInit = null;
+      throw e;
+    }
+  }
+
+  private async constructViemSmartAccount(): Promise<unknown> {
+    // Dynamic require to avoid pulling viem into the call path of
+    // ACTP-only users who never touch x402.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { createPublicClient, http } = require('viem');
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { privateKeyToAccount } = require('viem/accounts');
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { toCoinbaseSmartAccount } = require('viem/account-abstraction');
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const viemChains = require('viem/chains');
+
+    // I4: chain mapping MUST stay in sync with X402Adapter's DEFAULT_EVM_NETWORKS.
+    // Any EVM chain we advertise as supported at the adapter layer must also
+    // resolve to a viem chain here, or signing will fail after successful
+    // requirement selection.
+    const chainMap: Record<number, unknown> = {
+      1: viemChains.mainnet,
+      8453: viemChains.base,
+      84532: viemChains.baseSepolia,
+      10: viemChains.optimism,
+      42161: viemChains.arbitrum,
+      137: viemChains.polygon,
+    };
+    const chain = chainMap[this.chainId];
+
+    if (!chain) {
+      throw new X402SignatureFailedError(
+        `AutoWalletProvider.signTypedData: chainId ${this.chainId} is not a ` +
+          `supported x402 chain. Add to viem/chains mapping in AutoWalletProvider.`
+      );
+    }
+
+    // Build viem public client against the same RPC URL as our ethers provider.
+    // ethers v6 stores the RPC URL in provider._getConnection().url.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rpcUrl = (this.provider as any)._getConnection?.()?.url;
+    if (!rpcUrl) {
+      throw new X402SignatureFailedError(
+        'Cannot extract RPC URL from ethers provider for viem client construction'
+      );
+    }
+
+    const publicClient = createPublicClient({
+      chain,
+      transport: http(rpcUrl),
+    });
+
+    // Owner LocalAccount from the same private key as our ethers signer.
+    const owner = privateKeyToAccount(this.signer.privateKey as `0x${string}`);
+
+    const account = await toCoinbaseSmartAccount({
+      client: publicClient,
+      owners: [owner],
+      ownerIndex: 0,
+      // nonce: 0n — default matches CoinbaseSmartWalletFactory.getAddress(..., 0)
+    });
+
+    // CRITICAL parity check: viem-computed Smart Wallet address MUST match
+    // our counterfactual address. If these differ, signatures validate at
+    // the wrong contract and everything fails silently on the facilitator side.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const viemAddr: string = await (account as any).getAddress();
+    if (viemAddr.toLowerCase() !== this.smartWalletAddress.toLowerCase()) {
+      throw new X402SignatureFailedError(
+        `Smart Wallet address parity mismatch: ours=${this.smartWalletAddress}, ` +
+          `viem=${viemAddr}. Our computeSmartWalletAddress and viem's ` +
+          `toCoinbaseSmartAccount disagree. x402 payments cannot proceed — ` +
+          `signatures would validate at the wrong contract.`
+      );
+    }
+
+    return account;
   }
 
   /**

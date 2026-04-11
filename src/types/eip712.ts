@@ -173,3 +173,21 @@ export function getMessageTypes(messageType: string): Record<string, any> {
   return MESSAGE_TYPES[messageType as keyof typeof MESSAGE_TYPES] || MESSAGE_TYPES.default;
 }
 
+/**
+ * Generic EIP-712 typed data structure (for x402 v2, Permit2, etc.).
+ *
+ * Consumed by `IWalletProvider.signTypedData` and the x402 adapter.
+ * Plain objects only — matches the no-library-types-at-interface-boundary
+ * convention used by IWalletProvider.
+ */
+export interface EIP712TypedData {
+  /** EIP-712 domain separator fields (name, version, chainId, verifyingContract, etc.) */
+  domain: Record<string, unknown>;
+  /** Type definitions keyed by type name. EIP712Domain entry may be omitted. */
+  types: Record<string, Array<{ name: string; type: string }>>;
+  /** Name of the primary type to sign */
+  primaryType: string;
+  /** The message values to sign */
+  message: Record<string, unknown>;
+}
+

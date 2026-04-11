@@ -373,6 +373,15 @@ export class BasicAdapter extends BaseAdapter implements IAdapter {
       return this.routeUrlPayment(params);
     }
 
+    // ACTP adapters require explicit amount (unlike x402 URL payments where
+    // amount comes from the server's payment-required response).
+    if (params.amount === undefined || params.amount === null || params.amount === '') {
+      throw new ValidationError(
+        'amount is required for ACTP payments (basic/standard adapters). ' +
+          'Only x402 URL targets may omit amount (server specifies).'
+      );
+    }
+
     // Validate using IAdapter validate()
     this.validate(params);
 
@@ -450,7 +459,13 @@ export class BasicAdapter extends BaseAdapter implements IAdapter {
     // Validate address
     this.validateAddress(params.to, 'to');
 
-    // Validate amount (will throw if invalid)
+    // Validate amount (required for ACTP adapters; optional only for x402 URLs)
+    if (params.amount === undefined || params.amount === null || params.amount === '') {
+      throw new ValidationError(
+        'amount is required for ACTP payments (basic/standard adapters). ' +
+          'Only x402 URL targets may omit amount (server specifies).'
+      );
+    }
     this.parseAmount(params.amount);
 
     // Validate deadline if provided

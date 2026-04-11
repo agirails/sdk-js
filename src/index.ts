@@ -67,8 +67,21 @@ export {
 export {
   X402Adapter,
   X402AdapterConfig,
-  X402PayParams,
 } from './adapters/X402Adapter';
+
+// x402-specific error types (3.3.0+)
+export {
+  X402Error,
+  X402ConfigError,
+  X402PublishRequiredError,
+  X402UnsupportedWalletError,
+  X402NetworkNotAllowedError,
+  X402AmountExceededError,
+  X402ApprovalFailedError,
+  X402SignatureFailedError,
+  X402SettlementProofMissingError,
+  X402PaymentFailedError,
+} from './errors/X402Errors';
 
 export { AdapterRegistry } from './adapters/AdapterRegistry';
 

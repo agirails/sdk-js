@@ -95,6 +95,12 @@ export interface CreateACTPTransactionResult {
   receipt: TransactionReceipt;
 }
 
+// EIP712TypedData lives in `src/types/eip712.ts` alongside other cross-cutting
+// type definitions. Imported + re-exported here for backward compatibility
+// with existing consumers that pull the type from this module.
+import type { EIP712TypedData } from '../types/eip712';
+export type { EIP712TypedData };
+
 /**
  * Parameters for batched ACTP payment.
  */
@@ -171,4 +177,21 @@ export interface IWalletProvider {
    * @returns Pre-computed txId and transaction receipt
    */
   createACTPTransaction?(params: CreateACTPTransactionParams): Promise<CreateACTPTransactionResult>;
+
+  /**
+   * Sign an EIP-712 typed data message.
+   *
+   * Optional — required for x402 v2 payments (both EIP-3009 and Permit2 flows).
+   * EOA wallets delegate directly to `ethers.Wallet.signTypedData`. Smart Wallet
+   * providers (Tier 1 / AA) wrap the signature via replay-safe hashing and
+   * ERC-1271 / ERC-6492 encoding so the result validates on-chain via
+   * `isValidSignature` calls to the Smart Wallet contract.
+   *
+   * Consumers (like X402Adapter) should check `typeof walletProvider.signTypedData === 'function'`
+   * before attempting to use it.
+   *
+   * @param typedData - EIP-712 message to sign
+   * @returns 0x-prefixed hex signature bytes
+   */
+  signTypedData?(typedData: EIP712TypedData): Promise<string>;
 }

@@ -1,834 +1,664 @@
 /**
- * X402Adapter - HTTP 402 Payment Required Protocol (Atomic Payments)
+ * X402Adapter — real x402 v2 protocol support.
  *
- * Implements the x402 protocol for atomic, instant API payments.
- * NO escrow, NO state machine, NO disputes - just pay and receive.
+ * Thin wrapper around official @x402/fetch + @x402/evm + @x402/core packages.
+ * Replaces the legacy custom `x-payment-*` HTTP flow (which was never real x402)
+ * with proper EIP-3009 / Permit2 wire format for full interoperability with
+ * any x402 v2 seller (Coinbase demo, third-party servers, AGIRAILS sellers).
  *
- * This is fundamentally different from ACTP:
- * - ACTP: escrow → state machine → disputes → explicit release
- * - x402: atomic payment → instant settlement → done
+ * Architecture:
+ * - Buyer signs EIP-3009 authorization or Permit2 witness OFF-CHAIN
+ * - Facilitator (server-configured) submits on-chain tx and pays gas
+ * - Buyer is always gassless for x402 by protocol design
+ * - Smart Wallet buyers use Permit2 path (ERC-1271 + ERC-6492 via viem)
+ * - EOA buyers use either path
  *
- * Use x402 for:
- * - Simple API calls (pay-per-request)
- * - Instant delivery (response IS the delivery)
- * - Low-value, high-frequency transactions
+ * Zero fee layer: payTo goes directly to seller. X402Relay is never used.
+ * Zero reputation hooks: ERC-8004 registry never touched on x402 payments.
  *
- * Use ACTP for:
- * - Complex services requiring verification
- * - High-value transactions needing dispute protection
- * - Multi-step deliveries
+ * See /Users/damir/Arha/AGIRAILS/SDK and Runtime/sdk-js/X402_V2_IMPLEMENTATION_PLAN.md
+ * for full architecture rationale and Smart Wallet signing flow.
  *
  * @module adapters/X402Adapter
  */
 
-import { BaseAdapter, ValidationError } from './BaseAdapter';
+import {
+  x402Client,
+  wrapFetchWithPayment,
+  decodePaymentResponseHeader,
+  type PaymentRequirements,
+  type BeforePaymentCreationContext,
+} from '@x402/fetch';
+import {
+  ExactEvmScheme,
+  createPermit2ApprovalTx,
+  type ClientEvmSigner,
+} from '@x402/evm';
+
 import { IAdapter, TransactionStatus, AdapterTransactionState } from './IAdapter';
 import {
-  AdapterMetadata,
   UnifiedPayParams,
   UnifiedPayResult,
+  AdapterMetadata,
 } from '../types/adapter';
+import { IWalletProvider, EIP712TypedData } from '../wallet/IWalletProvider';
 import {
-  X402PaymentHeaders,
-  X402_HEADERS,
-  X402_PROOF_HEADERS,
-  X402Error,
-  X402ErrorCode,
-  X402Network,
-  X402FeeBreakdown,
-  isValidX402Network,
-} from '../types/x402';
+  X402ConfigError,
+  X402UnsupportedWalletError,
+  X402NetworkNotAllowedError,
+  X402AmountExceededError,
+  X402ApprovalFailedError,
+  X402SettlementProofMissingError,
+  X402PaymentFailedError,
+  X402PublishRequiredError,
+  isPaymasterGateError,
+} from '../errors/X402Errors';
+import { sdkLogger } from '../utils/Logger';
 
 // ============================================================================
 // Types
 // ============================================================================
 
-/** Type for fetch function (cross-platform compatible) */
-export type FetchFunction = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
-
 /**
- * Transaction-like receipt returned by wallet abstractions.
+ * Configuration for X402Adapter.
  *
- * `success` is optional for backward compatibility with legacy transfer fns
- * that only return a hash string.
- */
-export interface TransferReceiptLike {
-  hash: string;
-  success?: boolean;
-}
-
-/**
- * Transfer function for atomic USDC payments.
- *
- * @param to - Recipient address
- * @param amount - Amount in USDC wei (string)
- * @returns Transaction hash string OR receipt-like object with hash/success
- */
-export type TransferFunction = (to: string, amount: string) => Promise<string | TransferReceiptLike>;
-
-/**
- * Approve function for USDC allowance (used with X402Relay).
- *
- * @param spender - Spender address (relay contract)
- * @param amount - Amount in USDC wei (string)
- * @returns Transaction hash
- */
-export type ApproveFunction = (spender: string, amount: string) => Promise<string>;
-
-/**
- * Relay pay function — calls X402Relay.payWithFee().
- *
- * @param provider - Provider address
- * @param grossAmount - Gross USDC amount (string)
- * @param serviceId - Service identifier (bytes32 hex)
- * @returns Transaction hash
- */
-export type RelayPayFunction = (provider: string, grossAmount: string, serviceId: string) => Promise<string>;
-
-/** Supported HTTP methods for x402 requests */
-export type X402HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
-
-/**
- * Extended payment parameters for x402 with full HTTP support.
- */
-export interface X402PayParams extends UnifiedPayParams {
-  /** HTTP method (default: GET) */
-  method?: X402HttpMethod;
-
-  /** Custom request headers */
-  headers?: Record<string, string>;
-
-  /** Request body (string or object, will be JSON.stringify'd if object) */
-  body?: string | Record<string, unknown>;
-
-  /** Content-Type header (default: application/json for POST/PUT/PATCH with body) */
-  contentType?: string;
-}
-
-/**
- * Configuration options for X402Adapter.
- *
- * Fee collection is required (since v2.6.0). Two modes:
- * - Relay (preferred): relayAddress + approveFn + relayPayFn — atomic on-chain split
- * - feeCollector (fallback): feeCollector address — client-side two-transfer split
+ * Auto-registered by ACTPClient when walletProvider implements signTypedData.
+ * Manual instantiation is supported but rarely needed — prefer configuring
+ * via `ACTPClientConfig.x402` instead.
  */
 export interface X402AdapterConfig {
-  /** Expected network for validation (must match server's X-Payment-Network) */
-  expectedNetwork: X402Network;
-
-  /** Transfer function for USDC payments (used in feeCollector path for provider + fee transfers) */
-  transferFn: TransferFunction;
-
-  /** Request timeout in milliseconds (default: 30000) */
-  requestTimeout?: number;
-
-  /** Custom fetch function for testing (default: global fetch) */
-  fetchFn?: FetchFunction;
-
-  /** Default headers to include in all requests */
-  defaultHeaders?: Record<string, string>;
-
-  // --- Fee collection (at least one method required) ---
-
-  /** X402Relay contract address for on-chain fee splitting (preferred) */
-  relayAddress?: string;
-
-  /** USDC approve function — required when relayAddress is set */
-  approveFn?: ApproveFunction;
-
-  /** Relay payWithFee function — required when relayAddress is set */
-  relayPayFn?: RelayPayFunction;
-
-  /** Fee collector address for client-side fee splitting (fallback when relay not available) */
-  feeCollector?: string;
-
-  /** Platform fee in basis points (default: 100 = 1%). Read-only display hint. */
-  platformFeeBps?: number;
-}
-
-/**
- * Atomic payment record (for getStatus lookups).
- */
-interface AtomicPaymentRecord {
-  txHash: string;
-  provider: string;
-  requester: string;
-  amount: string;
-  timestamp: number;
-  endpoint: string;
-  feeBreakdown?: X402FeeBreakdown;
-}
-
-// ============================================================================
-// X402Adapter Implementation
-// ============================================================================
-
-/**
- * X402Adapter - Atomic HTTP payment protocol.
- *
- * Key characteristics:
- * - usesEscrow: false (direct payment)
- * - supportsDisputes: false (atomic = final)
- * - settlementMode: 'atomic' (instant)
- * - releaseRequired: false (no escrow to release)
- *
- * @example
- * ```typescript
- * const adapter = new X402Adapter(requesterAddress, {
- *   expectedNetwork: 'base-sepolia',
- *   transferFn: async (to, amount) => {
- *     const tx = await usdcContract.transfer(to, amount);
- *     return tx.hash;
- *   },
- *   feeCollector: '0x...treasury', // Required: AGIRAILS fee recipient
- * });
- *
- * const result = await adapter.pay({
- *   to: 'https://api.provider.com/service',
- *   amount: '10', // Hint only, actual amount from 402
- * });
- *
- * // That's it! No release() needed.
- * console.log(result.response?.status); // 200
- * console.log(result.releaseRequired);  // false
- * ```
- */
-export class X402Adapter extends BaseAdapter implements IAdapter {
   /**
-   * Adapter metadata - atomic, no escrow.
+   * Wallet provider for signing payment authorizations.
+   * Both `EOAWalletProvider` (Tier 2) and `AutoWalletProvider` (Tier 1 Smart Wallet)
+   * are supported as long as the provider implements the optional
+   * `signTypedData` method.
    */
+  walletProvider: IWalletProvider;
+
+  /**
+   * Optional CAIP-2 network allowlist (e.g. `["eip155:8453", "eip155:84532"]`).
+   *
+   * Leave undefined (default) to allow ANY EVM network @x402/evm supports —
+   * this is the "works with anyone" interop default. Set an explicit list
+   * only if you want to restrict your agent to specific chains.
+   */
+  allowedNetworks?: ReadonlyArray<string>;
+
+  /**
+   * Per-transaction safety cap in human-readable USD (e.g. "10" for $10 USDC).
+   * Protects against accidentally paying unexpectedly high prices.
+   * Default: "10"
+   */
+  maxAmountPerTx?: string;
+
+  /**
+   * Automatically run one-time Permit2 USDC approve on first Smart Wallet
+   * x402 payment. The approve is sponsored by the existing paymaster and
+   * costs nothing to the user in gas. Default: true.
+   */
+  autoApprovePermit2?: boolean;
+
+  /**
+   * MEV hard cap on signed authorization validity window in seconds.
+   * Facilitator/server may propose longer `maxTimeoutSeconds`, but we clamp
+   * to this value before signing. Default: 300 (5 minutes).
+   */
+  maxAuthorizationValidSec?: number;
+
+  /**
+   * Optional fetch override for tests. Defaults to global fetch.
+   */
+  fetchImpl?: typeof fetch;
+}
+
+/**
+ * Default networks if allowedNetworks is undefined.
+ *
+ * Hand-maintained because @x402/core exposes `Network` as a structural string
+ * pattern (`${string}:${string}`), not a canonical enum. Review on each
+ * @x402/evm upgrade to keep in sync with upstream scheme support.
+ */
+const DEFAULT_EVM_NETWORKS: ReadonlyArray<string> = [
+  'eip155:1', // Ethereum mainnet
+  'eip155:8453', // Base mainnet
+  'eip155:84532', // Base Sepolia
+  'eip155:10', // Optimism
+  'eip155:42161', // Arbitrum One
+  'eip155:137', // Polygon
+];
+
+/**
+ * Internal record of a completed x402 payment, kept for `getStatus` lookups.
+ */
+interface X402PaymentRecord {
+  txId: string;
+  amount: bigint;
+  network: string;
+  payer: string;
+  payTo: string;
+  settledAt: number;
+}
+
+// ============================================================================
+// X402Adapter
+// ============================================================================
+
+export class X402Adapter implements IAdapter {
   public readonly metadata: AdapterMetadata = {
     id: 'x402',
-    name: 'X402 Atomic Payment Adapter',
+    name: 'x402 v2',
     usesEscrow: false,
     supportsDisputes: false,
     requiresIdentity: false,
-    settlementMode: 'atomic',
+    settlementMode: 'atomic', // x402 is stateless HTTP; settlement is atomic via facilitator
     priority: 70,
   };
 
-  private readonly timeout: number;
-  private readonly fetchFn: FetchFunction;
-  private readonly defaultHeaders: Record<string, string>;
-  private readonly transferFn: TransferFunction;
-
-  /** Local cache of payments for status lookups */
-  private readonly payments = new Map<string, AtomicPaymentRecord>();
-
+  private readonly x402: InstanceType<typeof x402Client>;
+  private readonly fetchWithPayment: typeof fetch;
+  private readonly maxAmountPerTx: bigint;
+  private readonly maxAuthorizationValidSec: number;
   /**
-   * Creates a new X402Adapter instance.
-   *
-   * @param requesterAddress - The requester's Ethereum address
-   * @param config - X402-specific configuration
+   * Cached resolved allowed-network list. Computed once at construction; used
+   * on every selectRequirements call without re-running resolveAllowedNetworks.
    */
-  constructor(
-    requesterAddress: string,
-    private config: X402AdapterConfig
-  ) {
-    super(requesterAddress);
-    this.timeout = config.requestTimeout ?? 30000;
-    this.fetchFn = config.fetchFn ?? fetch;
-    this.defaultHeaders = config.defaultHeaders ?? {};
-    this.transferFn = config.transferFn;
-  }
+  private readonly allowedNetworks: ReadonlyArray<string>;
 
-  // ==========================================================================
-  // IAdapter Implementation
-  // ==========================================================================
+  /** network:tokenAddress → cached approved state */
+  private readonly permit2ApprovedCache = new Set<string>();
 
-  /**
-   * Check if this adapter can handle the given parameters.
-   *
-   * X402Adapter handles HTTPS URLs only (security requirement).
-   */
-  canHandle(params: UnifiedPayParams): boolean {
-    if (typeof params.to !== 'string') {
-      return false;
-    }
+  /** network:tokenAddress → in-flight approve promise (coalesces concurrent callers) */
+  private readonly permit2InflightApprovals = new Map<string, Promise<void>>();
 
-    try {
-      const url = new URL(params.to);
-      return url.protocol === 'https:';
-    } catch {
-      return false;
-    }
-  }
+  /** Completed payment records for getStatus() lookups */
+  private readonly payments = new Map<string, X402PaymentRecord>();
 
-  /**
-   * Validate parameters before execution.
-   */
-  validate(params: UnifiedPayParams): void {
-    if (!this.canHandle(params)) {
-      throw new ValidationError(
-        `X402 requires HTTPS URL, got: "${params.to}". ` +
-        `HTTP endpoints are not supported for security reasons.`
+  constructor(private readonly config: X402AdapterConfig) {
+    if (typeof config.walletProvider.signTypedData !== 'function') {
+      throw new X402ConfigError(
+        'X402Adapter requires a walletProvider with signTypedData() support. ' +
+          'Both EOAWalletProvider and AutoWalletProvider implement this in @agirails/sdk@3.3.0+.'
       );
     }
 
-    const url = new URL(params.to);
+    const signer = this.walletProviderToClientEvmSigner(config.walletProvider);
+    const scheme = new ExactEvmScheme(signer);
+    // I1: compute and cache allowed network list once — selectRequirements
+    // runs on every payment, so we must avoid re-resolving per-call.
+    this.allowedNetworks = resolveAllowedNetworks(config.allowedNetworks);
 
-    if (url.username || url.password) {
-      throw new ValidationError(
-        'URL cannot contain embedded credentials (username:password).'
-      );
-    }
-  }
-
-  /**
-   * Execute atomic x402 payment flow with full HTTP support.
-   *
-   * 1. Request endpoint → get 402
-   * 2. Parse payment headers
-   * 3. Execute atomic USDC transfer
-   * 4. Retry with tx hash as proof (same method/headers/body)
-   * 5. Return response (settlement complete!)
-   *
-   * @param params - Payment parameters with optional HTTP method, headers, body
-   */
-  async pay(params: UnifiedPayParams | X402PayParams): Promise<UnifiedPayResult> {
-    this.validate(params);
-
-    const endpoint = params.to;
-    const x402Params = params as X402PayParams;
-    
-    // Extract HTTP options
-    const method: X402HttpMethod = x402Params.method ?? 'GET';
-    const requestHeaders = x402Params.headers ?? {};
-    const requestBody = this.serializeBody(x402Params.body, x402Params.contentType);
-    const contentType = x402Params.contentType ?? 
-      (x402Params.body && method !== 'GET' ? 'application/json' : undefined);
-
-    // Step 1: Initial request
-    const initialResponse = await this.makeRequest(
-      endpoint, 
-      method, 
-      requestHeaders, 
-      requestBody,
-      contentType
-    );
-
-    // Step 2: Check response status
-    if (initialResponse.status !== 402) {
-      if (initialResponse.ok) {
-        return this.createFreeServiceResult(params, initialResponse);
-      }
-      throw new X402Error(
-        `Expected 402 Payment Required, got ${initialResponse.status}`,
-        X402ErrorCode.NOT_402_RESPONSE,
-        initialResponse
-      );
-    }
-
-    // Step 3: Parse payment headers
-    const paymentHeaders = this.parsePaymentHeaders(initialResponse);
-
-    // Step 4: Validate network
-    if (paymentHeaders.network !== this.config.expectedNetwork) {
-      throw new X402Error(
-        `Network mismatch: expected ${this.config.expectedNetwork}, got ${paymentHeaders.network}`,
-        X402ErrorCode.NETWORK_MISMATCH,
-        initialResponse
-      );
-    }
-
-    // Step 5: Validate deadline
-    const now = Math.floor(Date.now() / 1000);
-    if (paymentHeaders.deadline <= now) {
-      throw new X402Error(
-        `Payment deadline has passed: ${new Date(paymentHeaders.deadline * 1000).toISOString()}`,
-        X402ErrorCode.DEADLINE_PASSED,
-        initialResponse
-      );
-    }
-
-    // Step 6: ATOMIC PAYMENT - via relay (with on-chain fee) or feeCollector (two transfers)
-    const { txHash, feeBreakdown } = await this.executeAtomicPayment(paymentHeaders);
-
-    // Step 7: Retry with proof (same method/headers/body + payment proof)
-    const serviceResponse = await this.retryWithProof(
-      endpoint,
-      txHash,
-      method,
-      requestHeaders,
-      requestBody,
-      contentType
-    );
-
-    // Step 8: Cache payment record for status lookups
-    this.payments.set(txHash, {
-      txHash,
-      provider: paymentHeaders.paymentAddress.toLowerCase(),
-      requester: this.requesterAddress.toLowerCase(),
-      amount: paymentHeaders.amount,
-      timestamp: now,
-      endpoint,
-      feeBreakdown,
+    // Build x402 client via fromConfig with all scheme registrations up front,
+    // plus our paymentRequirementsSelector. Hook is registered on the returned
+    // client instance (fromConfig does not take hooks).
+    this.x402 = x402Client.fromConfig({
+      schemes: this.allowedNetworks.map((network) => ({ network, client: scheme })),
+      paymentRequirementsSelector: this.selectRequirements.bind(this),
     });
 
-    // Step 9: Return result - DONE! No release needed.
-    return {
-      txId: txHash,
-      escrowId: null, // No escrow!
-      adapter: this.metadata.id,
-      state: 'COMMITTED', // Atomic = immediately settled
-      success: true,
-      amount: this.formatAmount(paymentHeaders.amount),
-      response: serviceResponse,
-      releaseRequired: false, // KEY DIFFERENCE from ACTP
-      provider: paymentHeaders.paymentAddress.toLowerCase(),
-      requester: this.requesterAddress.toLowerCase(),
-      deadline: new Date(paymentHeaders.deadline * 1000).toISOString(),
-      feeBreakdown,
-    };
+    // onBeforePaymentCreation hook runs AFTER selectRequirements picks a
+    // requirement and BEFORE signing. We await Permit2 approve for Smart
+    // Wallet buyers inside the hook — single roundtrip, no race.
+    this.x402.onBeforePaymentCreation(this.beforePaymentCreationHook.bind(this));
+
+    // Wrap global fetch with the configured x402Client. This yields a fetch
+    // function that transparently retries on 402 with a signed payment payload.
+    this.fetchWithPayment = wrapFetchWithPayment(
+      config.fetchImpl ?? fetch,
+      this.x402
+    );
+
+    this.maxAmountPerTx = parseUsdcAmount(config.maxAmountPerTx ?? '10');
+    this.maxAuthorizationValidSec = config.maxAuthorizationValidSec ?? 300;
   }
 
+  // ==========================================================================
+  // IAdapter implementation
+  // ==========================================================================
+
   /**
-   * Serialize request body to string.
+   * STRICT HTTPS ONLY. `http://` is rejected at the canHandle level to prevent
+   * MITM interception of signed payment payloads. Integration tests that need
+   * localhost use a dedicated test flag (not exposed to end users).
    */
-  private serializeBody(
-    body: string | Record<string, unknown> | undefined,
-    _contentType?: string
-  ): string | undefined {
-    if (body === undefined) return undefined;
-    if (typeof body === 'string') return body;
-    return JSON.stringify(body);
+  canHandle(params: UnifiedPayParams): boolean {
+    return /^https:\/\//i.test(params.to);
   }
 
-  /**
-   * Get payment status by transaction hash.
-   *
-   * For atomic payments, status is simple:
-   * - If tx exists → SETTLED (atomic = instant settlement)
-   */
-  async getStatus(txId: string): Promise<TransactionStatus> {
-    const record = this.payments.get(txId);
+  validate(params: UnifiedPayParams): void {
+    if (!params.to || typeof params.to !== 'string') {
+      throw new X402ConfigError('x402: params.to must be a non-empty string URL');
+    }
+    if (!this.canHandle(params)) {
+      throw new X402ConfigError(
+        `x402: refusing non-HTTPS target ${params.to}. Only https:// URLs are supported ` +
+          `to prevent MITM interception of signed payment payloads.`
+      );
+    }
+  }
 
-    if (!record) {
-      throw new Error(`Payment ${txId} not found. X402 payments are atomic and stateless.`);
+  async pay(params: UnifiedPayParams): Promise<UnifiedPayResult> {
+    this.validate(params);
+
+    sdkLogger.debug('x402 payment attempt', { to: params.to });
+
+    let res: Response;
+    try {
+      res = await this.fetchWithPayment(params.to, {
+        method: 'GET',
+        headers: { accept: 'application/json' },
+      });
+    } catch (e) {
+      // Hook aborts bubble up here as "Payment creation aborted: {reason}"
+      if (e instanceof Error && /aborted/i.test(e.message)) {
+        throw new X402PaymentFailedError(
+          `x402 payment aborted before signing: ${e.message}`
+        );
+      }
+      throw new X402PaymentFailedError(
+        `x402 payment failed: ${e instanceof Error ? e.message : String(e)}`
+      );
     }
 
+    if (!res.ok) {
+      throw new X402PaymentFailedError(
+        `x402 payment returned HTTP ${res.status} ${res.statusText}`
+      );
+    }
+
+    const responseHeader = res.headers.get('payment-response');
+    return await this.mapToPayResult(res, responseHeader, params);
+  }
+
+  async getStatus(txId: string): Promise<TransactionStatus> {
+    const record = this.payments.get(txId);
+    if (!record) {
+      throw new Error(
+        `x402 payment ${txId} not found. x402 payments are atomic and stateless; ` +
+          `only payments made through this adapter instance are tracked.`
+      );
+    }
+
+    // B4: state consistency — pay() returns `UnifiedPayResult.state = 'COMMITTED'`
+    // (the type only allows 'COMMITTED' | 'IN_PROGRESS'), so getStatus() must
+    // also return 'COMMITTED' for the same tx. Despite the name, for x402 this
+    // COMMITTED is effectively SETTLED — facilitator has confirmed on-chain
+    // settlement by the time mapToPayResult writes the record here, so there's
+    // no work-in-progress phase to worry about. Callers should NOT interpret
+    // 'COMMITTED' on an x402 record as "waiting for provider" — release is
+    // not required and lifecycle methods throw.
     return {
-      state: 'SETTLED' as AdapterTransactionState,
+      state: 'COMMITTED' as AdapterTransactionState,
       canStartWork: false,
       canDeliver: false,
       canRelease: false,
       canDispute: false,
-      amount: this.formatAmount(record.amount),
-      provider: record.provider,
-      requester: record.requester,
+      amount: formatUsdcAmount(record.amount),
+      provider: record.payTo,
+      requester: record.payer,
     };
   }
 
-  /**
-   * Not applicable for atomic payments.
-   * @throws {Error} Always - x402 has no lifecycle
-   */
   async startWork(_txId: string): Promise<void> {
     throw new Error(
-      'X402 is atomic - no lifecycle methods. ' +
-      'Payment and delivery happen atomically. Use ACTP for stateful transactions.'
+      'x402 is stateless — no lifecycle methods. ' +
+        'The HTTP response IS the delivery. Use ACTP adapters for stateful transactions.'
     );
   }
 
-  /**
-   * Not applicable for atomic payments.
-   * @throws {Error} Always - x402 has no lifecycle
-   */
   async deliver(_txId: string, _proof?: string): Promise<void> {
     throw new Error(
-      'X402 is atomic - no lifecycle methods. ' +
-      'The HTTP response IS the delivery. Use ACTP for stateful transactions.'
+      'x402 is stateless — no lifecycle methods. ' +
+        'The HTTP response IS the delivery. Use ACTP adapters for stateful transactions.'
     );
   }
 
-  /**
-   * Not applicable for atomic payments.
-   * @throws {Error} Always - x402 has no escrow
-   */
   async release(_escrowId: string, _attestationUID?: string): Promise<void> {
     throw new Error(
-      'X402 is atomic - no escrow to release. ' +
-      'Payment settled instantly. Use ACTP for escrow-based transactions.'
+      'x402 has no escrow to release — payment settles instantly via the facilitator. ' +
+        'Use ACTP adapters for escrow-based transactions.'
     );
   }
 
   // ==========================================================================
-  // Private Helpers
+  // @x402 hook + selector
   // ==========================================================================
 
   /**
-   * Make an HTTP request with full options support.
+   * Registered as `onBeforePaymentCreation` hook on the x402Client in the
+   * constructor. Runs AFTER selectRequirements has chosen a target and BEFORE
+   * the scheme client signs the payload.
    *
-   * @param url - Request URL
-   * @param method - HTTP method
-   * @param customHeaders - Custom headers from request params
-   * @param body - Request body (optional)
-   * @param contentType - Content-Type header (optional)
-   * @param proofHeaders - Payment proof headers for retry (optional)
-   */
-  private async makeRequest(
-    url: string,
-    method: X402HttpMethod,
-    customHeaders: Record<string, string> = {},
-    body?: string,
-    contentType?: string,
-    proofHeaders?: Record<string, string>
-  ): Promise<Response> {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), this.timeout);
-
-    try {
-      // Build headers: defaults + custom + content-type + proof
-      const headers = new Headers(this.defaultHeaders);
-
-      // Add custom headers from request
-      for (const [key, value] of Object.entries(customHeaders)) {
-        headers.set(key, value);
-      }
-
-      // Add content-type if provided
-      if (contentType) {
-        headers.set('Content-Type', contentType);
-      }
-
-      // Add proof headers for retry
-      if (proofHeaders) {
-        for (const [key, value] of Object.entries(proofHeaders)) {
-          headers.set(key, value);
-        }
-      }
-
-      const init: RequestInit = {
-        method,
-        headers,
-        signal: controller.signal,
-      };
-
-      // Add body for non-GET requests
-      if (body && method !== 'GET') {
-        init.body = body;
-      }
-
-      return await this.fetchFn(url, init);
-    } finally {
-      clearTimeout(timeoutId);
-    }
-  }
-
-  /**
-   * Parse X-Payment-* headers from 402 response.
-   */
-  private parsePaymentHeaders(response: Response): X402PaymentHeaders {
-    const h = response.headers;
-
-    const requiredHeader = h.get(X402_HEADERS.REQUIRED);
-    if (requiredHeader?.toLowerCase() !== 'true') {
-      throw new X402Error(
-        `Missing or invalid ${X402_HEADERS.REQUIRED} header`,
-        X402ErrorCode.MISSING_HEADERS,
-        response
-      );
-    }
-
-    const address = h.get(X402_HEADERS.ADDRESS);
-    const amount = h.get(X402_HEADERS.AMOUNT);
-    const network = h.get(X402_HEADERS.NETWORK);
-    const token = h.get(X402_HEADERS.TOKEN);
-    const deadline = h.get(X402_HEADERS.DEADLINE);
-
-    if (!address) {
-      throw new X402Error(`Missing ${X402_HEADERS.ADDRESS}`, X402ErrorCode.MISSING_HEADERS, response);
-    }
-    if (!amount) {
-      throw new X402Error(`Missing ${X402_HEADERS.AMOUNT}`, X402ErrorCode.MISSING_HEADERS, response);
-    }
-    if (!network) {
-      throw new X402Error(`Missing ${X402_HEADERS.NETWORK}`, X402ErrorCode.MISSING_HEADERS, response);
-    }
-    if (!token) {
-      throw new X402Error(`Missing ${X402_HEADERS.TOKEN}`, X402ErrorCode.MISSING_HEADERS, response);
-    }
-    if (!deadline) {
-      throw new X402Error(`Missing ${X402_HEADERS.DEADLINE}`, X402ErrorCode.MISSING_HEADERS, response);
-    }
-
-    // Validate address
-    const validatedAddress = this.validatePaymentAddress(address, response);
-
-    // Validate amount
-    if (!/^\d+$/.test(amount)) {
-      throw new X402Error(
-        `Invalid ${X402_HEADERS.AMOUNT}: "${amount}"`,
-        X402ErrorCode.INVALID_AMOUNT,
-        response
-      );
-    }
-
-    // Validate network
-    if (!isValidX402Network(network)) {
-      throw new X402Error(
-        `Invalid ${X402_HEADERS.NETWORK}: "${network}"`,
-        X402ErrorCode.INVALID_NETWORK,
-        response
-      );
-    }
-
-    // Validate token
-    if (token.toUpperCase() !== 'USDC') {
-      throw new X402Error(
-        `Unsupported token: "${token}". Only USDC supported.`,
-        X402ErrorCode.MISSING_HEADERS,
-        response
-      );
-    }
-
-    const deadlineNum = parseInt(deadline, 10);
-    if (isNaN(deadlineNum) || deadlineNum <= 0) {
-      throw new X402Error(
-        `Invalid ${X402_HEADERS.DEADLINE}: "${deadline}"`,
-        X402ErrorCode.MISSING_HEADERS,
-        response
-      );
-    }
-
-    return {
-      required: true,
-      paymentAddress: validatedAddress,
-      amount,
-      network,
-      token: 'USDC',
-      deadline: deadlineNum,
-      serviceId: h.get(X402_HEADERS.SERVICE_ID) ?? undefined,
-    };
-  }
-
-  /**
-   * Validate payment address from header.
-   */
-  private validatePaymentAddress(address: string, response: Response): string {
-    try {
-      return this.validateAddress(address, X402_HEADERS.ADDRESS);
-    } catch {
-      throw new X402Error(
-        `Invalid ${X402_HEADERS.ADDRESS}: "${address}"`,
-        X402ErrorCode.INVALID_ADDRESS,
-        response
-      );
-    }
-  }
-
-  /**
-   * Execute atomic payment with fee splitting.
+   * For Smart Wallet + Permit2 flow, this is where we ensure the one-time
+   * Permit2 approve has been submitted and confirmed. The hook is awaited by
+   * @x402/core's createPaymentPayload, so we can block signing until the
+   * approve lands — no double roundtrip, no race.
    *
-   * Priority: relay (atomic, 1 tx) > feeCollector (2 tx) > error
-   * Relay flow: approve relay → relay.payWithFee(provider, gross, serviceId)
-   * feeCollector flow: transferFn(provider, net) + transferFn(feeCollector, fee)
+   * Return `{ abort: true, reason }` to cancel the payment cleanly.
    */
-  private async executeAtomicPayment(headers: X402PaymentHeaders): Promise<{
-    txHash: string;
-    feeBreakdown?: X402FeeBreakdown;
-  }> {
+  private async beforePaymentCreationHook(
+    ctx: BeforePaymentCreationContext
+  ): Promise<void | { abort: true; reason: string }> {
+    const walletInfo = this.config.walletProvider.getWalletInfo();
+    if (walletInfo.tier !== 'auto') return; // EOA doesn't need Permit2 approve
+    if (this.config.autoApprovePermit2 === false) return;
+
+    const reqs = ctx.selectedRequirements;
+    const method = (reqs.extra as Record<string, unknown> | undefined)
+      ?.assetTransferMethod;
+    if (method !== 'permit2') return; // EIP-3009 path doesn't need approve
+
     try {
-      // Relay path: on-chain fee splitting (atomic, preferred)
-      if (this.config.relayAddress && this.config.approveFn && this.config.relayPayFn) {
-        const grossAmount = headers.amount;
-        const feeBps = this.config.platformFeeBps ?? 100;
-        const MIN_FEE = 50_000n; // $0.05 USDC
-
-        // Calculate fee: max(gross * bps / 10000, MIN_FEE)
-        const grossBig = BigInt(grossAmount);
-        const bpsFee = (grossBig * BigInt(feeBps)) / 10_000n;
-        const fee = bpsFee > MIN_FEE ? bpsFee : MIN_FEE;
-        const providerNet = grossBig - fee;
-
-        // 1. Approve relay for gross amount
-        await this.config.approveFn(this.config.relayAddress, grossAmount);
-
-        // 2. Call relay.payWithFee
-        const serviceId = headers.serviceId ?? '0x' + '0'.repeat(64);
-        const txHash = await this.config.relayPayFn(
-          headers.paymentAddress,
-          grossAmount,
-          serviceId
-        );
-
-        return {
-          txHash,
-          feeBreakdown: {
-            grossAmount,
-            providerNet: providerNet.toString(),
-            platformFee: fee.toString(),
-            feeBps,
-            estimated: true,
-          },
-        };
-      }
-
-      // feeCollector path: client-side fee splitting (non-atomic fallback)
-      if (!this.config.feeCollector) {
-        throw new X402Error(
-          'x402 payment requires fee collection: configure either relayAddress (preferred) or feeCollector. ' +
-          'Since v2.6.0, transferFn-only configs are no longer allowed to prevent zero-fee payments.',
-          X402ErrorCode.PAYMENT_FAILED
-        );
-      }
-
-      const grossAmount = headers.amount;
-      const feeBps = this.config.platformFeeBps ?? 100;
-      const MIN_FEE = 50_000n; // $0.05 USDC
-
-      const grossBig = BigInt(grossAmount);
-
-      // Guard: grossAmount must cover at least the minimum fee
-      if (grossBig <= MIN_FEE) {
-        throw new X402Error(
-          `Payment amount ${grossAmount} too small: must exceed minimum fee of ${MIN_FEE} ($0.05 USDC)`,
-          X402ErrorCode.PAYMENT_FAILED
-        );
-      }
-
-      const bpsFee = (grossBig * BigInt(feeBps)) / 10_000n;
-      const fee = bpsFee > MIN_FEE ? bpsFee : MIN_FEE;
-      const providerNet = grossBig - fee;
-
-      // 1. Transfer net amount to provider
-      // NOTE: If transferFn returns a bare hash string (no { hash, success } object),
-      // we treat it as success. Integrators SHOULD return { hash, success } to enable
-      // detection of reverted/dropped transactions.
-      const transferResult = await this.transferFn(
-        headers.paymentAddress,
-        providerNet.toString()
-      );
-
-      const txHash = typeof transferResult === 'string'
-        ? transferResult
-        : transferResult.hash;
-
-      const transferSuccess = typeof transferResult === 'string'
-        ? true
-        : transferResult.success !== false;
-
-      if (!transferSuccess) {
-        throw new Error(`transferFn returned unsuccessful receipt for tx ${txHash}`);
-      }
-
-      // 2. Transfer fee to AGIRAILS treasury (fail-closed).
-      // IMPORTANT: Provider is already paid at this point. If fee transfer fails,
-      // we throw PROVIDER_PAID_FEE_FAILED (NOT PAYMENT_FAILED) so callers know
-      // NOT to retry — retrying would double-pay the provider.
-      try {
-        const feeResult = await this.transferFn(
-          this.config.feeCollector,
-          fee.toString()
-        );
-
-        const feeSuccess = typeof feeResult === 'string'
-          ? true
-          : feeResult.success !== false;
-
-        if (!feeSuccess) {
-          throw new X402Error(
-            `Fee transfer failed after provider payment tx ${txHash}. DO NOT RETRY — provider already paid.`,
-            X402ErrorCode.PROVIDER_PAID_FEE_FAILED,
-            undefined,
-            { providerPaidTxHash: txHash }
-          );
-        }
-      } catch (error) {
-        if (error instanceof X402Error) throw error;
-        throw new X402Error(
-          `Fee transfer failed after provider payment tx ${txHash}. DO NOT RETRY — provider already paid.`,
-          X402ErrorCode.PROVIDER_PAID_FEE_FAILED,
-          undefined,
-          { providerPaidTxHash: txHash }
-        );
-      }
-
+      await this.ensurePermit2Approved(reqs.network, reqs.asset);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      sdkLogger.warn('x402 Permit2 approve failed, aborting payment', { error: msg });
       return {
-        txHash,
-        feeBreakdown: {
-          grossAmount,
-          // providerNet is always gross - fee (that's what was transferred)
-          providerNet: providerNet.toString(),
-          // platformFee reflects the fee that was collected when payment succeeds.
-          platformFee: fee.toString(),
-          feeBps,
-          estimated: false,
-        },
+        abort: true,
+        reason: msg,
       };
-    } catch (error) {
-      if (error instanceof X402Error) throw error;
-      throw new X402Error(
-        `Atomic payment failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        X402ErrorCode.PAYMENT_FAILED
-      );
     }
   }
 
   /**
-   * Retry request with payment proof (tx hash).
-   * Uses the same HTTP method, headers, and body as the original request.
+   * Registered as `paymentRequirementsSelector` on the x402Client.
+   * Called after server's payment-required is parsed, before signing.
    *
-   * @param endpoint - Request URL
-   * @param txHash - Payment transaction hash as proof
-   * @param method - Original HTTP method
-   * @param customHeaders - Original custom headers
-   * @param body - Original request body
-   * @param contentType - Original content-type
+   * Picks the best requirement from `accepts[]` based on:
+   *   1. scheme === "exact" AND network in our allowlist
+   *   2. Wallet tier: Smart Wallet prefers Permit2, EOA prefers EIP-3009
+   *   3. Amount within maxAmountPerTx safety cap
+   *   4. Clamps maxTimeoutSeconds to maxAuthorizationValidSec (MEV cap)
    */
-  private async retryWithProof(
-    endpoint: string,
-    txHash: string,
-    method: X402HttpMethod = 'GET',
-    customHeaders: Record<string, string> = {},
-    body?: string,
-    contentType?: string
-  ): Promise<Response> {
-    // Add payment proof headers
-    const proofHeaders: Record<string, string> = {
-      [X402_PROOF_HEADERS.TX_ID]: txHash,
-      // No escrow ID for atomic payments
-    };
-
-    const response = await this.makeRequest(
-      endpoint,
-      method,
-      customHeaders,
-      body,
-      contentType,
-      proofHeaders
+  private selectRequirements(
+    _version: number,
+    requirements: ReadonlyArray<PaymentRequirements>
+  ): PaymentRequirements {
+    const allowed = this.allowedNetworks; // I1: cached
+    const candidates = requirements.filter(
+      (r) => r.scheme === 'exact' && allowed.includes(r.network)
     );
 
-    if (!response.ok) {
-      throw new X402Error(
-        `Retry failed: ${response.status} ${response.statusText}`,
-        X402ErrorCode.RETRY_FAILED,
-        response
+    if (candidates.length === 0) {
+      const seen = requirements.map((r) => `${r.scheme}@${r.network}`).join(', ');
+      throw new X402NetworkNotAllowedError(
+        `x402: no accepted requirement. Server offered [${seen}], ` +
+          `allowed networks: [${allowed.join(', ')}].`
       );
     }
 
-    return response;
-  }
+    // Wallet-tier-aware ordering
+    const walletInfo = this.config.walletProvider.getWalletInfo();
+    const isPermit2 = (r: PaymentRequirements): boolean =>
+      (r.extra as Record<string, unknown> | undefined)?.assetTransferMethod === 'permit2';
 
-  /**
-   * Create result for free services (200 on initial request).
-   */
-  private createFreeServiceResult(
-    params: UnifiedPayParams,
-    response: Response
-  ): UnifiedPayResult {
+    const prioritized =
+      walletInfo.tier === 'auto'
+        ? [...candidates].sort((a, b) => Number(isPermit2(b)) - Number(isPermit2(a)))
+        : candidates;
+
+    // Smart Wallet + no Permit2 = unsupported, fail early with clear message
+    if (walletInfo.tier === 'auto' && !prioritized.some(isPermit2)) {
+      throw new X402UnsupportedWalletError(
+        `x402: Smart Wallet cannot pay this endpoint. Server only offers EIP-3009, ` +
+          `which requires the USDC holder to be an EOA. Either use a Tier 2 (EOA) wallet ` +
+          `for this endpoint, or ask the server operator to advertise Permit2 support ` +
+          `(extra.assetTransferMethod = "permit2").`
+      );
+    }
+
+    const chosen = prioritized[0];
+    const amountBig = BigInt(chosen.amount);
+    if (amountBig > this.maxAmountPerTx) {
+      throw new X402AmountExceededError(
+        `x402: required amount ${chosen.amount} (${formatUsdcAmount(amountBig)} USD) ` +
+          `exceeds maxAmountPerTx ${this.maxAmountPerTx.toString()} ` +
+          `(${this.config.maxAmountPerTx ?? '10'} USD).`
+      );
+    }
+
+    // MEV hard cap on authorization validity
+    const serverTimeout = chosen.maxTimeoutSeconds ?? this.maxAuthorizationValidSec;
     return {
-      txId: '0x' + '0'.repeat(64),
-      escrowId: null,
-      adapter: this.metadata.id,
-      state: 'COMMITTED',
-      success: true,
-      amount: '0.00 USDC',
-      response,
-      releaseRequired: false,
-      provider: '0x' + '0'.repeat(40),
-      requester: this.requesterAddress.toLowerCase(),
-      deadline: new Date(Date.now() + 86400000).toISOString(),
+      ...chosen,
+      maxTimeoutSeconds: Math.min(serverTimeout, this.maxAuthorizationValidSec),
     };
   }
+
+  // ==========================================================================
+  // Permit2 approve (lazy, one-time, coalesced)
+  // ==========================================================================
+
+  private async ensurePermit2Approved(network: string, token: string): Promise<void> {
+    const key = `${network}:${token.toLowerCase()}`;
+    if (this.permit2ApprovedCache.has(key)) return;
+
+    // Coalesce concurrent calls for the same (network, token).
+    // B1 fix: register the inflight promise BEFORE the IIFE's first await
+    // so concurrent callers that arrive mid-construction see it and wait
+    // instead of launching a duplicate approve.
+    const inflight = this.permit2InflightApprovals.get(key);
+    if (inflight) return await inflight;
+
+    const doApprove = async (): Promise<void> => {
+      try {
+        sdkLogger.info('x402 Permit2 approve: submitting one-time USDC approve', {
+          network,
+          token,
+        });
+
+        // Verified v4.2 spike: createPermit2ApprovalTx takes positional
+        // tokenAddress (0x${string}), returns { to, data, value? }.
+        const approvalTx = createPermit2ApprovalTx(token as `0x${string}`);
+
+        await this.config.walletProvider.sendTransaction({
+          to: approvalTx.to,
+          data: approvalTx.data,
+          value: '0',
+        });
+
+        this.permit2ApprovedCache.add(key);
+        sdkLogger.info('x402 Permit2 approve confirmed', { network, token });
+      } catch (e) {
+        if (isPaymasterGateError(e)) {
+          throw new X402PublishRequiredError();
+        }
+        throw new X402ApprovalFailedError(
+          `Permit2 approve failed for ${network}:${token}: ${
+            e instanceof Error ? e.message : String(e)
+          }`
+        );
+      } finally {
+        this.permit2InflightApprovals.delete(key);
+      }
+    };
+
+    // Register BEFORE invoking — Promise constructor is synchronous so any
+    // concurrent caller that polls `.get(key)` after this line sees it.
+    const approvalPromise = doApprove();
+    this.permit2InflightApprovals.set(key, approvalPromise);
+    return await approvalPromise;
+  }
+
+  // ==========================================================================
+  // Response mapping
+  // ==========================================================================
+
+  private async mapToPayResult(
+    res: Response,
+    paymentResponseHeader: string | null,
+    params: UnifiedPayParams
+  ): Promise<UnifiedPayResult> {
+    // FIX v4.1: missing payment-response header is NOT silent success.
+    // x402 spec: facilitator sets this header ONLY after on-chain settlement
+    // is confirmed. Without it we have no settlement proof — reorg, pending
+    // mempool, facilitator bug, or malicious server could all be causes.
+    if (!paymentResponseHeader) {
+      throw new X402SettlementProofMissingError();
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let decoded: any;
+    try {
+      decoded = decodePaymentResponseHeader(paymentResponseHeader);
+    } catch (e) {
+      throw new X402SettlementProofMissingError(
+        `Failed to decode payment-response header: ${
+          e instanceof Error ? e.message : String(e)
+        }`
+      );
+    }
+
+    const txHash = decoded?.transaction ?? '';
+    const network = decoded?.network ?? '';
+    const payer = decoded?.payer ?? this.config.walletProvider.getAddress();
+    const payTo = decoded?.payTo ?? '';
+    const amount = decoded?.amount ?? '0';
+    const amountBig = safeBigInt(amount);
+
+    // Record for getStatus() lookups
+    this.payments.set(txHash || params.to, {
+      txId: txHash || params.to,
+      amount: amountBig,
+      network,
+      payer,
+      payTo,
+      settledAt: Date.now(),
+    });
+
+    sdkLogger.info('x402 settlement confirmed', {
+      txHash,
+      network,
+      amount: amount.toString(),
+    });
+
+    return {
+      txId: txHash || params.to,
+      escrowId: null, // x402 has no escrow
+      adapter: 'x402',
+      state: 'COMMITTED', // x402 is atomic — COMMITTED at return time is effectively SETTLED
+      success: true,
+      amount: formatUsdcAmount(amountBig),
+      response: res,
+      releaseRequired: false, // No release needed for x402
+      provider: payTo || params.to,
+      requester: payer,
+      deadline: new Date(Date.now() + this.maxAuthorizationValidSec * 1000).toISOString(),
+      erc8004AgentId: params.erc8004AgentId,
+    };
+  }
+
+  // ==========================================================================
+  // Helpers
+  // ==========================================================================
+
+  /**
+   * Bridge our IWalletProvider.signTypedData to @x402/evm's ClientEvmSigner
+   * structural type. Only `address` + `signTypedData` are required for the
+   * `exact` scheme flow we use.
+   *
+   * B3: no outer try/catch here — each IWalletProvider implementation is the
+   * error-converting boundary and already throws X402SignatureFailedError on
+   * failure. Wrapping here would produce double-nested error messages like
+   * "walletProvider.signTypedData failed: EOA signTypedData failed: ...".
+   */
+  private walletProviderToClientEvmSigner(wp: IWalletProvider): ClientEvmSigner {
+    return {
+      address: wp.getAddress() as `0x${string}`,
+      async signTypedData(params) {
+        const typedData: EIP712TypedData = {
+          domain: params.domain as Record<string, unknown>,
+          types: params.types as Record<
+            string,
+            Array<{ name: string; type: string }>
+          >,
+          primaryType: params.primaryType,
+          message: params.message as Record<string, unknown>,
+        };
+        const sig = await wp.signTypedData!(typedData);
+        return sig as `0x${string}`;
+      },
+    };
+  }
+}
+
+// ============================================================================
+// Local helpers
+// ============================================================================
+
+/**
+ * Parse human-readable USD amount like "10" or "0.50" to USDC 6-decimal bigint.
+ */
+function parseUsdcAmount(usd: string): bigint {
+  const trimmed = usd.trim().replace(/^\$/, '');
+  if (!/^\d+(\.\d{1,6})?$/.test(trimmed)) {
+    throw new X402ConfigError(
+      `Invalid maxAmountPerTx "${usd}" — must be a non-negative decimal with at most 6 digits after the point.`
+    );
+  }
+  const [whole, frac = ''] = trimmed.split('.');
+  const fracPadded = (frac + '000000').slice(0, 6);
+  return BigInt(whole + fracPadded);
+}
+
+/**
+ * Format USDC 6-decimal bigint back to human-readable USD string.
+ */
+function formatUsdcAmount(amount: bigint): string {
+  const whole = amount / 1_000_000n;
+  const frac = amount % 1_000_000n;
+  if (frac === 0n) return whole.toString();
+  const fracStr = frac.toString().padStart(6, '0').replace(/0+$/, '');
+  return `${whole}.${fracStr}`;
+}
+
+/**
+ * Resolve the effective allowed-network list. Undefined / empty user config
+ * means "allow all EVM networks @x402/evm supports" — maximal interop default.
+ */
+function resolveAllowedNetworks(
+  allowed?: ReadonlyArray<string>
+): ReadonlyArray<string> {
+  if (allowed && allowed.length > 0) return allowed;
+  return DEFAULT_EVM_NETWORKS;
+}
+
+/**
+ * Parse any reasonable amount representation (raw int string, decimal string,
+ * bigint, or number) into a USDC 6-decimal bigint.
+ *
+ * B2 fix: the previous version rejected decimal strings (regex `^\d+$`) and
+ * silently returned 0n, which caused zero-amount records when a facilitator
+ * reported settlement amounts like `"0.01"` instead of `"10000"`.
+ *
+ * Behavior:
+ *   - "10000"   → 10000n (raw 6-decimal)
+ *   - "0.01"    → 10000n (parsed as USD, normalized to 6 decimals)
+ *   - "10"      → 10000000n (treated as whole-USD if no decimal)
+ *   - number 5  → 5000000n
+ *   - 5n        → 5n (bigint passed through)
+ *
+ * Ambiguity warning: a bare integer string like "10" could be either raw
+ * 6-decimal (0.00001 USDC) or whole USD (10 USDC). We use a heuristic: if
+ * the string contains a decimal point, parse as USD. Otherwise parse as raw.
+ * This matches the x402 spec which uses raw 6-decimal strings consistently.
+ */
+function safeBigInt(v: unknown): bigint {
+  try {
+    if (typeof v === 'bigint') return v;
+    if (typeof v === 'number') {
+      if (!Number.isFinite(v) || v < 0) return 0n;
+      // Whole number: treat as raw 6-decimal (spec-compliant shape)
+      if (Number.isInteger(v)) return BigInt(v);
+      // Decimal number: treat as USD, convert to 6-decimal
+      return parseUsdcAmount(v.toString());
+    }
+    if (typeof v === 'string') {
+      const trimmed = v.trim().replace(/^\$/, '');
+      if (/^\d+$/.test(trimmed)) return BigInt(trimmed);
+      if (/^\d+\.\d{1,6}$/.test(trimmed)) return parseUsdcAmount(trimmed);
+    }
+  } catch {
+    // fall through
+  }
+  return 0n;
 }

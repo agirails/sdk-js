@@ -23,15 +23,7 @@ export {
 } from './BaseAdapter';
 export { BasicAdapter, BasicPayParams, BasicPayResult } from './BasicAdapter';
 export { StandardAdapter, StandardTransactionParams } from './StandardAdapter';
-export {
-  X402Adapter,
-  X402AdapterConfig,
-  X402PayParams,
-  X402HttpMethod,
-  FetchFunction,
-  ApproveFunction,
-  RelayPayFunction,
-} from './X402Adapter';
+export { X402Adapter, X402AdapterConfig } from './X402Adapter';
 export { AdapterRegistry } from './AdapterRegistry';
 export { AdapterRouter, AdapterSelectionResult } from './AdapterRouter';
 export {

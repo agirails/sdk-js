@@ -1,21 +1,8 @@
 import { State } from '../types';
+import { ACTPError } from './ACTPError';
 
-/**
- * Base ACTP Error
- */
-export class ACTPError extends Error {
-  constructor(
-    message: string,
-    public readonly code: string,
-    public readonly txHash?: string,
-    public readonly details?: any
-  ) {
-    super(message);
-    this.name = 'ACTPError';
-    // Ensure `instanceof` works for subclasses (TS + Error inheritance quirk)
-    Object.setPrototypeOf(this, new.target.prototype);
-  }
-}
+// Re-export ACTPError at module level so existing consumers keep working.
+export { ACTPError };
 
 /**
  * Transaction Errors
@@ -424,4 +411,25 @@ export class AgentLifecycleError extends ACTPError {
     this.name = 'AgentLifecycleError';
   }
 }
+
+// ============================================================================
+// X402 Errors (re-exported from X402Errors.ts)
+// ============================================================================
+//
+// Re-exported AFTER ACTPError definition to avoid circular-import bootstrap
+// issue where X402Errors.ts would see ACTPError as undefined.
+
+export {
+  X402Error,
+  X402ConfigError,
+  X402PublishRequiredError,
+  X402UnsupportedWalletError,
+  X402NetworkNotAllowedError,
+  X402AmountExceededError,
+  X402ApprovalFailedError,
+  X402SignatureFailedError,
+  X402SettlementProofMissingError,
+  X402PaymentFailedError,
+  isPaymasterGateError,
+} from './X402Errors';
 
