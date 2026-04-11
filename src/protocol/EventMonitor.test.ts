@@ -441,6 +441,21 @@ describe('EventMonitor', () => {
       );
     });
 
+    it('should throw at subscription time if filter passed without callback', () => {
+      const mockKernel = createMockContract();
+      const mockEscrow = createMockContract();
+      const monitor = new EventMonitor(mockKernel as any, mockEscrow as any);
+
+      const providerAddress = '0x' + 'b'.repeat(40);
+      // JS caller forgets the callback — should fast-fail, not crash on first event
+      expect(() =>
+        (monitor as any).onTransactionCreated({ provider: providerAddress }),
+      ).toThrow('callback is required');
+
+      // Should NOT have subscribed
+      expect(mockKernel.on).not.toHaveBeenCalled();
+    });
+
     it('should call filtered callback with transaction data', () => {
       const mockKernel = createMockContract();
       const mockEscrow = createMockContract();

@@ -175,7 +175,14 @@ export class EventMonitor {
     const filterOpts =
       typeof filterOrCallback === 'function' ? {} : filterOrCallback;
     const callback =
-      typeof filterOrCallback === 'function' ? filterOrCallback : maybeCallback!;
+      typeof filterOrCallback === 'function' ? filterOrCallback : maybeCallback;
+
+    // Fast-fail: catch missing callback at subscription time, not when first event arrives
+    if (typeof callback !== 'function') {
+      throw new TypeError(
+        'onTransactionCreated: callback is required when a filter is provided',
+      );
+    }
 
     // Build indexed filter — null means "any value" for that indexed param
     // Filter order per ABI: TransactionCreated(transactionId, requester, provider, ...)
