@@ -255,7 +255,7 @@ async signTypedData(typedData: TypedDataDefinition): Promise<string> {
 Add to `sdk-js/package.json`:
 ```json
 "dependencies": {
-  "viem": "^2.21.0",
+  "viem": "^2.47.12",
   "@x402/fetch": "~2.9.0",
   "@x402/evm": "~2.9.0",
   "@x402/core": "~2.9.0"
@@ -1358,7 +1358,7 @@ Kratki sažetak:
 
 **Verdict**: Easy → Medium, ~1 dan impl uključujući testove. Nema blocker-a. Phase 1 s full Smart Wallet support-om ide naprijed.
 
-**Novi dependency**: `viem ^2.21.0` (subset: `account-abstraction`, `accounts`, `chains`). ~80KB min+gz, Node library, CJS compatible od v2.9+. Postaje prvi viem import u našem SDK-u (naš stack je inače ethers v6.15.0).
+**Novi dependency**: `viem ^2.47.12` (subset: `account-abstraction`, `accounts`, `chains`). ~80KB min+gz, Node library, CJS compatible. Postaje prvi viem import u našem SDK-u (naš stack je inače ethers v6.15.0). Note: originalna target constraint bila je `^2.21.0`, ali `npm install` resolvira na najnoviji satisfying release što je u vrijeme instalacije bilo 2.47.12.
 
 ### Q7. Permit2 integration test setup — **RIJEŠENO (Damir 2026-04-11)**
 `x402.org/protected` koristi EIP-3009, ne Permit2. Za Smart Wallet Permit2 put trebamo vlastiti test vector.
@@ -1620,7 +1620,7 @@ Ali **mora biti loud** u communication-u. Plan release sadrži:
 - X402Relay routing from any SDK code path.
 
 ### Dependencies
-- Added: `viem ~2.21.0`, `@x402/fetch ~2.9.0`, `@x402/evm ~2.9.0`, `@x402/core ~2.9.0`
+- Added: `viem ^2.47.12`, `@x402/fetch ~2.9.0`, `@x402/evm ~2.9.0`, `@x402/core ~2.9.0`
 ```
 
 ### 2. `UPGRADE_3.3.md` — dedicated migration guide

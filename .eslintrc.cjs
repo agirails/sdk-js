@@ -32,6 +32,12 @@ module.exports = {
     // Keep as warnings (these pop up in a few string/guard patterns)
     'no-useless-escape': 'warn',
     'no-constant-condition': 'warn',
+    // Native ESLint rule flags TS overload signatures as duplicate class
+    // members. Disable it and use the TS-aware version which understands
+    // overloaded function/method signatures. TypeScript itself still catches
+    // real duplicates at type-check time.
+    'no-dupe-class-members': 'off',
+    '@typescript-eslint/no-dupe-class-members': 'error',
   },
 };
 
