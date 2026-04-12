@@ -737,7 +737,7 @@ export class X402Adapter implements IAdapter {
     if (!rawTxHash || !/^0x[0-9a-f]{64}$/i.test(rawTxHash)) missing.push('transaction');
     if (!rawNetwork) missing.push('network');
     if (!rawPayer || !/^0x[0-9a-f]{40}$/i.test(rawPayer)) missing.push('payer');
-    if (!payTo || !/^0x[0-9a-f]{40}$/i.test(payTo)) missing.push('payTo');
+    // payTo is optional in x402 spec — Coinbase facilitator omits it
     if (missing.length > 0) {
       throw new X402SettlementProofMissingError(
         `payment-response header decoded but missing/invalid fields: ${missing.join(', ')}. ` +
@@ -766,7 +766,7 @@ export class X402Adapter implements IAdapter {
       amount: amountBig,
       network,
       payer,
-      payTo: payTo as string,
+      payTo: payTo ?? '',
       settledAt: Date.now(),
     });
 
