@@ -134,7 +134,123 @@ declare module '@x402/evm' {
   export const x402ExactPermit2ProxyAddress: `0x${string}`;
 }
 
+declare module '@x402/core/client' {
+  export * from '@x402/fetch';
+}
+
+// ---------------------------------------------------------------------------
+// Server-side ambient declarations (Blok B — seller middleware)
+// ---------------------------------------------------------------------------
+
+declare module '@x402/core/server' {
+  export interface FacilitatorConfig {
+    url?: string;
+    createAuthHeaders?: () => Promise<{
+      verify: Record<string, string>;
+      settle: Record<string, string>;
+      supported: Record<string, string>;
+    }>;
+  }
+
+  export interface FacilitatorClient {
+    verify(paymentPayload: unknown, paymentRequirements: unknown): Promise<unknown>;
+    settle(paymentPayload: unknown, paymentRequirements: unknown): Promise<unknown>;
+    getSupported(): Promise<unknown>;
+  }
+
+  export class HTTPFacilitatorClient implements FacilitatorClient {
+    readonly url: string;
+    constructor(config?: FacilitatorConfig);
+    verify(paymentPayload: unknown, paymentRequirements: unknown): Promise<unknown>;
+    settle(paymentPayload: unknown, paymentRequirements: unknown): Promise<unknown>;
+    getSupported(): Promise<unknown>;
+  }
+
+  export class x402ResourceServer {
+    constructor(facilitatorClients?: FacilitatorClient | FacilitatorClient[]);
+    register(network: string, server: unknown): x402ResourceServer;
+    hasRegisteredScheme(network: string, scheme: string): boolean;
+    registerExtension(extension: unknown): this;
+    onBeforeVerify(hook: unknown): x402ResourceServer;
+    onAfterVerify(hook: unknown): x402ResourceServer;
+    onBeforeSettle(hook: unknown): x402ResourceServer;
+    onAfterSettle(hook: unknown): x402ResourceServer;
+    initialize(): Promise<void>;
+    verify(paymentPayload: unknown, paymentRequirements: unknown): Promise<unknown>;
+    settle(paymentPayload: unknown, paymentRequirements: unknown): Promise<unknown>;
+    enhancePaymentRequirements(
+      requirements: unknown,
+      supportedKinds: unknown,
+      extensionKeys: unknown
+    ): Promise<unknown>;
+  }
+}
+
 declare module '@x402/core/http' {
+  // Re-export everything from existing declaration above plus server types
+  import { x402ResourceServer } from '@x402/core/server';
+
+  export interface PaymentOption {
+    scheme: string;
+    payTo: string | ((context: unknown) => string | Promise<string>);
+    price: string | number | { amount: string; asset: string };
+    network: string;
+    maxTimeoutSeconds?: number;
+    extra?: Record<string, unknown>;
+  }
+
+  export interface RouteConfig {
+    accepts: PaymentOption | PaymentOption[];
+    resource?: string;
+    description?: string;
+    mimeType?: string;
+    customPaywallHtml?: string;
+    unpaidResponseBody?: unknown;
+    settlementFailedResponseBody?: unknown;
+    extensions?: Record<string, unknown>;
+  }
+
+  export type RoutesConfig = Record<string, RouteConfig> | RouteConfig;
+
+  export interface HTTPResponseInstructions {
+    status: number;
+    headers: Record<string, string>;
+    body?: unknown;
+    isHtml?: boolean;
+  }
+
+  export interface HTTPRequestContext {
+    adapter: unknown;
+    path: string;
+    method: string;
+    paymentHeader?: string;
+    routePattern?: string;
+  }
+
+  export type HTTPProcessResult =
+    | { type: 'no-payment-required' }
+    | { type: 'payment-verified'; paymentPayload: unknown; paymentRequirements: unknown }
+    | { type: 'payment-error'; response: HTTPResponseInstructions };
+
+  export class x402HTTPResourceServer {
+    constructor(resourceServer: x402ResourceServer, routes: RoutesConfig);
+    get server(): x402ResourceServer;
+    get routes(): RoutesConfig;
+    initialize(): Promise<void>;
+    processHTTPRequest(
+      context: HTTPRequestContext,
+      paywallConfig?: unknown
+    ): Promise<HTTPProcessResult>;
+    processSettlement(
+      paymentPayload: unknown,
+      requirements: unknown,
+      declaredExtensions?: unknown,
+      transportContext?: unknown,
+      settlementOverrides?: unknown
+    ): Promise<unknown>;
+    requiresPayment(context: HTTPRequestContext): boolean;
+  }
+
   export function decodePaymentRequiredHeader(header: string): {
     x402Version: number;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -149,6 +265,27 @@ declare module '@x402/core/http' {
   export function encodePaymentResponseHeader(payload: unknown): string;
 }
 
-declare module '@x402/core/client' {
-  export * from '@x402/fetch';
+declare module '@x402/evm/exact/server' {
+  import { x402ResourceServer } from '@x402/core/server';
+
+  export interface EvmResourceServerConfig {
+    networks?: string[];
+  }
+
+  export class ExactEvmScheme {
+    readonly scheme: 'exact';
+    registerMoneyParser(parser: unknown): ExactEvmScheme;
+    getAssetDecimals(asset: string, network: string): number;
+    parsePrice(price: unknown, network: string): Promise<{ amount: string; asset: string }>;
+    enhancePaymentRequirements(
+      requirements: unknown,
+      supportedKind: unknown,
+      extensionKeys: string[]
+    ): Promise<unknown>;
+  }
+
+  export function registerExactEvmScheme(
+    server: x402ResourceServer,
+    config?: EvmResourceServerConfig
+  ): x402ResourceServer;
 }
