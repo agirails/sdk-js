@@ -150,6 +150,9 @@ declare module '@x402/core/server' {
       settle: Record<string, string>;
       supported: Record<string, string>;
     }>;
+    // Note: HTTPFacilitatorClient also has instance method
+    // createAuthHeaders(path: string): Promise<{ headers: Record<string, string> }>
+    // which is internal and not exposed in this config interface.
   }
 
   export interface FacilitatorClient {
@@ -173,8 +176,10 @@ declare module '@x402/core/server' {
     registerExtension(extension: unknown): this;
     onBeforeVerify(hook: unknown): x402ResourceServer;
     onAfterVerify(hook: unknown): x402ResourceServer;
+    onVerifyFailure(hook: unknown): x402ResourceServer;
     onBeforeSettle(hook: unknown): x402ResourceServer;
     onAfterSettle(hook: unknown): x402ResourceServer;
+    onSettleFailure(hook: unknown): x402ResourceServer;
     initialize(): Promise<void>;
     verify(paymentPayload: unknown, paymentRequirements: unknown): Promise<unknown>;
     settle(paymentPayload: unknown, paymentRequirements: unknown): Promise<unknown>;

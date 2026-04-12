@@ -560,8 +560,9 @@ export class ACTPClient {
    */
   private readonly router: AdapterRouter;
 
-  /** Maps txId → adapter that handled it, for adapter-aware getStatus routing. */
+  /** Maps txId → adapter that handled it, for adapter-aware getStatus routing. Capped at 10k entries. */
   private readonly txAdapterMap = new Map<string, IAdapter>();
+  private static readonly MAX_TX_MAP_SIZE = 10_000;
 
   /**
    * ERC-8004 Reputation Reporter (testnet/mainnet only).
@@ -1344,12 +1345,12 @@ export class ACTPClient {
     // would send raw txs from the EOA signer, causing "Requester mismatch" on-chain.
     if (this.walletProvider?.payACTPBatched && this.basic.canHandle(resolvedParams)) {
       const result = await this.basic.pay(resolvedParams);
-      this.txAdapterMap.set(result.txId, this.basic);
+      this.trackTxAdapter(result.txId, this.basic);
       return result;
     }
 
     const result = await adapter.pay(resolvedParams);
-    this.txAdapterMap.set(result.txId, adapter);
+    this.trackTxAdapter(result.txId, adapter);
     return result;
   }
 
@@ -1369,7 +1370,7 @@ export class ACTPClient {
     }
 
     const urlResult = await adapter.pay(resolvedParams);
-    this.txAdapterMap.set(urlResult.txId, adapter);
+    this.trackTxAdapter(urlResult.txId, adapter);
     return urlResult;
   }
 
@@ -1388,7 +1389,30 @@ export class ACTPClient {
     if (adapter) {
       return adapter.getStatus(txId);
     }
+    // x402 payments from prior sessions are not persisted — give a clear message
+    // instead of letting StandardAdapter throw a confusing "Transaction not found".
+    if (this.registry.has('x402') && /^0x[0-9a-f]{64}$/i.test(txId)) {
+      try {
+        return await this.standard.getStatus(txId);
+      } catch {
+        throw new Error(
+          `Transaction ${txId} not found in current session. ` +
+            `If this is an x402 payment from a prior session, status is unavailable — ` +
+            `x402 payments are stateless and not persisted across restarts.`
+        );
+      }
+    }
     return this.standard.getStatus(txId);
+  }
+
+  /** Track which adapter handled a txId, with bounded eviction. */
+  private trackTxAdapter(txId: string, adapter: IAdapter): void {
+    if (!txId) return;
+    this.txAdapterMap.set(txId, adapter);
+    if (this.txAdapterMap.size > ACTPClient.MAX_TX_MAP_SIZE) {
+      const oldest = this.txAdapterMap.keys().next().value;
+      if (oldest) this.txAdapterMap.delete(oldest);
+    }
   }
 
   // ==========================================================================
@@ -1558,7 +1582,7 @@ export class ACTPClient {
    * @example
    * ```typescript
    * // Register a custom x402 adapter
-   * client.registerAdapter(new X402Adapter(requesterAddress, { expectedNetwork, transferFn }));
+   * client.registerAdapter(new X402Adapter({ walletProvider, maxAmountPerTx: '100' }));
    * ```
    */
   registerAdapter(adapter: IAdapter): void {

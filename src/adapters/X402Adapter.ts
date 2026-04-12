@@ -237,8 +237,9 @@ export class X402Adapter implements IAdapter {
   /** network:tokenAddress → in-flight approve promise (coalesces concurrent callers) */
   private readonly permit2InflightApprovals = new Map<string, Promise<void>>();
 
-  /** Completed payment records for getStatus() lookups */
+  /** Completed payment records for getStatus() lookups. Capped to prevent unbounded growth. */
   private readonly payments = new Map<string, X402PaymentRecord>();
+  private static readonly MAX_PAYMENT_RECORDS = 10_000;
 
   constructor(private readonly config: X402AdapterConfig) {
     if (typeof config.walletProvider.signTypedData !== 'function') {
@@ -610,11 +611,17 @@ export class X402Adapter implements IAdapter {
         // tokenAddress (0x${string}), returns { to, data, value? }.
         const approvalTx = createPermit2ApprovalTx(token as `0x${string}`);
 
-        await this.config.walletProvider.sendTransaction({
+        const receipt = await this.config.walletProvider.sendTransaction({
           to: approvalTx.to,
           data: approvalTx.data,
           value: '0',
         });
+
+        if (receipt && typeof receipt === 'object' && 'success' in receipt && !receipt.success) {
+          throw new X402ApprovalFailedError(
+            `Permit2 approve transaction reverted on-chain for ${network}:${token}`
+          );
+        }
 
         this.permit2ApprovedCache.add(key);
         sdkLogger.info('x402 Permit2 approve confirmed', { network, token });
@@ -727,6 +734,7 @@ export class X402Adapter implements IAdapter {
     if (!rawTxHash || !/^0x[0-9a-f]{64}$/i.test(rawTxHash)) missing.push('transaction');
     if (!rawNetwork) missing.push('network');
     if (!rawPayer || !/^0x[0-9a-f]{40}$/i.test(rawPayer)) missing.push('payer');
+    if (!payTo || !/^0x[0-9a-f]{40}$/i.test(payTo)) missing.push('payTo');
     if (missing.length > 0) {
       throw new X402SettlementProofMissingError(
         `payment-response header decoded but missing/invalid fields: ${missing.join(', ')}. ` +
@@ -739,6 +747,15 @@ export class X402Adapter implements IAdapter {
     const txHash = rawTxHash as string;
     const network = rawNetwork as string;
     const payer = rawPayer as string;
+
+    // Replay detection: payer must match our wallet address
+    const ourAddress = this.config.walletProvider.getAddress().toLowerCase();
+    if (payer.toLowerCase() !== ourAddress) {
+      throw new X402SettlementProofMissingError(
+        `payment-response payer ${payer} does not match our wallet ${ourAddress}. ` +
+          `Possible replay of another client's settlement.`
+      );
+    }
     const amountBig = safeBigInt(amount ?? '0');
 
     this.payments.set(txHash, {
@@ -746,9 +763,15 @@ export class X402Adapter implements IAdapter {
       amount: amountBig,
       network,
       payer,
-      payTo: payTo ?? '',
+      payTo: payTo as string,
       settledAt: Date.now(),
     });
+
+    // Evict oldest entry if over cap to prevent unbounded memory growth
+    if (this.payments.size > X402Adapter.MAX_PAYMENT_RECORDS) {
+      const oldest = this.payments.keys().next().value;
+      if (oldest) this.payments.delete(oldest);
+    }
 
     sdkLogger.info('x402 settlement confirmed', {
       txHash,
@@ -767,7 +790,7 @@ export class X402Adapter implements IAdapter {
       releaseRequired: false,
       provider: payTo || params.to,
       requester: payer,
-      deadline: new Date(Date.now() + this.maxAuthorizationValidSec * 1000).toISOString(),
+      deadline: new Date().toISOString(), // x402 is atomic — settled at return time, no future deadline
       erc8004AgentId: params.erc8004AgentId,
     };
   }

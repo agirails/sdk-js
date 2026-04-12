@@ -215,6 +215,11 @@ export async function buildX402Server(
         `buildX402Server: route "${def.route}" has empty or missing price`
       );
     }
+    if (typeof def.price === 'string' && !/^\$?\d+(\.\d+)?$/.test(def.price.trim())) {
+      throw new Error(
+        `buildX402Server: route "${def.route}" has invalid price "${def.price}" (expected format: "$0.10" or "0.50")`
+      );
+    }
 
     const timeout = def.maxTimeoutSeconds ?? 300;
     if (!Number.isFinite(timeout) || timeout <= 0) {
@@ -249,7 +254,12 @@ export async function buildX402Server(
   );
 
   // 5. Initialize (fetches facilitator capabilities, validates routes)
-  await httpServer.initialize();
+  try {
+    await httpServer.initialize();
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(`buildX402Server: failed to initialize — ${msg}`);
+  }
 
   return {
     httpServer,

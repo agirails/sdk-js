@@ -205,7 +205,7 @@ export const UnifiedPayParamsSchema = z.object({
   metadata: PaymentMetadataSchema.optional(),
   erc8004AgentId: z.string().optional(),
   httpMethod: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']).optional(),
-  httpBody: z.union([z.string(), z.instanceof(Uint8Array)]).optional(),
+  httpBody: z.union([z.string(), z.custom<Uint8Array>((v) => ArrayBuffer.isView(v) && !(v instanceof DataView))]).optional(),
   httpHeaders: z.record(z.string()).optional(),
 });
 
