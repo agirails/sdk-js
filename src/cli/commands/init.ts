@@ -318,6 +318,21 @@ async function runInit(options: InitOptions, output: Output, cmd?: Command): Pro
       output.print('  2. Check your balance: actp balance');
       output.print('  3. List transactions: actp tx list');
     }
+
+    const resolvedIntent = (options.intent || 'earn') as ScaffoldIntent;
+    if (resolvedIntent === 'earn' || resolvedIntent === 'both') {
+      output.print('');
+      output.print('  Receive x402 payments (Express):');
+      output.print("    import { buildX402Server } from '@agirails/sdk/server';");
+      output.print("    import { paymentMiddleware } from '@x402/express';");
+      output.print('    const { httpServer, routes } = await buildX402Server({');
+      output.print(`      payTo: '${address}',`);
+      output.print(`      network: '${mode === 'testnet' ? 'eip155:84532' : mode === 'mainnet' ? 'eip155:8453' : 'eip155:84532'}',`);
+      output.print("      routes: [{ route: 'GET /api/hello', price: '$0.01' }],");
+      output.print('    });');
+      output.print('    app.use(paymentMiddleware(routes, httpServer));');
+    }
+
     output.print('');
     output.print('Tip: Use --scaffold to generate a starter agent.ts');
   }
