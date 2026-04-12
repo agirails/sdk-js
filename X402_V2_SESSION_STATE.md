@@ -1,13 +1,13 @@
 # x402 v2 Integration — Session State Checkpoint
 
-**Snapshot time**: 2026-04-11, end of Blok A + 3 rounds of post-commit review fixes (incl. deep dive)
+**Snapshot time**: 2026-04-11, ALL BLOKS COMPLETE (A + B + C + satellite repos)
 **Purpose**: Restart-safe context so a new Claude session can continue without re-deriving everything
 
 ---
 
 ## 🎯 Where we are right now
 
-**Blok A (buyer-side x402 v2) is COMPLETE + deep dive hardening pass COMPLETE. Uncommitted changes in working tree.**
+**ALL BLOKS COMPLETE. `@agirails/sdk@3.3.0` ready for publish. 8 commits ahead of origin/main.**
 
 ```
 5c8098d  fix(x402): close P1 security gaps — asset allowlist, on-chain allowance, opt-in auto-pay
@@ -49,7 +49,12 @@ See `X402_V2_DEEP_DIVE_FINDINGS.md` for full analysis. All 5 issues fixed:
 - $10 → $1 in config docstring + error message (matches actual default since P1-3 hardening)
 - `ACTPClientConfig.x402.allowedHosts` → `X402AdapterConfig.allowedHosts` (actual config surface)
 
-**What's next**: Blok B (seller-side middleware) — NOT started, waiting for user approval.
+**What's next**: npm publish + push to origin when Damir approves.
+
+### Satellite repos (also committed, not pushed)
+- `n8n-nodes-actp`: removed manual X402Adapter registration (1 commit)
+- `openclaw-skill`: updated all x402 examples to 3.3.0 API (1 commit)
+- `docs-site`: rewrote x402-protocol.md + adapter-routing.md (1 commit)
 
 ---
 
