@@ -82,7 +82,7 @@ export class X402NetworkNotAllowedError extends X402Error {
 
 /**
  * Thrown when the server's required payment amount exceeds the client's
- * `maxAmountPerTx` safety cap. Default cap is $10 USDC.
+ * `maxAmountPerTx` safety cap. Default cap is $1 USDC.
  */
 export class X402AmountExceededError extends X402Error {
   constructor(message: string, details?: Record<string, unknown>) {

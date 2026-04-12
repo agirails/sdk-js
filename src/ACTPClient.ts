@@ -560,6 +560,9 @@ export class ACTPClient {
    */
   private readonly router: AdapterRouter;
 
+  /** Maps txId → adapter that handled it, for adapter-aware getStatus routing. */
+  private readonly txAdapterMap = new Map<string, IAdapter>();
+
   /**
    * ERC-8004 Reputation Reporter (testnet/mainnet only).
    * Used to report settlement outcomes to ERC-8004 Reputation Registry.
@@ -674,7 +677,7 @@ export class ACTPClient {
     // Auto-register X402Adapter (real x402 v2) when wallet provider supports EIP-712 signing.
     // Both EOAWalletProvider and AutoWalletProvider implement signTypedData in v3.3.0+.
     //
-    // Uses defaults: allowedNetworks = all supported EVM chains, maxAmountPerTx = $10,
+    // Uses defaults: allowedNetworks = all supported EVM chains, maxAmountPerTx = $1,
     // autoApprovePermit2 = true, maxAuthorizationValidSec = 300.
     //
     // To override defaults, users can manually construct and register their own instance:
@@ -1340,10 +1343,14 @@ export class ACTPClient {
     // which has the payACTPBatched path. StandardAdapter lacks batched support and
     // would send raw txs from the EOA signer, causing "Requester mismatch" on-chain.
     if (this.walletProvider?.payACTPBatched && this.basic.canHandle(resolvedParams)) {
-      return this.basic.pay(resolvedParams);
+      const result = await this.basic.pay(resolvedParams);
+      this.txAdapterMap.set(result.txId, this.basic);
+      return result;
     }
 
-    return adapter.pay(resolvedParams);
+    const result = await adapter.pay(resolvedParams);
+    this.txAdapterMap.set(result.txId, adapter);
+    return result;
   }
 
   /**
@@ -1361,29 +1368,26 @@ export class ACTPClient {
       );
     }
 
-    return adapter.pay(resolvedParams);
+    const urlResult = await adapter.pay(resolvedParams);
+    this.txAdapterMap.set(urlResult.txId, adapter);
+    return urlResult;
   }
 
   /**
    * Get transaction status by ID.
    *
-   * Returns current state plus action hints indicating
-   * what operations are available.
+   * Routes to the adapter that originally handled the payment. Falls back
+   * to StandardAdapter for txIds created in prior sessions (not in map).
    *
    * @param txId - Transaction ID
    * @returns Promise resolving to transaction status
    * @throws {Error} If transaction not found
-   *
-   * @example
-   * ```typescript
-   * const status = await client.getStatus(txId);
-   * if (status.canRelease) {
-   *   await client.release(txId);
-   * }
-   * ```
    */
   async getStatus(txId: string): Promise<TransactionStatus> {
-    // Use standard adapter for status - it has access to all tx details
+    const adapter = this.txAdapterMap.get(txId);
+    if (adapter) {
+      return adapter.getStatus(txId);
+    }
     return this.standard.getStatus(txId);
   }
 

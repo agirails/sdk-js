@@ -55,7 +55,10 @@ maybeDescribe('X402Adapter — integration test (live x402.org/protected)', () =
   it(
     'pays x402.org/protected end-to-end and returns SETTLED result',
     async () => {
-      const result = await adapter.pay({ to: X402_TEST_URL });
+      const result = await adapter.pay({
+        to: X402_TEST_URL,
+        metadata: { paymentMethod: 'x402' },
+      });
 
       expect(result.success).toBe(true);
       expect(result.adapter).toBe('x402');

@@ -64,8 +64,8 @@ import { sdkLogger } from '../utils/Logger';
  * Configuration for X402Adapter.
  *
  * Auto-registered by ACTPClient when walletProvider implements signTypedData.
- * Manual instantiation is supported but rarely needed — prefer configuring
- * via `ACTPClientConfig.x402` instead.
+ * Manual instantiation is supported but rarely needed — in most cases use
+ * ACTPClient auto-registration defaults or register a custom adapter instance.
  */
 export interface X402AdapterConfig {
   /**
@@ -86,9 +86,9 @@ export interface X402AdapterConfig {
   allowedNetworks?: ReadonlyArray<string>;
 
   /**
-   * Per-transaction safety cap in human-readable USD (e.g. "10" for $10 USDC).
+   * Per-transaction safety cap in human-readable USD (e.g. "1" for $1 USDC).
    * Protects against accidentally paying unexpectedly high prices.
-   * Default: "10"
+   * Default: "1"
    */
   maxAmountPerTx?: string;
 
@@ -350,7 +350,7 @@ export class X402Adapter implements IAdapter {
         `x402: refusing to auto-pay ${params.to}. HTTPS URLs trigger x402 payments ` +
           `only when the caller explicitly opts in. Either:\n` +
           `  (a) pass metadata: { paymentMethod: 'x402' } to client.pay(), or\n` +
-          `  (b) add the host to ACTPClientConfig.x402.allowedHosts.\n` +
+          `  (b) add the host to X402AdapterConfig.allowedHosts.\n` +
           `This safeguard prevents accidental charges from unrelated HTTPS calls.`
       );
     }
@@ -363,10 +363,19 @@ export class X402Adapter implements IAdapter {
 
     let res: Response;
     try {
-      res = await this.fetchWithPayment(params.to, {
-        method: 'GET',
-        headers: { accept: 'application/json' },
-      });
+      const method = params.httpMethod ?? 'GET';
+      const headers: Record<string, string> = { accept: 'application/json' };
+      if (params.httpHeaders) {
+        Object.assign(headers, params.httpHeaders);
+      }
+      if (params.httpBody && !headers['content-type'] && !headers['Content-Type']) {
+        headers['content-type'] = 'application/json';
+      }
+      const fetchInit: RequestInit = { method, headers };
+      if (params.httpBody && method !== 'GET' && method !== 'DELETE') {
+        fetchInit.body = params.httpBody;
+      }
+      res = await this.fetchWithPayment(params.to, fetchInit);
     } catch (e) {
       // Hook aborts bubble up here as "Payment creation aborted: {reason}"
       if (e instanceof Error && /aborted/i.test(e.message)) {
@@ -548,7 +557,7 @@ export class X402Adapter implements IAdapter {
       throw new X402AmountExceededError(
         `x402: required amount ${chosen.amount} (${formatUsdcAmount(amountBig)} USD) ` +
           `exceeds maxAmountPerTx ${this.maxAmountPerTx.toString()} ` +
-          `(${this.config.maxAmountPerTx ?? '10'} USD).`
+          `(${this.config.maxAmountPerTx ?? '1'} USD).`
       );
     }
 
@@ -706,38 +715,56 @@ export class X402Adapter implements IAdapter {
       );
     }
 
-    const txHash = decoded?.transaction ?? '';
-    const network = decoded?.network ?? '';
-    const payer = decoded?.payer ?? this.config.walletProvider.getAddress();
-    const payTo = decoded?.payTo ?? '';
-    const amount = decoded?.amount ?? '0';
-    const amountBig = safeBigInt(amount);
+    const rawTxHash: string | undefined = decoded?.transaction;
+    const rawNetwork: string | undefined = decoded?.network;
+    const rawPayer: string | undefined = decoded?.payer;
+    const payTo: string | undefined = decoded?.payTo;
+    const amount = decoded?.amount;
 
-    // Record for getStatus() lookups
-    this.payments.set(txHash || params.to, {
-      txId: txHash || params.to,
+    // P1: Validate critical settlement proof fields instead of falling back
+    // to empty values. Without a valid tx hash we have no on-chain proof.
+    const missing: string[] = [];
+    if (!rawTxHash || !/^0x[0-9a-f]{64}$/i.test(rawTxHash)) missing.push('transaction');
+    if (!rawNetwork) missing.push('network');
+    if (!rawPayer || !/^0x[0-9a-f]{40}$/i.test(rawPayer)) missing.push('payer');
+    if (missing.length > 0) {
+      throw new X402SettlementProofMissingError(
+        `payment-response header decoded but missing/invalid fields: ${missing.join(', ')}. ` +
+          `Decoded values: transaction=${rawTxHash ?? 'undefined'}, network=${rawNetwork ?? 'undefined'}, ` +
+          `payer=${rawPayer ?? 'undefined'}. Do not treat as settled.`
+      );
+    }
+
+    // After validation gate, these are guaranteed non-undefined.
+    const txHash = rawTxHash as string;
+    const network = rawNetwork as string;
+    const payer = rawPayer as string;
+    const amountBig = safeBigInt(amount ?? '0');
+
+    this.payments.set(txHash, {
+      txId: txHash,
       amount: amountBig,
       network,
       payer,
-      payTo,
+      payTo: payTo ?? '',
       settledAt: Date.now(),
     });
 
     sdkLogger.info('x402 settlement confirmed', {
       txHash,
       network,
-      amount: amount.toString(),
+      amount: String(amount ?? '0'),
     });
 
     return {
-      txId: txHash || params.to,
-      escrowId: null, // x402 has no escrow
+      txId: txHash,
+      escrowId: null,
       adapter: 'x402',
-      state: 'COMMITTED', // x402 is atomic — COMMITTED at return time is effectively SETTLED
+      state: 'COMMITTED',
       success: true,
       amount: formatUsdcAmount(amountBig),
       response: res,
-      releaseRequired: false, // No release needed for x402
+      releaseRequired: false,
       provider: payTo || params.to,
       requester: payer,
       deadline: new Date(Date.now() + this.maxAuthorizationValidSec * 1000).toISOString(),

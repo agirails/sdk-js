@@ -138,7 +138,7 @@ export interface UnifiedPayParams {
    * - REQUIRED for ACTP adapters (basic, standard) — client sets the price
    * - OPTIONAL for x402 URL targets — amount comes from the server's
    *   payment-required response; this field is ignored. The x402 adapter
-   *   enforces its own per-tx safety cap via `ACTPClientConfig.x402.maxAmountPerTx`.
+   *   enforces its own per-tx safety cap via `X402AdapterConfig.maxAmountPerTx`.
    */
   amount?: string | number;
 
@@ -160,6 +160,18 @@ export interface UnifiedPayParams {
    * Used for reputation reporting after settlement.
    */
   erc8004AgentId?: string;
+
+  /**
+   * HTTP method for x402 paid requests. Ignored by ACTP adapters.
+   * Default: 'GET'.
+   */
+  httpMethod?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+
+  /** HTTP body for x402 paid requests (POST/PUT/PATCH). Ignored by ACTP adapters. */
+  httpBody?: string | Uint8Array;
+
+  /** Extra HTTP headers for x402 paid requests. Ignored by ACTP adapters. */
+  httpHeaders?: Record<string, string>;
 }
 
 /**
@@ -192,6 +204,9 @@ export const UnifiedPayParamsSchema = z.object({
   description: z.string().optional(),
   metadata: PaymentMetadataSchema.optional(),
   erc8004AgentId: z.string().optional(),
+  httpMethod: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']).optional(),
+  httpBody: z.union([z.string(), z.instanceof(Uint8Array)]).optional(),
+  httpHeaders: z.record(z.string()).optional(),
 });
 
 // ============================================================================
@@ -209,11 +224,13 @@ export type InitialTransactionState = 'COMMITTED' | 'IN_PROGRESS';
 /**
  * Unified payment result returned by all adapters.
  *
- * NOTE: success=true means payment INITIATED, not settled.
- * Caller must call releaseEscrow() after delivery verification.
+ * For escrow adapters (basic/standard), success=true means payment initiated
+ * and caller must later call releaseEscrow() after delivery verification.
+ * For atomic adapters (x402), success=true means settlement is final and
+ * releaseRequired=false.
  */
 export interface UnifiedPayResult {
-  /** ACTP transaction ID */
+  /** Transaction identifier (ACTP txId or x402 settlement transaction hash) */
   txId: string;
 
   /** Escrow ID (for release) - null for non-escrow adapters */
