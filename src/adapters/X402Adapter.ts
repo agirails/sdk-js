@@ -628,6 +628,7 @@ export class X402Adapter implements IAdapter {
         this.permit2ApprovedCache.add(key);
         sdkLogger.info('x402 Permit2 approve confirmed', { network, token });
       } catch (e) {
+        if (e instanceof X402ApprovalFailedError) throw e; // don't double-wrap
         if (isPaymasterGateError(e)) {
           throw new X402PublishRequiredError();
         }
