@@ -513,8 +513,8 @@ export class X402Adapter implements IAdapter {
     const candidates = requirements.filter((r) => {
       if (r.scheme !== 'exact') return false;
       if (!allowed.includes(r.network)) return false;
-      if (this.allowedAssetsLc && typeof r.asset === 'string') {
-        if (!this.allowedAssetsLc.has(r.asset.toLowerCase())) return false;
+      if (this.allowedAssetsLc) {
+        if (typeof r.asset !== 'string' || !this.allowedAssetsLc.has(r.asset.toLowerCase())) return false;
       }
       return true;
     });

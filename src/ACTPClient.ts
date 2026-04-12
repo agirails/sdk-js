@@ -1389,26 +1389,22 @@ export class ACTPClient {
     if (adapter) {
       return adapter.getStatus(txId);
     }
-    // x402 payments from prior sessions are not persisted — give a clear message
-    // instead of letting StandardAdapter throw a confusing "Transaction not found".
-    if (this.registry.has('x402') && /^0x[0-9a-f]{64}$/i.test(txId)) {
-      try {
-        return await this.standard.getStatus(txId);
-      } catch (err) {
-        // Only replace "not found" errors with x402-specific message;
-        // re-throw RPC/contract errors so ACTP failures surface correctly.
-        const msg = err instanceof Error ? err.message : String(err);
-        if (/not found/i.test(msg)) {
-          throw new Error(
-            `Transaction ${txId} not found in current session. ` +
-              `If this is an x402 payment from a prior session, status is unavailable — ` +
-              `x402 payments are stateless and not persisted across restarts.`
-          );
-        }
-        throw err;
+    // Try standard adapter first (works for ACTP txIds from any session).
+    // If it throws "not found" AND x402 is registered, append a hint that
+    // this might be a stateless x402 payment from a prior session.
+    try {
+      return await this.standard.getStatus(txId);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/not found/i.test(msg) && this.registry.has('x402')) {
+        throw new Error(
+          `Transaction ${txId} not found. ` +
+            `If this is an x402 payment from a prior session, status is unavailable — ` +
+            `x402 payments are stateless and not persisted across restarts.`
+        );
       }
+      throw err;
     }
-    return this.standard.getStatus(txId);
   }
 
   /** Track which adapter handled a txId, with bounded eviction. */

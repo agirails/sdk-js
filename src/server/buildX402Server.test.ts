@@ -298,7 +298,7 @@ describe('buildX402Server', () => {
   it('uses default facilitator URL when not specified', async () => {
     const { HTTPFacilitatorClient } = require('@x402/core/server');
     await buildX402Server(baseConfig());
-    expect(HTTPFacilitatorClient).toHaveBeenCalledWith({ url: undefined });
+    expect(HTTPFacilitatorClient).toHaveBeenCalledWith({ url: 'https://x402.org/facilitator' });
   });
 
   it('passes custom facilitator URL', async () => {

@@ -170,7 +170,7 @@ export async function buildX402Server(
 
   // 1. Facilitator client
   const facilitator = new HTTPFacilitatorClient({
-    url: config.facilitatorUrl,
+    url: config.facilitatorUrl ?? 'https://x402.org/facilitator',
   });
 
   // 2. Resource server with EVM exact scheme
