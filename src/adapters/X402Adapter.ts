@@ -369,7 +369,7 @@ export class X402Adapter implements IAdapter {
       if (params.httpHeaders) {
         Object.assign(headers, params.httpHeaders);
       }
-      if (params.httpBody && !headers['content-type'] && !headers['Content-Type']) {
+      if (params.httpBody && typeof params.httpBody === 'string' && !headers['content-type'] && !headers['Content-Type']) {
         headers['content-type'] = 'application/json';
       }
       const fetchInit: RequestInit = { method, headers };
@@ -537,10 +537,12 @@ export class X402Adapter implements IAdapter {
     const isPermit2 = (r: PaymentRequirements): boolean =>
       (r.extra as Record<string, unknown> | undefined)?.assetTransferMethod === 'permit2';
 
+    // Smart Wallet prefers Permit2 (EIP-3009 won't validate on contract addresses).
+    // EOA prefers EIP-3009 (simpler, no one-time approve needed).
     const prioritized =
       walletInfo.tier === 'auto'
         ? [...candidates].sort((a, b) => Number(isPermit2(b)) - Number(isPermit2(a)))
-        : candidates;
+        : [...candidates].sort((a, b) => Number(isPermit2(a)) - Number(isPermit2(b)));
 
     // Smart Wallet + no Permit2 = unsupported, fail early with clear message
     if (walletInfo.tier === 'auto' && !prioritized.some(isPermit2)) {

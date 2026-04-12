@@ -1394,12 +1394,18 @@ export class ACTPClient {
     if (this.registry.has('x402') && /^0x[0-9a-f]{64}$/i.test(txId)) {
       try {
         return await this.standard.getStatus(txId);
-      } catch {
-        throw new Error(
-          `Transaction ${txId} not found in current session. ` +
-            `If this is an x402 payment from a prior session, status is unavailable — ` +
-            `x402 payments are stateless and not persisted across restarts.`
-        );
+      } catch (err) {
+        // Only replace "not found" errors with x402-specific message;
+        // re-throw RPC/contract errors so ACTP failures surface correctly.
+        const msg = err instanceof Error ? err.message : String(err);
+        if (/not found/i.test(msg)) {
+          throw new Error(
+            `Transaction ${txId} not found in current session. ` +
+              `If this is an x402 payment from a prior session, status is unavailable — ` +
+              `x402 payments are stateless and not persisted across restarts.`
+          );
+        }
+        throw err;
       }
     }
     return this.standard.getStatus(txId);

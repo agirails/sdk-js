@@ -215,10 +215,18 @@ export async function buildX402Server(
         `buildX402Server: route "${def.route}" has empty or missing price`
       );
     }
-    if (typeof def.price === 'string' && !/^\$?\d+(\.\d+)?$/.test(def.price.trim())) {
-      throw new Error(
-        `buildX402Server: route "${def.route}" has invalid price "${def.price}" (expected format: "$0.10" or "0.50")`
-      );
+    if (typeof def.price === 'string') {
+      const trimmed = def.price.trim();
+      if (!/^\$?\d+(\.\d+)?$/.test(trimmed)) {
+        throw new Error(
+          `buildX402Server: route "${def.route}" has invalid price "${def.price}" (expected format: "$0.10" or "0.50")`
+        );
+      }
+      if (parseFloat(trimmed.replace('$', '')) <= 0) {
+        throw new Error(
+          `buildX402Server: route "${def.route}" price must be > 0, got "${def.price}"`
+        );
+      }
     }
 
     const timeout = def.maxTimeoutSeconds ?? 300;
