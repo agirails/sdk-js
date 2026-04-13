@@ -334,7 +334,10 @@ export class AutoWalletProvider implements IWalletProvider {
       client: publicClient,
       owners: [owner],
       ownerIndex: 0,
-      // nonce: 0n — default matches CoinbaseSmartWalletFactory.getAddress(..., 0)
+      // version: '1.1' matches our SMART_WALLET_FACTORY (0xBA5ED110...).
+      // viem defaults to '1' (factory 0x0ba5ed0c...) which produces a different
+      // CREATE2 address. Must stay in sync with aa/constants.ts.
+      version: '1.1',
     });
 
     // CRITICAL parity check: viem-computed Smart Wallet address MUST match

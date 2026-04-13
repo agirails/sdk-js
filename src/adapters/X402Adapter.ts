@@ -477,6 +477,25 @@ export class X402Adapter implements IAdapter {
       ?.assetTransferMethod;
     if (method !== 'permit2') return; // EIP-3009 path doesn't need approve
 
+    // Undeployed Smart Wallets (counterfactual): skip Permit2 approve.
+    // The facilitator with deployERC4337WithEIP6492 handles deployment +
+    // Permit2 settlement atomically. Attempting approve on an undeployed
+    // contract wallet would fail (no code → paymaster rejects UserOp).
+    // The on-chain allowance check returns false for undeployed wallets
+    // (no code to call), so we detect this via getCode-like heuristic.
+    const alreadyApproved = await this.readPermit2AllowanceIsSet(reqs.asset);
+    if (!alreadyApproved) {
+      // Check if wallet is deployed — if not, skip approve entirely
+      const isDeployed = await this.isWalletDeployed();
+      if (!isDeployed) {
+        sdkLogger.debug('x402: Permit2 approve skipped — Smart Wallet not yet deployed (ERC-6492 facilitator handles atomically)');
+        return;
+      }
+    } else {
+      // Already approved — no action needed
+      return;
+    }
+
     try {
       await this.ensurePermit2Approved(reqs.network, reqs.asset);
     } catch (e) {
@@ -544,15 +563,11 @@ export class X402Adapter implements IAdapter {
         ? [...candidates].sort((a, b) => Number(isPermit2(b)) - Number(isPermit2(a)))
         : [...candidates].sort((a, b) => Number(isPermit2(a)) - Number(isPermit2(b)));
 
-    // Smart Wallet + no Permit2 = unsupported, fail early with clear message
-    if (walletInfo.tier === 'auto' && !prioritized.some(isPermit2)) {
-      throw new X402UnsupportedWalletError(
-        `x402: Smart Wallet cannot pay this endpoint. Server only offers EIP-3009, ` +
-          `which requires the USDC holder to be an EOA. Either use a Tier 2 (EOA) wallet ` +
-          `for this endpoint, or ask the server operator to advertise Permit2 support ` +
-          `(extra.assetTransferMethod = "permit2").`
-      );
-    }
+    // Note: we do NOT inject assetTransferMethod into requirements here.
+    // @x402/evm ExactEvmScheme client auto-selects EIP-3009 vs Permit2
+    // based on the signer type (EOA vs contract wallet). Injecting it
+    // would cause a requirements mismatch between buyer and server,
+    // breaking the facilitator's verify check.
 
     const chosen = prioritized[0];
     const amountBig = BigInt(chosen.amount);
@@ -693,6 +708,28 @@ export class X402Adapter implements IAdapter {
         error: e instanceof Error ? e.message : String(e),
       });
       return false;
+    }
+  }
+
+  /**
+   * Check if the Smart Wallet is deployed on-chain (has code).
+   * Returns true for EOA wallets (they're always "deployed" in a loose sense)
+   * and for deployed Smart Wallets. Returns false for counterfactual wallets.
+   */
+  private async isWalletDeployed(): Promise<boolean> {
+    if (typeof this.config.walletProvider.getReadProvider !== 'function') {
+      return true; // can't check — assume deployed (safe default: attempt approve)
+    }
+    const rawProvider = this.config.walletProvider.getReadProvider();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const providerAny = rawProvider as any;
+    if (!providerAny || typeof providerAny.getCode !== 'function') return true;
+
+    try {
+      const code = await providerAny.getCode(this.config.walletProvider.getAddress());
+      return code !== '0x' && code !== null && code !== undefined && code.length > 2;
+    } catch {
+      return true; // can't check — assume deployed
     }
   }
 
