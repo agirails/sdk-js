@@ -62,14 +62,25 @@ async function runDiff(
   options: DiffCommandOptions,
   output: Output
 ): Promise<void> {
-  const resolvedPath = resolve(filePath);
+  // If using Commander default './AGIRAILS.md', check identity pointer first
+  let effectivePath = filePath;
+  if (filePath === './AGIRAILS.md') {
+    const { resolveIdentityPath } = await import('../utils/config');
+    const identityPath = resolveIdentityPath();
+    if (identityPath) {
+      effectivePath = identityPath;
+    }
+  }
+  const resolvedPath = resolve(effectivePath);
 
-  // Determine agent address
+  // Determine agent address via AIP-13 keystore resolution
   let agentAddress = options.address;
   if (!agentAddress) {
-    const privateKey = process.env.ACTP_PRIVATE_KEY || process.env.PRIVATE_KEY;
+    const { resolvePrivateKey } = await import('../../wallet/keystore');
+    const networkTier = options.network === 'base-mainnet' ? 'mainnet' : 'testnet';
+    const privateKey = await resolvePrivateKey(undefined, { network: networkTier });
     if (!privateKey) {
-      output.error('Agent address required. Use --address or set ACTP_PRIVATE_KEY env var.');
+      output.error('Agent address required. Use --address or set up a keystore via `actp init`.');
       process.exit(ExitCode.INVALID_INPUT);
     }
     agentAddress = new ethers.Wallet(privateKey).address;

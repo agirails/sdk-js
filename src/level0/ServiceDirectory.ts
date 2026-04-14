@@ -8,6 +8,7 @@
  */
 
 import { validateServiceName, isValidAddress } from '../utils/security';
+import { ethers } from 'ethers';
 
 /**
  * In-memory service directory
@@ -50,7 +51,7 @@ class ServiceDirectory {
       this.directory.set(validatedService, new Set());
     }
 
-    this.directory.get(validatedService)!.add(provider);
+    this.directory.get(validatedService)!.add(ethers.getAddress(provider));
   }
 
   /**
@@ -73,7 +74,7 @@ class ServiceDirectory {
 
     const providers = this.directory.get(validatedService);
     if (providers) {
-      providers.delete(provider);
+      providers.delete(ethers.getAddress(provider));
       if (providers.size === 0) {
         this.directory.delete(validatedService);
       }

@@ -102,6 +102,8 @@ export class BlockchainRuntime implements IACTPRuntime {
   private messageSigner: MessageSigner | null = null;
   // Security: EAS helper for attestation verification
   private easHelper: EASHelper | null = null;
+  /** Maps ACTP txId → Ethereum on-chain tx hash (populated on write operations) */
+  private readonly ethTxHashes = new Map<string, string>();
   // Security: Attestation tracker for replay protection
   private readonly attestationTracker: IUsedAttestationTracker;
   // Security: Flag to require attestation before release
@@ -379,9 +381,11 @@ export class BlockchainRuntime implements IACTPRuntime {
     if (!params.provider || !ethers.isAddress(params.provider)) {
       throw new ValidationError('provider', 'Invalid provider address');
     }
+    params.provider = ethers.getAddress(params.provider);
     if (!params.requester || !ethers.isAddress(params.requester)) {
       throw new ValidationError('requester', 'Invalid requester address');
     }
+    params.requester = ethers.getAddress(params.requester);
     if (BigInt(params.amount) <= 0n) {
       throw new ValidationError('amount', 'Amount must be positive');
     }
@@ -392,7 +396,7 @@ export class BlockchainRuntime implements IACTPRuntime {
     }
 
     // Call ACTPKernel contract
-    const txId = await this.kernel.createTransaction({
+    const result = await this.kernel.createTransaction({
       provider: params.provider,
       requester: params.requester,
       amount: BigInt(params.amount),
@@ -406,7 +410,12 @@ export class BlockchainRuntime implements IACTPRuntime {
       requesterAgentId: params.requesterAgentId,
     });
 
-    return txId;
+    // Cache eth tx hash for later retrieval via getTransaction()
+    if (result.ethTxHash) {
+      this.ethTxHashes.set(result.txId, result.ethTxHash);
+    }
+
+    return result.txId;
   }
 
   /**
@@ -440,9 +449,9 @@ export class BlockchainRuntime implements IACTPRuntime {
       );
     }
 
-    // Validate amount matches transaction
-    if (amount !== tx.amount) {
-      throw new ValidationError('amount', 'Amount must match transaction amount');
+    // Validate amount matches transaction (BigInt comparison to avoid string format mismatches)
+    if (BigInt(amount) !== BigInt(tx.amount)) {
+      throw new ValidationError('amount', `Amount mismatch: expected ${tx.amount}, got ${amount}`);
     }
 
     // Approve USDC to escrow vault
@@ -571,6 +580,8 @@ export class BlockchainRuntime implements IACTPRuntime {
         serviceDescription: '', // V2: Decode from on-chain serviceHash
         deliveryProof: '', // V2: Fetch from EAS attestation
         events: [], // V2: Populate via EventMonitor.getTransactionEvents()
+        ethTxHash: this.ethTxHashes.get(txId),
+        platformFeeBpsLocked: tx.platformFeeBpsLocked !== undefined ? Number(tx.platformFeeBpsLocked) : undefined,
       };
     } catch (error) {
       // If contract call fails, return null
@@ -669,7 +680,10 @@ export class BlockchainRuntime implements IACTPRuntime {
 
     // Security: Validate dispute window has elapsed for non-requesters.
     // Requester is allowed to approve early release (before dispute window end).
-    if (tx.completedAt && tx.disputeWindow) {
+    // Note: completedAt === 0 means event indexing is not yet implemented (V2).
+    // In that case, we skip the SDK-side check — the on-chain contract still enforces
+    // dispute window correctly via _validateSettlementConditions().
+    if (tx.completedAt !== 0 && tx.completedAt && tx.disputeWindow) {
       if (DisputeWindow.isActive(tx.completedAt, tx.disputeWindow)) {
         const caller = (await this.getAddress()).toLowerCase();
         const requester = tx.requester.toLowerCase();

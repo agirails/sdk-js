@@ -46,7 +46,7 @@ export interface ServiceFilter {
   /**
    * Custom filter function
    */
-  custom?: (job: Job) => boolean;
+  custom?: (job: Job) => boolean | Promise<boolean>;
 }
 
 /**
@@ -436,6 +436,7 @@ export class Agent extends EventEmitter {
 
     this._status = 'stopped';
     this.emit('stopped');
+    this.removeAllListeners();
   }
 
   /**
@@ -978,7 +979,7 @@ export class Agent extends EventEmitter {
         // Check custom filter function
         if (filter.custom && typeof filter.custom === 'function') {
           const job = this.createJobFromTransaction(tx);
-          const customResult = filter.custom(job);
+          const customResult = await filter.custom(job);
           if (!customResult) {
             this.logger.debug('Job rejected: custom filter declined', { txId: tx.id });
             return false;
@@ -1295,8 +1296,9 @@ export class Agent extends EventEmitter {
       this.emit('job:completed', job, result);
       this.emit('payment:received', job.budget);
     } catch (error) {
-      // Security: Remove from active jobs on FAILURE
+      // Remove from active AND processed jobs on FAILURE — allows retry on next poll
       this.activeJobs.delete(job.id);
+      this.processedJobs.delete(job.id);
       this._stats.jobsFailed++;
       this._stats.successRate =
         this._stats.jobsCompleted / (this._stats.jobsCompleted + this._stats.jobsFailed);

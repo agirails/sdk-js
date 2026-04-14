@@ -18,6 +18,7 @@
  */
 
 import * as crypto from 'crypto';
+import { ACTPError } from '../errors/ACTPError';
 import { MockStateManager } from './MockStateManager';
 import {
   MockState,
@@ -67,14 +68,17 @@ export class InvalidStateTransitionError extends Error {
 /**
  * Error thrown when there are insufficient funds for an operation.
  */
-export class InsufficientBalanceError extends Error {
+export class InsufficientBalanceError extends ACTPError {
   public readonly address: string;
   public readonly required: string;
   public readonly available: string;
 
   constructor(address: string, required: string, available: string) {
     super(
-      `Insufficient balance for ${address}: required ${required}, available ${available}`
+      `Insufficient balance for ${address}: required ${required}, available ${available}`,
+      'INSUFFICIENT_BALANCE',
+      undefined,
+      { address, required, available }
     );
     this.name = 'InsufficientBalanceError';
     this.address = address;
@@ -506,27 +510,18 @@ export class MockRuntime implements IACTPRuntime {
    * @param txId - Transaction ID to check
    */
   private async autoSettleIfReady(txId: string): Promise<void> {
-    const state = this.stateManager.loadState();
-    const tx = state.transactions[txId];
-    
-    if (!tx) return;
-    if (tx.state !== 'DELIVERED') return;
-    if (tx.completedAt === null) return;
-    
-    const currentTime = state.blockchain.currentTime;
-    const disputeWindowEnd = tx.completedAt + tx.disputeWindow;
-    
-    // Dispute window still active - don't auto-settle
-    if (currentTime < disputeWindowEnd) return;
-    
-    // Dispute window passed - auto-settle!
-    // Find the escrow and release it
-    if (tx.escrowId) {
-      try {
-        await this.releaseEscrow(tx.escrowId);
-      } catch {
-        // Already settled or other issue - ignore
-      }
+    // Pre-check without lock to avoid unnecessary lock acquisition
+    const precheck = this.stateManager.loadState();
+    const preTx = precheck.transactions[txId];
+    if (!preTx || preTx.state !== 'DELIVERED' || preTx.completedAt === null) return;
+    if (precheck.blockchain.currentTime < preTx.completedAt + preTx.disputeWindow) return;
+    if (!preTx.escrowId) return;
+
+    // Settle atomically under lock — re-check state to avoid TOCTOU race
+    try {
+      await this.releaseEscrow(preTx.escrowId);
+    } catch {
+      // Already settled, disputed, or other concurrent state change — ignore
     }
   }
 
@@ -603,7 +598,7 @@ export class MockRuntime implements IACTPRuntime {
    * Validates the transition against the ACTP 8-state machine:
    * - INITIATED -> QUOTED, COMMITTED, CANCELLED
    * - QUOTED -> COMMITTED, CANCELLED
-   * - COMMITTED -> IN_PROGRESS, DELIVERED, CANCELLED
+   * - COMMITTED -> IN_PROGRESS, CANCELLED
    * - IN_PROGRESS -> DELIVERED, CANCELLED
    * - DELIVERED -> SETTLED, DISPUTED
    * - DISPUTED -> SETTLED

@@ -50,25 +50,13 @@ function createConfigShowCommand(): Command {
       try {
         const config = loadConfig();
 
-        // Security: Mask private key - show only last 4 chars
-        // Previous code showed 14 chars which reduces keyspace significantly
-        const displayConfig = {
-          ...config,
-          privateKey: config.privateKey
-            ? '****' + config.privateKey.slice(-4)
-            : undefined,
-        };
-
         if (options.json) {
-          output.result(displayConfig);
+          output.result(config as unknown as Record<string, unknown>);
         } else {
           output.section('ACTP Configuration');
           output.keyValue('Mode', config.mode);
           output.keyValue('Address', config.address);
           output.keyValue('Version', config.version);
-          if (config.privateKey) {
-            output.keyValue('Private Key', '****' + config.privateKey.slice(-4));
-          }
           if (config.rpcUrl) {
             output.keyValue('RPC URL', config.rpcUrl);
           }

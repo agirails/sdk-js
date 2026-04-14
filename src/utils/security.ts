@@ -32,11 +32,9 @@ export function timingSafeEqual(a: string, b: string): boolean {
   const bufA = Buffer.from(a);
   const bufB = Buffer.from(b);
 
-  // If lengths differ, still use timingSafeEqual to prevent timing leaks
+  // Length mismatch → not equal. Length is not secret in ACTP
+  // (hashes are always 32 bytes, signatures 65 bytes).
   if (bufA.length !== bufB.length) {
-    // Compare against a dummy buffer of the same length to maintain constant time
-    const dummy = Buffer.alloc(bufA.length);
-    crypto.timingSafeEqual(bufA, dummy);
     return false;
   }
 
@@ -207,8 +205,8 @@ export function safeJSONParse<T = any>(
     return null;
   }
 
-  // Ensure we got an object (not a primitive or array at the top level)
-  if (typeof parsed !== 'object' || parsed === null) {
+  // Ensure we got a plain object (not a primitive, null, or array)
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
     return null;
   }
 

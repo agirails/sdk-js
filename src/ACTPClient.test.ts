@@ -62,7 +62,7 @@ describe('ACTPClient', () => {
           requesterAddress: '',
         });
         // Empty string is falsy → auto-generates a random address
-        expect(client.getAddress()).toMatch(/^0x[a-f0-9]{40}$/);
+        expect(client.getAddress()).toMatch(/^0x[a-fA-F0-9]{40}$/);
       });
 
       test('throws on invalid requesterAddress', async () => {
@@ -411,32 +411,33 @@ describe('ACTPClient', () => {
 
     describe('getAddress()', () => {
       test('returns normalized address', () => {
-        expect(client.getAddress()).toBe(requesterAddress.toLowerCase());
+        expect(client.getAddress()).toBe(requesterAddress);
       });
 
       test('address is normalized consistently across all APIs', async () => {
-        const mixedCase = '0xABCDEF1234567890abcdef1234567890ABCDEF12';
+        const lowercaseAddr = '0xabcdef1234567890abcdef1234567890abcdef12';
+        const checksummed = '0xabCDEF1234567890ABcDEF1234567890aBCDeF12';
         const runtime = new MockRuntime();
         const client = await ACTPClient.create({
           mode: 'mock',
-          requesterAddress: mixedCase,
+          requesterAddress: lowercaseAddr,
           runtime,
         });
 
-        // All should return lowercase
-        expect(client.getAddress()).toBe(mixedCase.toLowerCase());
-        expect(client.info.address).toBe(mixedCase.toLowerCase());
+        // All should return EIP-55 checksummed
+        expect(client.getAddress()).toBe(checksummed);
+        expect(client.info.address).toBe(checksummed);
 
         // Verify adapters receive normalized address by creating a transaction
         // and checking the requester field is normalized
-        await client.mintTokens(mixedCase, '1000000000');
+        await client.mintTokens(checksummed, '1000000000');
         const txId = await client.standard.createTransaction({
           provider: providerAddress,
           amount: '100',
         });
 
         const tx = await client.advanced.getTransaction(txId);
-        expect(tx!.requester).toBe(mixedCase.toLowerCase());
+        expect(tx!.requester).toBe(checksummed);
       });
     });
 

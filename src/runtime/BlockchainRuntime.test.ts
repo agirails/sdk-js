@@ -310,7 +310,7 @@ describe('BlockchainRuntime', () => {
 
       await expect(
         runtime.linkEscrow(TX_ID, '50000000') // Different amount
-      ).rejects.toThrow('Amount must match transaction amount');
+      ).rejects.toThrow('Amount mismatch');
     });
   });
 

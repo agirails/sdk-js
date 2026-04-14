@@ -121,6 +121,12 @@ export interface MockTransaction {
    * Stored as string representation of uint256.
    */
   agentId?: string;
+
+  /** Ethereum on-chain transaction hash (only available for blockchain-mode transactions) */
+  ethTxHash?: string;
+
+  /** Platform fee basis points locked at transaction creation (e.g. 100 = 1%) */
+  platformFeeBpsLocked?: number;
 }
 
 /**

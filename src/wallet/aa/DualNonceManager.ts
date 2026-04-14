@@ -143,8 +143,11 @@ export class DualNonceManager {
   /**
    * Read current EntryPoint nonce for the sender.
    * Key 0 is the default key for CoinbaseSmartWallet.
+   *
+   * Public so that retry loops (e.g. payACTPBatched nonce collision)
+   * can re-read after a consumed UserOp.
    */
-  private async readEntryPointNonce(): Promise<bigint> {
+  async readEntryPointNonce(): Promise<bigint> {
     const entryPoint = new ethers.Contract(
       ENTRYPOINT_V06,
       ENTRYPOINT_NONCE_ABI,

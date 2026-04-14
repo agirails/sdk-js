@@ -188,7 +188,9 @@ export class SmartWalletRouter {
     // Mock mode: completedAt = delivery timestamp, disputeWindow = duration in seconds.
     // Blockchain mode: completedAt = 0 (V1), disputeWindow = absolute timestamp from chain.
     // Heuristic: if disputeWindow > 1 billion, it's an absolute timestamp (post-2001).
-    if (tx.completedAt !== null && tx.completedAt !== undefined) {
+    // Skip dispute window check when completedAt is 0 (blockchain V1 limitation — not yet populated).
+    // On-chain contract still enforces dispute window via _validateSettlementConditions().
+    if (tx.completedAt && tx.completedAt !== 0) {
       const disputeWindowEnds = computeDisputeWindowEnds(tx.completedAt, tx.disputeWindow);
       const now = this.runtime.time.now();
       if (now < disputeWindowEnds) {

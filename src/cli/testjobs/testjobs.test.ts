@@ -144,11 +144,12 @@ describe('renderReceipt', () => {
     renderReceipt(receiptData, output);
 
     const joined = lines.join('\n');
-    expect(joined).toContain('EARNINGS RECEIPT');
+    expect(joined).toContain('FIRST TRANSACTION RECEIPT');
     expect(joined).toContain('code-reviewer');
     expect(joined).toContain('code-review');
     expect(joined).toContain('mock');
-    expect(joined).toContain("WHAT'S NEXT");
+    expect(joined).toContain('SETTLED');
+    expect(joined).toContain('Autonomously. Trustlessly');
 
     jest.restoreAllMocks();
   });
@@ -185,17 +186,17 @@ describe('renderReceipt', () => {
     jest.restoreAllMocks();
   });
 
-  test('human mode truncates long txId', () => {
+  test('human mode renders fee breakdown (Amount/Fee/Net)', () => {
     const output = new Output('human');
     const lines: string[] = [];
     jest.spyOn(console, 'log').mockImplementation((msg: string) => { lines.push(msg); });
 
     renderReceipt(receiptData, output);
 
-    const txLine = lines.find(l => l.includes('Tx:'));
-    expect(txLine).toBeDefined();
-    // Should be truncated: 0x123456...5678
-    expect(txLine).toContain('...');
+    const joined = lines.join('\n');
+    expect(joined).toMatch(/Amount\s+\$5\.00 USDC/);
+    expect(joined).toMatch(/Fee\s+\$0\.05 USDC/);
+    expect(joined).toMatch(/Net\s+\$4\.95 USDC/);
 
     jest.restoreAllMocks();
   });
@@ -213,16 +214,41 @@ describe('renderReceipt', () => {
     jest.restoreAllMocks();
   });
 
-  test('human mode shows short txId without truncation', () => {
+  test('testnet variant includes Eth Tx and Verify lines', () => {
     const output = new Output('human');
     const lines: string[] = [];
     jest.spyOn(console, 'log').mockImplementation((msg: string) => { lines.push(msg); });
 
-    renderReceipt({ ...receiptData, txId: 'mock-tx-1' }, output);
+    renderReceipt({
+      ...receiptData,
+      network: 'base-sepolia',
+      ethTxHash: '0xabcdef1234567890abcdef1234567890abcdef12',
+    }, output);
 
-    const txLine = lines.find(l => l.includes('Tx:'));
-    expect(txLine).toContain('mock-tx-1');
-    expect(txLine).not.toContain('...');
+    const joined = lines.join('\n');
+    expect(joined).toContain('Eth Tx');
+    expect(joined).toContain('Verify');
+    expect(joined).toContain('sepolia.basescan.org');
+
+    jest.restoreAllMocks();
+  });
+
+  test('mainnet variant uses "FIRST MAINNET SETTLEMENT" header', () => {
+    const output = new Output('human');
+    const lines: string[] = [];
+    jest.spyOn(console, 'log').mockImplementation((msg: string) => { lines.push(msg); });
+
+    renderReceipt({
+      ...receiptData,
+      network: 'base-mainnet',
+      ethTxHash: '0xabcdef1234567890abcdef1234567890abcdef12',
+    }, output);
+
+    const joined = lines.join('\n');
+    expect(joined).toContain('FIRST MAINNET SETTLEMENT');
+    expect(joined).toContain('This is real money');
+    expect(joined).toContain('basescan.org');
+    expect(joined).not.toContain('sepolia');
 
     jest.restoreAllMocks();
   });

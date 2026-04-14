@@ -169,7 +169,14 @@ function computeHash(filePath: string): string {
 
 function runPublishSubprocess(filePath: string): Promise<number> {
   return new Promise((res) => {
-    const actpBin = process.argv[1];
+    // Resolve CLI entry from package rather than relying on process.argv
+    // (process.argv[1] may point to npx cache or ts-node wrapper)
+    let actpBin: string;
+    try {
+      actpBin = require.resolve('../../cli/agirails');
+    } catch {
+      actpBin = process.argv[1]; // Fallback to original behavior
+    }
     const args = ['publish', filePath, '--quiet'];
 
     execFile(process.argv[0], [actpBin, ...args], { timeout: 60_000 }, (error) => {

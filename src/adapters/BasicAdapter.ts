@@ -121,7 +121,7 @@ export class BasicAdapter extends BaseAdapter implements IAdapter {
     usesEscrow: true,
     supportsDisputes: true,
     requiresIdentity: false,
-    settlementMode: 'timed', // Auto-release after dispute window
+    settlementMode: 'explicit', // Requires explicit release() after dispute window
     priority: 50, // Default priority
   };
   /**

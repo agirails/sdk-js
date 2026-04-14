@@ -40,6 +40,8 @@ export interface TransactionDisplay {
   deadline: string;
   escrowId?: string | null;
   createdAt?: string;
+  ethTxHash?: string;
+  feeBreakdown?: string;
 }
 
 // ============================================================================
@@ -274,8 +276,14 @@ export class Output {
       if (tx.escrowId) {
         console.log(`  ${fmt.label('Escrow ID:')} ${tx.escrowId}`);
       }
+      if (tx.ethTxHash) {
+        console.log(`  ${fmt.label('Eth Tx:')} ${tx.ethTxHash}`);
+      }
       if (tx.createdAt) {
         console.log(`  ${fmt.label('Created:')} ${tx.createdAt}`);
+      }
+      if (tx.feeBreakdown) {
+        console.log(`  ${fmt.label('Settlement:')} ${tx.feeBreakdown}`);
       }
     }
   }
@@ -399,7 +407,7 @@ export class Output {
    * No-op in json/quiet modes.
    */
   spinner(message: string): { stop: (success?: boolean) => void } {
-    if (this.mode !== 'human') {
+    if (this.mode !== 'human' || !process.stdout.isTTY) {
       return { stop: () => {} };
     }
 

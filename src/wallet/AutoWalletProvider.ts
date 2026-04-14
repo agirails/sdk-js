@@ -380,8 +380,14 @@ export class AutoWalletProvider implements IWalletProvider {
             ? [...prependCalls, ...batch.calls]
             : batch.calls;
 
+          // On retry, re-read EntryPoint nonce — the previous UserOp consumed it
+          // even if the inner ACTP call reverted.
+          const currentEPNonce = i === 0
+            ? entryPointNonce
+            : await this.nonceManager.readEntryPointNonce();
+
           try {
-            const receipt = await this.submitUserOp(allCalls, entryPointNonce);
+            const receipt = await this.submitUserOp(allCalls, currentEPNonce);
 
             if (!receipt.success) {
               const failed: { result: BatchedPayResult; success: boolean } = {

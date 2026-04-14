@@ -79,16 +79,19 @@ export function provide(
     handler
   );
 
-  // Start the agent immediately (async)
-  agent.start().then(() => {
-    // Register in service directory after agent has started and has an address
-    serviceDirectory.register(service, agent.address);
-  }).catch((error) => {
-    sdkLogger.error(`Failed to start provider for ${service}`, { error: error instanceof Error ? error.message : String(error) });
+  // Start the agent and register in service directory once ready.
+  // Errors are NOT swallowed — they propagate via the ready promise
+  // so callers can detect failed startup: await provider.ready
+  const readyPromise = agent.start().then(() => {
+    if (agent.address) {
+      serviceDirectory.register(service, agent.address);
+    }
   });
 
   // Return Provider interface (adapter over Agent)
   const provider: Provider = {
+    ready: readyPromise,
+
     get status() {
       return agent.status as any;
     },
@@ -111,7 +114,9 @@ export function provide(
 
     async stop() {
       await agent.stop();
-      serviceDirectory.unregister(service, agent.address);
+      if (agent.address) {
+        serviceDirectory.unregister(service, agent.address);
+      }
     },
 
     on(event: any, handler: any) {

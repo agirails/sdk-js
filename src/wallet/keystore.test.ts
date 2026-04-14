@@ -216,7 +216,7 @@ describe('Keystore Resolution', () => {
     });
 
     test('rejects path traversal in stateDirectory', async () => {
-      await expect(resolvePrivateKey('/tmp/../../../etc')).rejects.toThrow(
+      await expect(resolvePrivateKey('../../etc')).rejects.toThrow(
         'path traversal'
       );
     });

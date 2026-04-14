@@ -432,8 +432,6 @@ export class ERC8004Bridge {
           signal: controller.signal,
         });
 
-        clearTimeout(timeoutId);
-
         if (!response.ok) {
           sdkLogger.warn(
             `[ERC8004] Metadata fetch failed for ${agentId}: HTTP ${response.status}`

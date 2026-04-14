@@ -122,6 +122,10 @@ export class DeliveryProofBuilder {
       signature: '' // Filled in next step
     };
 
+    // Record nonce as used BEFORE signing/uploading to prevent replay
+    // if IPFS upload fails and the same nonce is reused on retry.
+    this.nonceManager.recordNonce('agirails.delivery.v1', deliveryProof.nonce);
+
     // Step 5: Sign with EIP-712
     const signature = await this.signDeliveryProof(deliveryProof, params.kernelAddress);
     deliveryProof.signature = signature;
@@ -129,9 +133,6 @@ export class DeliveryProofBuilder {
     // Step 6: Upload delivery proof to IPFS
     const deliveryProofCID = await this.ipfs.add(JSON.stringify(deliveryProof));
     await this.ipfs.pin(deliveryProofCID); // Permanent
-
-    // Record nonce usage
-    this.nonceManager.recordNonce('agirails.delivery.v1', deliveryProof.nonce);
 
     return {
       deliveryProof,

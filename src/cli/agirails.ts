@@ -57,9 +57,14 @@ async function main(): Promise<void> {
     }
 
     // Banner
-    output.print('');
-    output.print(fmt.bold('AGIRAILS') + fmt.dim(' — your agent earns in 60 seconds'));
-    output.print('');
+    if (output.mode === 'human') {
+      const { renderBanner } = await import('./utils/banner');
+      output.print('');
+      output.print(renderBanner());
+      output.print('');
+      output.print(fmt.dim('Your agent earns in 60 seconds.'));
+      output.print('');
+    }
 
     // Interactive questions
     const rl = readline.createInterface({
@@ -178,5 +183,8 @@ if (subCmd === 'find') {
   sub.addCommand(createFindCommand());
   sub.parse(process.argv);
 } else {
-  main();
+  main().catch((error) => {
+    console.error(error?.message || error);
+    process.exit(1);
+  });
 }

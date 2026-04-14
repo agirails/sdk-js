@@ -10,6 +10,7 @@
 import { Command } from 'commander';
 import { Output, ExitCode } from '../utils/output';
 import { createClient, mapError } from '../utils/client';
+import { discoverAgents } from '../../api/agirailsApp';
 
 // ============================================================================
 // Command Definition
@@ -60,6 +61,28 @@ async function runPay(
   options: PayOptions,
   output: Output
 ): Promise<void> {
+  // Resolve slug URLs (e.g. agirails.app/a/arha) to wallet addresses
+  const slugMatch = to.match(/^(?:https?:\/\/)?(?:www\.)?agirails\.app\/a\/([a-z0-9_-]+)$/i);
+  if (slugMatch) {
+    const slug = slugMatch[1].toLowerCase();
+    const resolveSpinner = output.spinner(`Resolving ${slug}...`);
+    try {
+      const result = await discoverAgents({ search: slug, limit: 10 });
+      const agent = result.agents.find(a => a.slug.toLowerCase() === slug);
+      if (!agent?.wallet_address) {
+        resolveSpinner.stop(false);
+        output.error(`Agent "${slug}" not found or has no wallet address.`);
+        process.exit(ExitCode.ERROR);
+      }
+      to = agent.wallet_address;
+      resolveSpinner.stop(true);
+      output.print(`Resolved ${slug} → ${to}`);
+    } catch (error) {
+      resolveSpinner.stop(false);
+      throw error;
+    }
+  }
+
   // Create spinner for human mode
   const spinner = output.spinner('Creating payment...');
 

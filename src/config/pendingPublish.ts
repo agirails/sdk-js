@@ -137,12 +137,18 @@ export function savePendingPublish(pending: PendingPublish): void {
   const dir = getActpDir();
 
   // Verify .actp/ is a real directory (not a symlink — symlink attack prevention)
-  if (existsSync(dir)) {
+  // Use lstatSync (does NOT follow symlinks) to catch both real and broken symlinks.
+  let dirExists = false;
+  try {
     const stat = lstatSync(dir);
-    if (!stat.isDirectory() || stat.isSymbolicLink()) {
+    if (stat.isSymbolicLink() || !stat.isDirectory()) {
       throw new Error(`Security: ${dir} is not a real directory (symlink attack prevention)`);
     }
-  } else {
+    dirExists = true;
+  } catch (e: any) {
+    if (e.code !== 'ENOENT') throw e; // Re-throw security errors and unexpected failures
+  }
+  if (!dirExists) {
     mkdirSync(dir, { recursive: true, mode: 0o700 });
   }
 

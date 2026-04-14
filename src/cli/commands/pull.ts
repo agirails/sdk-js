@@ -100,7 +100,9 @@ async function runPull(
   }
 
   if (!agentAddress) {
-    const privateKey = process.env.ACTP_PRIVATE_KEY || process.env.PRIVATE_KEY;
+    const { resolvePrivateKey } = await import('../../wallet/keystore');
+    const networkTier = options.network === 'base-mainnet' ? 'mainnet' : 'testnet';
+    const privateKey = await resolvePrivateKey(undefined, { network: networkTier });
     if (!privateKey) {
       output.error(
         'Agent address required.\n' +

@@ -87,7 +87,7 @@ export async function request(
 
   const resolvedKey = await resolveKeyIfNeeded(options.wallet, options.network, options.stateDirectory);
   const resolvedAddress = resolvedKey
-    ? new ethers.Wallet(resolvedKey).address.toLowerCase()
+    ? ethers.getAddress(new ethers.Wallet(resolvedKey).address)
     : undefined;
 
   const client = await ACTPClient.create({
@@ -103,7 +103,12 @@ export async function request(
 
   try {
     const requesterAddress = resolvedAddress || getRequesterAddress(options.wallet);
-    const amountWei = (options.budget * 1_000_000).toString(); // Convert to USDC wei (6 decimals)
+    // Convert budget to USDC wei (6 decimals) using string math to avoid float precision loss
+    const budgetStr = String(options.budget);
+    const parts = budgetStr.split('.');
+    const whole = BigInt(parts[0]) * 1_000_000n;
+    const decimal = parts[1] ? BigInt(parts[1].slice(0, 6).padEnd(6, '0')) : 0n;
+    const amountWei = (whole + decimal).toString();
 
     // In mock mode, ensure requester has enough funds
     if (client.runtime && 'mintTokens' in client.runtime) {
@@ -335,9 +340,12 @@ function findProvider(
   service: string,
   providerOption?: string | 'any' | 'best' | 'cheapest'
 ): string | undefined {
-  // If specific provider specified, use it
+  // If specific provider specified, normalize and use it
   if (providerOption && providerOption !== 'any' && providerOption !== 'best' && providerOption !== 'cheapest') {
-    return providerOption;
+    if (!isValidAddress(providerOption)) {
+      throw new ValidationError('provider', `Invalid provider address: "${providerOption}". Must be a valid Ethereum address.`);
+    }
+    return ethers.getAddress(providerOption);
   }
 
   // Otherwise, find from service directory
@@ -368,12 +376,12 @@ function getRequesterAddress(
     if (!isValidAddress(wallet)) {
       throw new ValidationError('wallet', `Invalid Ethereum address format: ${wallet}`);
     }
-    return wallet.toLowerCase();
+    return ethers.getAddress(wallet);
   }
 
   try {
     const walletInstance = new ethers.Wallet(wallet.privateKey);
-    return walletInstance.address.toLowerCase();
+    return ethers.getAddress(walletInstance.address);
   } catch (error) {
     throw new ValidationError('wallet.privateKey', 'Invalid private key format');
   }

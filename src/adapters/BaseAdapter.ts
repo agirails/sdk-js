@@ -14,6 +14,8 @@
  * @module adapters/BaseAdapter
  */
 
+import { ethers } from 'ethers';
+
 // ============================================================================
 // Constants
 // ============================================================================
@@ -76,10 +78,16 @@ export const MAX_DEADLINE_DAYS = 3650; // 10 years
  * throw new ValidationError('Invalid amount format: "abc". Expected number like "100" or "100.50"');
  * ```
  */
-export class ValidationError extends Error {
+import { ValidationError as ACTPValidationError } from '../errors';
+
+/**
+ * Adapter-layer ValidationError — extends ACTPError-based ValidationError
+ * so that `instanceof` checks work against the public SDK export.
+ * Accepts a single message string for convenience in adapter code.
+ */
+export class ValidationError extends ACTPValidationError {
   constructor(message: string) {
-    super(message);
-    this.name = 'ValidationError';
+    super('input', message);
   }
 }
 
@@ -230,9 +238,8 @@ export abstract class BaseAdapter {
       );
     }
 
-    // Issue #2 Fix: Normalize to lowercase for consistency
-    // This prevents case-sensitivity issues when comparing addresses
-    return address.toLowerCase();
+    // Normalize to EIP-55 checksummed format for consistency
+    return ethers.getAddress(address);
   }
 
   /**

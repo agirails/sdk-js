@@ -92,7 +92,8 @@ export function stripPublishMetadata(
  * @throws Error if content has no valid YAML frontmatter
  */
 export function parseAgirailsMd(content: string): AgirailsMdConfig {
-  const trimmed = content.trimStart();
+  // Normalize line endings to LF (handles CRLF from Windows)
+  const trimmed = content.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trimStart();
 
   if (!trimmed.startsWith('---')) {
     throw new Error('AGIRAILS.md must start with YAML frontmatter (---)');

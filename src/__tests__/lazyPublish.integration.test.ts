@@ -485,8 +485,8 @@ describe('Lazy Publish Integration', () => {
       });
 
       const address = client.getAddress();
-      // Should be a valid lowercase hex address
-      expect(address).toMatch(/^0x[a-f0-9]{40}$/);
+      // Should be a valid EIP-55 checksummed hex address
+      expect(address).toMatch(/^0x[a-fA-F0-9]{40}$/);
     });
 
     it('should create different addresses on each invocation', async () => {

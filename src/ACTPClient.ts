@@ -1043,8 +1043,8 @@ export class ACTPClient {
       }
     }
 
-    // Normalize address to lowercase for consistency
-    const normalizedAddress = requesterAddress.toLowerCase();
+    // Normalize address to EIP-55 checksummed format for consistency
+    const normalizedAddress = ethers.getAddress(requesterAddress);
 
     const info: ACTPClientInfo = {
       mode: config.mode,
@@ -1503,11 +1503,18 @@ export class ACTPClient {
       return;
     }
 
-    // Legacy EOA/mock flow
+    // Legacy EOA/mock flow — two-step: COMMITTED → IN_PROGRESS → DELIVERED
     if (tx.state === 'COMMITTED') {
       await this.runtime.transitionState(txId, 'IN_PROGRESS');
     }
-    await this.runtime.transitionState(txId, 'DELIVERED', proof);
+    try {
+      await this.runtime.transitionState(txId, 'DELIVERED', proof);
+    } catch (e: any) {
+      throw new Error(
+        `deliver() failed at DELIVERED step — transaction ${txId} is now IN_PROGRESS. ` +
+        `Call deliver() again to complete. Original error: ${e.message}`
+      );
+    }
   }
 
   /**

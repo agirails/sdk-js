@@ -262,13 +262,15 @@ function sleep(ms: number): Promise<void> {
  */
 function isNonTransient(error: Error): boolean {
   const code = (error as any).code;
-  // AA errors from bundler (invalid signature, insufficient funds, etc.)
-  if (typeof code === 'number' && code >= -32700 && code <= -32600) {
-    return true; // JSON-RPC parse/invalid request errors
+  if (typeof code === 'number') {
+    // JSON-RPC protocol errors: -32700 to -32600
+    if (code >= -32700 && code <= -32600) return true;
+    // ERC-4337 AA validation errors: -32521 to -32500
+    if (code >= -32521 && code <= -32500) return true;
   }
   const msg = error.message.toLowerCase();
   if (msg.includes('aa') && (msg.includes('invalid') || msg.includes('rejected'))) {
-    return true; // AA validation errors
+    return true; // AA validation errors by message pattern
   }
   return false;
 }

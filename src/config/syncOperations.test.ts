@@ -19,6 +19,7 @@ jest.mock('fs', () => ({
   readFileSync: jest.fn(),
   writeFileSync: jest.fn(),
   existsSync: jest.fn(),
+  renameSync: jest.fn(),
 }));
 
 const mockReadFileSync = fs.readFileSync as jest.MockedFunction<typeof fs.readFileSync>;
@@ -405,10 +406,15 @@ describe('pull', () => {
 
     await pull(defaultPullOptions({ path: customPath }));
 
+    // Atomic write: writes to .tmp first, then renames
     expect(mockWriteFileSync).toHaveBeenCalledWith(
-      customPath,
+      customPath + '.tmp',
       expect.any(String),
       'utf-8'
+    );
+    expect(fs.renameSync).toHaveBeenCalledWith(
+      customPath + '.tmp',
+      customPath
     );
   });
 });

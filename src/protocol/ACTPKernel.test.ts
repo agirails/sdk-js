@@ -125,9 +125,9 @@ describe('ACTPKernel', () => {
       ).rejects.toThrow();
     });
 
-    it('should return transaction ID on success', async () => {
-      const txId = await kernel.createTransaction(validParams);
-      expect(txId).toBe(TX_ID);
+    it('should return transaction ID and eth tx hash on success', async () => {
+      const result = await kernel.createTransaction(validParams);
+      expect(result.txId).toBe(TX_ID);
     });
 
     it('should wait for 2 confirmations', async () => {

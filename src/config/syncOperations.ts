@@ -7,7 +7,7 @@
  * @module config/syncOperations
  */
 
-import { readFileSync, writeFileSync, existsSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, renameSync } from 'fs';
 import { Provider } from 'ethers';
 import { computeConfigHash, parseAgirailsMd, serializeAgirailsMd } from './agirailsmd';
 import { validateCID } from '../utils/validation';
@@ -267,8 +267,10 @@ export async function pull(options: PullOptions): Promise<PullResult> {
     body
   );
 
-  // Write the stamped file
-  writeFileSync(path, stamped, 'utf-8');
+  // Write the stamped file atomically (tmp + rename)
+  const tmpPath = path + '.tmp';
+  writeFileSync(tmpPath, stamped, 'utf-8');
+  renameSync(tmpPath, path);
 
   return {
     written: true,

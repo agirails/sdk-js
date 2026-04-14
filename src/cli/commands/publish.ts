@@ -149,8 +149,9 @@ async function runPublish(
       effectivePath = './AGIRAILS.md';
     } else {
       output.error(
-        'No file to publish. Provide a path, or create a {slug}.md identity file.\n' +
-        'Usage: actp publish [path]'
+        'No file to publish.\n' +
+        'Run `actp init` to create an identity file, then `actp publish`.\n' +
+        'Or provide a path directly: actp publish <path>'
       );
       process.exit(ExitCode.INVALID_INPUT);
     }
@@ -159,7 +160,7 @@ async function runPublish(
   let resolvedPath = resolve(effectivePath);
 
   if (!existsSync(resolvedPath)) {
-    output.error(`File not found: ${effectivePath}`);
+    output.error(`File not found: ${effectivePath}\nRun \`actp init\` to create a new identity file.`);
     process.exit(ExitCode.INVALID_INPUT);
   }
 
@@ -224,7 +225,9 @@ async function runPublish(
             const parsed = parseAgirailsMd(rawContent);
             const updatedFm = { ...(parsed.frontmatter as Record<string, unknown>), slug: newSlug };
             const newContent = serializeAgirailsMd(updatedFm, parsed.body);
-            writeFileSync(newPath, newContent, 'utf-8');
+            const tmpSlugPath = newPath + '.tmp';
+            writeFileSync(tmpSlugPath, newContent, 'utf-8');
+            renameSync(tmpSlugPath, newPath);
 
             // Update in-memory references for the rest of publish
             resolvedPath = newPath;
@@ -237,9 +240,9 @@ async function runPublish(
 
             // Update config.json identity pointer
             try {
-              const config = loadConfig(resolve(newPath, '..'));
+              const config = loadConfig(dirname(newPath));
               config.identity = `${newSlug}.md`;
-              saveConfig(config, resolve(newPath, '..'));
+              saveConfig(config, dirname(newPath));
             } catch {
               // Best-effort
             }
@@ -252,7 +255,10 @@ async function runPublish(
           output.success(`Slug "${v4Config.slug}" is available.`);
         }
       } catch (slugErr) {
-        if ((slugErr as Error).message.includes('already taken')) throw slugErr;
+        if ((slugErr as Error).message.includes('already taken')) {
+          slugSpinner.stop(false);
+          throw slugErr;
+        }
         if ((slugErr as Error).message.includes('was taken')) {
           // Auto-rename succeeded — not an error
         } else {
@@ -592,7 +598,9 @@ async function runPublish(
       ...publishMetadata,
     };
     const updatedContent = serializeAgirailsMd(updatedFrontmatter, body);
-    writeFileSync(resolvedPath, updatedContent, 'utf-8');
+    const tmpWritePath = resolvedPath + '.tmp';
+    writeFileSync(tmpWritePath, updatedContent, 'utf-8');
+    renameSync(tmpWritePath, resolvedPath);
 
     // Update identity pointer in config.json if this is a {slug}.md file
     if (v4Config) {

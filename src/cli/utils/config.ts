@@ -29,9 +29,6 @@ export interface CLIConfig {
   /** User's Ethereum address */
   address: string;
 
-  /** Optional: Private key for testnet/mainnet mode */
-  privateKey?: string;
-
   /** Optional: RPC URL override */
   rpcUrl?: string;
 
@@ -143,13 +140,10 @@ export function loadConfig(projectRoot: string = process.cwd()): CLIConfig {
       throw new Error('Config missing required field: address');
     }
 
-    // Security: Warn about private key storage in config file
-    if (config.privateKey) {
-      console.warn('\x1b[33m%s\x1b[0m', 'WARNING: Private key stored in config file.');
-      console.warn('\x1b[33m%s\x1b[0m', '         Consider using ACTP_PRIVATE_KEY environment variable instead.');
-      console.warn('\x1b[33m%s\x1b[0m', '         Run: export ACTP_PRIVATE_KEY=<your-key>');
+    // Config migration: strip deprecated fields
+    if ('privateKey' in config) {
+      delete (config as unknown as Record<string, unknown>).privateKey;
     }
-
     // Config migration: strip deprecated `registered` field (lazy publish)
     if ('registered' in config) {
       delete (config as unknown as Record<string, unknown>).registered;
@@ -275,22 +269,8 @@ export function validateConfigForMode(config: CLIConfig): void {
     );
   }
 
-  // Testnet and mainnet require private key
-  if (config.mode !== 'mock') {
-    if (!config.privateKey) {
-      throw new Error(
-        `Private key required for ${config.mode} mode.\n` +
-          'Run: actp config set privateKey <your-private-key>'
-      );
-    }
-
-    if (!validatePrivateKey(config.privateKey)) {
-      throw new Error(
-        'Invalid private key format.\n' +
-          'Expected 64-character hex string (with or without 0x prefix).'
-      );
-    }
-  }
+  // Testnet/mainnet credentials are resolved via AIP-13 keystore at runtime.
+  // No private key validation needed here — ACTPClient.create() handles it.
 }
 
 // ============================================================================
@@ -308,8 +288,8 @@ export function addToGitignore(projectRoot: string = process.cwd()): void {
     content = fs.readFileSync(gitignorePath, 'utf-8');
   }
 
-  // Check if .actp is already in gitignore
-  if (content.includes('.actp')) {
+  // Check if .actp is already in gitignore (whole-line match to avoid false positives from comments)
+  if (/^\.actp\/?$/m.test(content)) {
     return;
   }
 
@@ -405,15 +385,43 @@ export function addToRailwayignore(projectRoot: string = process.cwd()): void {
  * @returns Absolute path to the identity file, or null
  */
 export function resolveIdentityPath(projectRoot: string = process.cwd()): string | null {
+  // Primary: read config.identity pointer
   try {
     const config = loadConfig(projectRoot);
-    if (!config.identity) return null;
-
-    const identityPath = path.join(projectRoot, config.identity);
-    if (!fs.existsSync(identityPath)) return null;
-
-    return identityPath;
+    if (config.identity) {
+      const identityPath = path.join(projectRoot, config.identity);
+      if (fs.existsSync(identityPath)) return identityPath;
+    }
   } catch {
-    return null;
+    // fall through to auto-detect
   }
+
+  // Fallback: scan project root for {slug}.md identity files.
+  // This handles cases where init ran before the identity file was created,
+  // or where the user manually wrote a .md file after init.
+  try {
+    const skip = new Set(['AGIRAILS.md', 'README.md', 'CHANGELOG.md', 'SCRATCHPAD.md', 'NOTES.md']);
+    const mdFiles = fs.readdirSync(projectRoot).filter(
+      (f) => f.endsWith('.md') && !skip.has(f)
+    );
+
+    for (const mdFile of mdFiles) {
+      try {
+        // Use a lazy require to avoid a circular import between config → agirailsmdV4
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { parseAgirailsMdV4 } = require('../../config/agirailsmdV4');
+        const content = fs.readFileSync(path.join(projectRoot, mdFile), 'utf-8');
+        const v4 = parseAgirailsMdV4(content);
+        if (v4.name && v4.services && v4.services.length > 0) {
+          return path.join(projectRoot, mdFile);
+        }
+      } catch {
+        continue;
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  return null;
 }

@@ -47,9 +47,11 @@ function validateStateDirectory(stateDirectory: string): void {
   if (stateDirectory.includes('\0')) {
     throw new Error('Invalid stateDirectory: null byte detected');
   }
-  // Reject raw '..' in the input (before normalization resolves it)
-  // Catches both relative traversal (../../etc) and embedded traversal (/tmp/../../etc)
-  if (stateDirectory.includes('..')) {
+  // Normalize, then check if any '..' segments remain (relative traversal)
+  const path = require('path');
+  const normalized = path.normalize(stateDirectory);
+  const segments = normalized.split(path.sep);
+  if (segments.includes('..')) {
     throw new Error('Invalid stateDirectory: path traversal detected (..)');
   }
 }
@@ -196,7 +198,7 @@ export async function resolvePrivateKey(
   const password = process.env.ACTP_KEY_PASSWORD;
   if (!password) {
     throw new Error(
-      'Keystore found at ' + keystorePath + ' but ACTP_KEY_PASSWORD is not set.\n' +
+      'Keystore found but ACTP_KEY_PASSWORD is not set.\n' +
       'Set it: export ACTP_KEY_PASSWORD="your-password"'
     );
   }

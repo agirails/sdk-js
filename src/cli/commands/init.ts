@@ -21,7 +21,7 @@ import {
   CLIConfig,
   CLIMode,
 } from '../utils/config';
-import { Output, ExitCode } from '../utils/output';
+import { Output, ExitCode, fmt } from '../utils/output';
 import { generateWallet, computeSmartWalletInit } from '../utils/wallet';
 import { MockStateManager } from '../../runtime/MockStateManager';
 
@@ -40,6 +40,8 @@ export function createInitCommand(): Command {
     .option('--intent <intent>', 'Agent intent: earn, pay, or both (default: earn)')
     .option('--service <name>', 'Service name (default: my-service)')
     .option('--price <usdc>', 'Base price in USDC (default: 1)')
+    .option('--test', 'After init, automatically run a test transaction (no prompt)')
+    .option('--no-test', 'Skip the post-init "Run test?" prompt')
     .option('--json', 'Output as JSON')
     .option('-q, --quiet', 'Minimal output')
     .action(async (options, command) => {
@@ -76,10 +78,20 @@ interface InitOptions {
   intent?: string;
   service?: string;
   price?: string;
+  /** true = auto-run test after init; false = skip prompt; undefined = interactive */
+  test?: boolean;
 }
 
 async function runInit(options: InitOptions, output: Output, cmd?: Command): Promise<void> {
   const projectRoot = process.cwd();
+
+  // Render banner (human mode only — hidden in --json / --quiet)
+  if (output.mode === 'human') {
+    const { renderBanner } = await import('../utils/banner');
+    output.print('');
+    output.print(renderBanner());
+    output.print('');
+  }
 
   // Check if already initialized
   if (isInitialized(projectRoot) && !options.force) {
@@ -335,6 +347,60 @@ async function runInit(options: InitOptions, output: Output, cmd?: Command): Pro
 
     output.print('');
     output.print('Tip: Use --scaffold to generate a starter agent.ts');
+  }
+
+  // Post-init handoff — offer to run a test transaction
+  await offerPostInitTest(options, output);
+}
+
+/**
+ * After a successful init, offer to run a test transaction.
+ *
+ * Behavior:
+ *   --test          → auto-run without prompting
+ *   --no-test       → skip entirely
+ *   (no flag, TTY)  → interactive prompt
+ *   (no flag, non-TTY) → skip (CI / piped)
+ *
+ * Requires an identity file to exist (otherwise runTest would fail).
+ */
+async function offerPostInitTest(options: InitOptions, output: Output): Promise<void> {
+  if (output.mode !== 'human') return; // never in json / quiet
+  if (options.test === false) return; // --no-test flag
+
+  // Check identity file exists — runTest needs it
+  const { resolveIdentityPath } = await import('../utils/config');
+  const identity = resolveIdentityPath();
+  if (!identity) {
+    // No identity file — test flow needs one. Show hint instead of silent skip.
+    output.print('');
+    output.print('Want to see your agent earn its first payment?');
+    output.print(`  Create a ${fmt.bold('{slug}.md')} identity file, then run: ${fmt.cyan('actp test')}`);
+    output.print(`  Or let an AI assistant generate one: ${fmt.cyan('curl -sLO https://www.agirails.app/protocol/AGIRAILS.md')}`);
+    return;
+  }
+
+  let shouldRun = false;
+
+  if (options.test === true) {
+    // --test flag: auto-run
+    shouldRun = true;
+  } else if (process.stdout.isTTY) {
+    // Interactive prompt
+    const readline = await import('readline');
+    output.print('');
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    const answer = await new Promise<string>((resolve) => {
+      rl.question('Your agent is ready. Run a test transaction now? (Y/n): ', resolve);
+    });
+    rl.close();
+    const trimmed = answer.trim().toLowerCase();
+    shouldRun = trimmed === '' || trimmed === 'y' || trimmed === 'yes';
+  }
+
+  if (shouldRun) {
+    const { runTest } = await import('./test');
+    await runTest(output);
   }
 }
 

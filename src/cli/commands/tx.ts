@@ -147,6 +147,18 @@ function createTxStatusCommand(): Command {
           return;
         }
 
+        // Compute fee breakdown for settled transactions
+        let feeBreakdown: string | undefined;
+        if (tx.state === 'SETTLED') {
+          const amountWei = BigInt(tx.amount);
+          const bps = BigInt(tx.platformFeeBpsLocked ?? 100); // default 1%
+          const minFee = 50_000n; // $0.05 in USDC wei
+          const bpsFee = (amountWei * bps) / 10_000n;
+          const fee = bpsFee > minFee ? bpsFee : minFee;
+          const providerNet = amountWei - fee;
+          feeBreakdown = `${formatUsdc(providerNet.toString())} USDC to provider (${formatUsdc(tx.amount)} committed, ${formatUsdc(fee.toString())} protocol fee)`;
+        }
+
         const display: TransactionDisplay = {
           txId: tx.id,
           state: tx.state,
@@ -156,6 +168,8 @@ function createTxStatusCommand(): Command {
           deadline: new Date(tx.deadline * 1000).toISOString(),
           escrowId: tx.escrowId,
           createdAt: new Date(tx.createdAt * 1000).toISOString(),
+          ethTxHash: tx.ethTxHash,
+          feeBreakdown,
         };
 
         if (options.json) {

@@ -69,10 +69,13 @@ import { createHealthCommand } from './commands/health';
 
 const program = new Command();
 
+// Inline banner for --help output (cyan glyph + bold wordmark)
+import { inlineBanner } from './utils/banner';
+
 program
   .name('actp')
   .description(
-    'ACTP CLI - Agent Commerce Transaction Protocol\n\n' +
+    inlineBanner('Agent Commerce Transaction Protocol') + '\n\n' +
       'The payment layer for AI agents. Create escrow-backed transactions,\n' +
       'track state changes, and settle payments programmatically.\n\n' +
       'Quick Start:\n' +

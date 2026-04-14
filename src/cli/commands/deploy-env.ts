@@ -29,7 +29,7 @@ export function createDeployEnvCommand(): Command {
       );
 
       try {
-        runDeployEnv(options, output);
+        await runDeployEnv(options, output);
       } catch (error) {
         output.errorResult({
           code: 'DEPLOY_ENV_FAILED',

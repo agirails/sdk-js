@@ -3,6 +3,7 @@ node_modules/
 
 # Build output
 dist/
+*.tgz
 
 # Test coverage
 coverage/

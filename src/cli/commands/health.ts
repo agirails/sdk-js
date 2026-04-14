@@ -196,7 +196,9 @@ async function runHealth(
       } else {
         let agentAddress = options.address;
         if (!agentAddress) {
-          const privKey = process.env.ACTP_PRIVATE_KEY || process.env.PRIVATE_KEY;
+          const { resolvePrivateKey } = await import('../../wallet/keystore');
+          const networkTier = options.network === 'base-mainnet' ? 'mainnet' : 'testnet';
+          const privKey = await resolvePrivateKey(undefined, { network: networkTier });
           if (privKey) {
             agentAddress = new ethers.Wallet(privKey).address;
           }

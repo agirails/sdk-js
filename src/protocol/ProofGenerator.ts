@@ -200,8 +200,9 @@ export class ProofGenerator {
       try {
         const response = await fetch(url, {
           signal: controller.signal,
-          // Prevent following redirects to blocked hosts
-          redirect: 'follow',
+          // Reject redirects — caller must provide the final URL.
+          // Following redirects would bypass the URL blocklist (SSRF risk).
+          redirect: 'error',
         });
 
         clearTimeout(timeoutId);

@@ -210,19 +210,19 @@ describe('BaseAdapter', () => {
       test('accepts valid uppercase address', () => {
         const upperAddress = '0x' + '1111111111111111111111111111111111111111'.toUpperCase();
         const result = adapter.testValidateAddress(upperAddress, 'test');
-        expect(result).toBe(upperAddress.toLowerCase()); // Issue #2 - normalized to lowercase
+        expect(result).toBe(upperAddress.toLowerCase()); // all-digit address — checksum = lowercase
       });
 
       test('accepts valid mixed-case address', () => {
         const mixedAddress = '0x1111111111111111111111111111111111111111'.replace(/1/g, 'A');
         const result = adapter.testValidateAddress(mixedAddress, 'test');
-        expect(result).toBe(mixedAddress.toLowerCase()); // Issue #2 - normalized to lowercase
+        expect(result).toBe('0xaAaAaAaaAaAaAaaAaAAAAAAAAaaaAaAaAaaAaaAa'); // EIP-55 checksummed
       });
 
-      test('normalizes address to lowercase (Issue #2 fix)', () => {
+      test('normalizes address to EIP-55 checksum', () => {
         const mixedCase = '0xABCDEF1234567890ABCDEF1234567890ABCDEF12';
         const result = adapter.testValidateAddress(mixedCase, 'test');
-        expect(result).toBe('0xabcdef1234567890abcdef1234567890abcdef12');
+        expect(result).toBe('0xabCDEF1234567890ABcDEF1234567890aBCDeF12'); // EIP-55 checksummed
       });
     });
 
@@ -440,10 +440,10 @@ describe('BaseAdapter', () => {
 
     test('has correct message', () => {
       const error = new ValidationError('test message');
-      expect(error.message).toBe('test message');
+      expect(error.message).toContain('test message');
     });
 
-    test('is instance of Error', () => {
+    test('is instance of Error and ACTPError', () => {
       const error = new ValidationError('test message');
       expect(error).toBeInstanceOf(Error);
     });

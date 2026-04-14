@@ -19,11 +19,15 @@ describe('AutoWalletProvider.payACTPBatched()', () => {
       )
       .mockResolvedValueOnce({ hash: '0xreceipt', success: true });
 
+    // After first UserOp consumes EP nonce 3, retry must re-read and get 4
+    const readEntryPointNonce = jest.fn().mockResolvedValue(4n);
+
     const provider: any = Object.create(AutoWalletProvider.prototype);
 
     provider.nonceManager = {
       enqueue,
       setCachedActpNonce,
+      readEntryPointNonce,
     };
     provider.submitUserOp = submitUserOp;
 
@@ -46,6 +50,10 @@ describe('AutoWalletProvider.payACTPBatched()', () => {
 
     expect(enqueue).toHaveBeenCalledWith(expect.any(Function), false);
     expect(submitUserOp).toHaveBeenCalledTimes(2);
+    // First call uses original EP nonce 3, second uses re-read EP nonce 4
+    expect(submitUserOp).toHaveBeenNthCalledWith(1, expect.any(Array), 3n);
+    expect(submitUserOp).toHaveBeenNthCalledWith(2, expect.any(Array), 4n);
+    expect(readEntryPointNonce).toHaveBeenCalledTimes(1);
     expect(setCachedActpNonce).toHaveBeenCalledWith(2n);
 
     const expectedTxId = computeTransactionId(
@@ -72,10 +80,13 @@ describe('AutoWalletProvider.payACTPBatched()', () => {
       .fn()
       .mockResolvedValueOnce({ hash: '0xfailedreceipt', success: false });
 
+    const readEntryPointNonce = jest.fn();
+
     const provider: any = Object.create(AutoWalletProvider.prototype);
     provider.nonceManager = {
       enqueue,
       setCachedActpNonce,
+      readEntryPointNonce,
     };
     provider.submitUserOp = submitUserOp;
 

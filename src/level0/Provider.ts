@@ -61,6 +61,12 @@ export interface ProviderBalance {
  */
 export interface Provider {
   /**
+   * Promise that resolves when the provider is fully started and registered.
+   * Await this before calling request() for the same service.
+   */
+  ready: Promise<void>;
+
+  /**
    * Current status
    */
   status: ProviderStatus;
