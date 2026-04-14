@@ -93,9 +93,29 @@ export async function uploadReceipt(
   if (apiKey) {
     headers.authorization = `Bearer ${apiKey}`;
   } else if (payload.network !== 'mock' && options.signer) {
-    // Wallet-sig auth path: sign EIP-712 ReceiptWrite over a minimal commitment.
-    const nonce = ethers.hexlify(ethers.randomBytes(16));
-    const issuedAt = Math.floor(Date.now() / 1000);
+    // Wallet-sig auth path:
+    //   1. Call /receipts/prepare to get a server-issued nonce bound to this signer.
+    //   2. Sign EIP-712 ReceiptWrite(nonce, issuedAt, ...commitment).
+    //   3. Send signed body to /receipts; server atomically consumes the nonce.
+    const signerAddress = await options.signer.getAddress();
+    let nonce: string;
+    let issuedAt: number;
+    try {
+      const prepareRes = await fetch(`${baseUrl}/api/v1/receipts/prepare`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ signerAddress }),
+      });
+      if (!prepareRes.ok) {
+        return { ok: false, reason: `Nonce prepare failed: HTTP ${prepareRes.status}` };
+      }
+      const prepared = (await prepareRes.json()) as { nonce: string; issuedAt: number };
+      nonce = prepared.nonce;
+      issuedAt = prepared.issuedAt;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'network error';
+      return { ok: false, reason: `Nonce prepare error: ${msg}` };
+    }
     const domain = {
       name: EIP712_DOMAIN_NAME,
       version: EIP712_DOMAIN_VERSION,
