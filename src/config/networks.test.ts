@@ -119,7 +119,7 @@ describe('Networks Config', () => {
     // Sanity checks: deployed contract addresses must match known deployments
     it('should have correct AgentRegistry on base-sepolia', () => {
       const config = getNetwork('base-sepolia');
-      expect(config.contracts.agentRegistry).toBe('0x7403426a720f91ea155405e3b63d16aa40a46f98');
+      expect(config.contracts.agentRegistry).toBe('0x40ca9b043220ecc26b0b280fe6a02861eadc2448');
     });
 
     it('should have correct AgentRegistry on base-mainnet', () => {
@@ -129,7 +129,7 @@ describe('Networks Config', () => {
 
     it('should have correct ACTPKernel on base-sepolia', () => {
       const config = getNetwork('base-sepolia');
-      expect(config.contracts.actpKernel).toBe('0xE151C35EAda9d05830aE3e3d81bE61dfe1953ED4');
+      expect(config.contracts.actpKernel).toBe('0xE83cba71C445B4f658D88E4F179FccB9E1454F97');
     });
 
     it('should have correct ACTPKernel on base-mainnet', () => {
@@ -139,7 +139,7 @@ describe('Networks Config', () => {
 
     it('should have correct EscrowVault on base-sepolia', () => {
       const config = getNetwork('base-sepolia');
-      expect(config.contracts.escrowVault).toBe('0xA73e357647Db4cDcfD1aDbbE0422fA7D1B792FeF');
+      expect(config.contracts.escrowVault).toBe('0x0DAbBF59C40C1804488a84237C87971b2a7f5f5f');
     });
 
     it('should have correct EscrowVault on base-mainnet', () => {
@@ -149,7 +149,7 @@ describe('Networks Config', () => {
 
     it('should have correct X402Relay on base-sepolia', () => {
       const config = getNetwork('base-sepolia');
-      expect(config.contracts.x402Relay).toBe('0x0804FC3c04214bC9036E126554aF7EE24d589988');
+      expect(config.contracts.x402Relay).toBe('0x110b25bb3d45c40dfcf34bb451aa7069b2a1cb3b');
     });
 
     it('should have correct X402Relay on base-mainnet', () => {

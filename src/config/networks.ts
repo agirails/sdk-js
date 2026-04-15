@@ -121,15 +121,17 @@ export const BASE_SEPOLIA: NetworkConfig = {
   rpcUrl: BASE_SEPOLIA_RPC_URL,
   blockExplorer: 'https://sepolia.basescan.org',
   contracts: {
-    actpKernel: '0xE151C35EAda9d05830aE3e3d81bE61dfe1953ED4',
-    escrowVault: '0xA73e357647Db4cDcfD1aDbbE0422fA7D1B792FeF',
-    usdc: '0x444b4e1A65949AB2ac75979D5d0166Eb7A248Ccb', // MockUSDC
+    // Redeployed 2026-04-15: kernel + vault + registry + treasury + relay.
+    // See agirails/actp-kernel deployments/base-sepolia.json for details.
+    actpKernel: '0xE83cba71C445B4f658D88E4F179FccB9E1454F97',
+    escrowVault: '0x0DAbBF59C40C1804488a84237C87971b2a7f5f5f',
+    usdc: '0x444b4e1A65949AB2ac75979D5d0166Eb7A248Ccb', // MockUSDC (unchanged)
     eas: '0x4200000000000000000000000000000000000021',
     easSchemaRegistry: '0x4200000000000000000000000000000000000020',
-    agentRegistry: '0x7403426a720f91ea155405e3b63d16aa40a46f98',
-    identityRegistry: '0xce9749c768b425fab0daa0331047d1340ec99a88',
-    archiveTreasury: '0xe9aaefae83d206a2e4504f84b6b13c55d09d62a0',
-    x402Relay: '0x0804FC3c04214bC9036E126554aF7EE24d589988',
+    agentRegistry: '0x40ca9b043220ecc26b0b280fe6a02861eadc2448',
+    identityRegistry: '0xce9749c768b425fab0daa0331047d1340ec99a88', // unchanged (no kernel ref)
+    archiveTreasury: '0x6acb954550b6a5135da9df5ac224cff33d697351',
+    x402Relay: '0x110b25bb3d45c40dfcf34bb451aa7069b2a1cb3b',
     erc8004IdentityRegistry: '0x8004A818BFB912233c491871b3d84c89A494BD9e',
   },
   eas: {
@@ -139,7 +141,7 @@ export const BASE_SEPOLIA: NetworkConfig = {
     maxFeePerGas: ethers.parseUnits('2', 'gwei'),
     maxPriorityFeePerGas: ethers.parseUnits('1', 'gwei')
   },
-  actpKernelDeploymentBlock: 39679499,
+  actpKernelDeploymentBlock: 40239703, // 2026-04-15 redeploy
   // AIP-12: Account Abstraction
   aa: {
     entryPoint: '0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789',
