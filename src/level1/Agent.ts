@@ -1248,8 +1248,12 @@ export class Agent extends EventEmitter {
 
       // Transition transaction through IN_PROGRESS → DELIVERED states
       if (this._client) {
-        // Store delivery proof by directly accessing MockRuntime's state
-        // This is a workaround - in production, we'd use a proper method
+        // MockRuntime exposes its in-memory state directly so the agent can
+        // attach the delivery proof for later verification. Real BlockchainRuntime
+        // submits the proof on-chain via the kernel — no equivalent local poke
+        // is needed there. The `as any` is intentional: the runtime interface
+        // doesn't expose stateManager publicly, but MockRuntime's
+        // implementation does for exactly this off-chain test path.
         const runtime = this._client.runtime as any;
         if (runtime.stateManager) {
           await runtime.stateManager.withLock(async (state: any) => {
@@ -1260,8 +1264,8 @@ export class Agent extends EventEmitter {
           });
         }
 
-        // AUDIT FIX (2026-02): Must transition through IN_PROGRESS before DELIVERED
-        // Contract rejects COMMITTED → DELIVERED direct transition
+        // The kernel rejects COMMITTED → DELIVERED direct transitions, so we
+        // step through IN_PROGRESS first.
         await this._client.runtime.transitionState(job.id, 'IN_PROGRESS');
 
         // Encode dispute window proof for DELIVERED transition

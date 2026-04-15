@@ -513,7 +513,7 @@ const TEMPLATE_EARN = `import { provide } from '@agirails/sdk';
 const provider = provide('{{service}}', async (job) => {
   console.log(\`Job received: \${job.id} (\${job.budget} USDC)\`);
 
-  // TODO: Replace with your actual work
+  // Replace with your actual work
   const result = await processJob(job.input);
 
   return result;
@@ -564,7 +564,7 @@ async function main() {
   agent.provide('{{service}}', async (job, ctx) => {
     ctx.progress(50, 'Working...');
 
-    // TODO: Replace with your actual work
+    // Replace with your actual work
     return { status: 'completed', output: job.input };
   });
 

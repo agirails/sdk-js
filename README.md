@@ -3,7 +3,7 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0+-blue.svg)](https://www.typescriptlang.org/)
 [![Node.js](https://img.shields.io/badge/Node.js-18+-green.svg)](https://nodejs.org/)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Tests](https://img.shields.io/badge/tests-1619%20passed-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-1968%20passed-brightgreen.svg)]()
 
 The official TypeScript SDK for the **Agent Commerce Transaction Protocol (ACTP)** - enabling AI agents to transact with each other through blockchain-based escrow.
 
@@ -154,7 +154,7 @@ async function main() {
   const txId = await runtime.createTransaction({
     requester: '0x...',
     provider: '0x...',
-    amount: '1000000',  // Raw wei
+    amount: '1000000',  // 1.00 USDC (raw wei, 6 decimals)
     deadline: 1735689600,
     disputeWindow: 86400,
     serviceDescription: '0x...'
@@ -239,7 +239,7 @@ deadline: '7d'   // 7 days from now
 deadline: 1735689600  // Unix timestamp
 
 // ISO date string
-deadline: '2025-01-01T00:00:00Z'
+deadline: '2027-01-01T00:00:00Z'
 ```
 
 ## Error Handling
@@ -306,10 +306,10 @@ actp pay <provider> <amount> [--deadline TIME] [--service TEXT]
 actp balance [ADDRESS]
 actp mint --amount AMOUNT  # Mock mode only
 
-# Transaction management
-actp list [--state STATE] [--limit N]
-actp status <tx_id>
-actp cancel <tx_id>
+# Transaction management (subcommands of `actp tx`)
+actp tx list [--state STATE] [--limit N]
+actp tx status <tx_id>
+actp tx cancel <tx_id>
 
 # Time manipulation (mock mode only)
 actp time advance <seconds>
@@ -377,10 +377,10 @@ actp config reset
 
 ```bash
 # Human-readable (default)
-actp list
+actp tx list
 
 # JSON output for scripting
-actp list --format json
+actp tx list --format json
 
 # NDJSON streaming for watch
 actp watch TX_ID --format ndjson
@@ -444,12 +444,10 @@ npm run test:coverage
 ### Level 0 - Low-level Primitives
 
 ```typescript
-import { ServiceDirectory, request, provide } from '@agirails/sdk';
+import { serviceDirectory, request, provide } from '@agirails/sdk';
 
-// Register a provider for a service
-const { serviceDirectory } = require('@agirails/sdk');
-// serviceDirectory is an in-memory, per-process singleton
-// Provider registers automatically when calling provide()
+// serviceDirectory is an in-memory, per-process singleton.
+// Providers register automatically when calling provide().
 
 // Find providers for a service
 const providers = serviceDirectory.findProviders('text-gen');

@@ -215,20 +215,10 @@ function estimateUnits(job: Job, unit: string): number {
  * @internal
  */
 function estimateApiCost(_api: string, _job: Job): number {
-  // MVP: Returns 0 (API costs tracked externally by agent)
-  // TODO: Integrate with LLM provider pricing APIs
-
-  // Example V2 implementation:
-  // const [provider, model] = api.split(':');
-  // if (provider === 'openai') {
-  //   const inputTokens = estimateUnits(job, 'token');
-  //   const pricing = {
-  //     'gpt-4-turbo': { input: 0.01 / 1000, output: 0.03 / 1000 },
-  //     'gpt-3.5-turbo': { input: 0.0005 / 1000, output: 0.0015 / 1000 }
-  //   };
-  //   return inputTokens * pricing[model].input * 2; // Assume 2x for output
-  // }
-
+  // Returns 0 for now — API/LLM costs are tracked externally by the agent
+  // implementation. A future revision may integrate per-provider pricing
+  // tables; until then, agents that bill on token usage should override
+  // their pricing strategy directly.
   return 0;
 }
 

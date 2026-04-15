@@ -16,8 +16,8 @@
  * Zero fee layer: payTo goes directly to seller. X402Relay is never used.
  * Zero reputation hooks: ERC-8004 registry never touched on x402 payments.
  *
- * See /Users/damir/Arha/AGIRAILS/SDK and Runtime/sdk-js/X402_V2_IMPLEMENTATION_PLAN.md
- * for full architecture rationale and Smart Wallet signing flow.
+ * Architecture rationale and Smart Wallet signing flow are documented in
+ * the project's internal x402 v2 implementation notes.
  *
  * @module adapters/X402Adapter
  */

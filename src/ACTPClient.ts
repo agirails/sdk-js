@@ -1399,8 +1399,9 @@ export class ACTPClient {
       if (/not found/i.test(msg) && this.registry.has('x402')) {
         throw new Error(
           `Transaction ${txId} not found. ` +
-            `If this is an x402 payment from a prior session, status is unavailable — ` +
-            `x402 payments are stateless and not persisted across restarts.`
+            `x402 payments are stateless — status is not retained across SDK ` +
+            `process restarts. If this txId originated in a previous run, ` +
+            `query the on-chain receipt directly.`
         );
       }
       throw err;
