@@ -62,7 +62,14 @@ export interface NetworkConfig {
     agentRegistry?: string; // AIP-7 Agent Registry (optional until deployed)
     identityRegistry?: string; // AIP-7 ERC-1056 DID Registry (optional until deployed)
     archiveTreasury?: string; // AIP-7 Archive Treasury for Arweave funding (optional until deployed)
-    x402Relay?: string; // X402Relay for atomic payment fee splitting (optional until deployed)
+    /**
+     * @deprecated Legacy fee-splitting relay from the pre-v2 x402 flow.
+     * The current X402Adapter routes payments directly buyer→seller via
+     * @x402/fetch + facilitator (EIP-3009 / Permit2); this address is
+     * retained only for third parties still calling the relay directly.
+     * Scheduled for removal in the next breaking SDK major.
+     */
+    x402Relay?: string;
     erc8004IdentityRegistry?: string; // ERC-8004 Identity Registry (canonical CREATE2)
   };
   eas: {

@@ -278,8 +278,11 @@ export interface UnifiedPayResult {
   erc8004AgentId?: string;
 
   /**
-   * Fee breakdown for x402 payments routed through X402Relay.
-   * Present only when relay is configured and payment used the relay path.
+   * @deprecated Legacy from the pre-v2 x402 flow routed through the
+   * on-chain X402Relay fee-splitting contract. The current X402Adapter
+   * (SDK 3.3.0+) pays seller directly with zero AGIRAILS fee, so this
+   * field is never populated on the x402 path. Retained for API
+   * back-compat; removal scheduled for the next breaking SDK major.
    */
   feeBreakdown?: X402FeeBreakdown;
 }

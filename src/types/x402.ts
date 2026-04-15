@@ -214,15 +214,15 @@ export class X402Error extends Error {
 // ============================================================================
 
 /**
- * Fee breakdown for x402 payments routed through X402Relay.
+ * @deprecated Legacy from the pre-v2 x402 flow that routed payments
+ * through the on-chain X402Relay fee-splitting contract. The current
+ * X402Adapter (SDK 3.3.0+) uses x402 v2 — payments go directly from
+ * buyer to seller via the facilitator pattern and there is no AGIRAILS
+ * fee on the x402 path. This type is retained for API back-compat but
+ * has no active producer. Remove in the next breaking SDK major.
  *
- * Shows how the gross amount was split between provider and platform.
- * Fee = max(grossAmount * feeBps / 10000, MIN_FEE).
- *
- * NOTE: This is a client-side **estimate** computed from the configured
- * platformFeeBps. The on-chain X402Relay contract is the source of truth.
- * If an admin updates the relay's fee rate, this estimate may diverge
- * from the actual on-chain split until the SDK config is refreshed.
+ * Historical semantics: Fee = max(grossAmount * feeBps / 10000, MIN_FEE).
+ * providerNet + platformFee == grossAmount.
  */
 export interface X402FeeBreakdown {
   /** Total amount from the 402 header (USDC wei, 6 decimals) */
