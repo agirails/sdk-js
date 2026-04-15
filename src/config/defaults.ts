@@ -60,15 +60,21 @@ export const V4_CONSTRAINTS = {
 
 // ============================================================================
 // Display Fee Calculation (cosmetic only — MockRuntime pays full amount)
+//
+// Protocol contract: fee = max(amount * 1% , $0.05).
+// **Must stay in sync** with:
+//   - web canonical: agirails.app/web/lib/receipts/fees.ts
+//   - public spec:   agirails.app/web/public/protocol/AGIRAILS.md
+// The web repo's `tests/unit/receipts-fees.test.ts` is a parity lock — it
+// will fail loudly if either side drifts.
 // ============================================================================
 
-/** Platform fee: 1% with $0.05 minimum (in USDC wei, 6 decimals) */
 const MIN_FEE_WEI = 50_000n; // $0.05
-const FEE_BPS = 100n; // 1%
+const FEE_BPS = 100n;        // 1%
 
 /**
- * Compute display fee for receipt rendering.
- * This is cosmetic — MockRuntime settles the full amount to provider.
+ * Compute display fee for receipt rendering. Also used by the share-flow
+ * upload payload (test command) so the printed and uploaded numbers match.
  *
  * @param amountWei - Transaction amount in USDC wei (6 decimals)
  * @returns Fee in USDC wei

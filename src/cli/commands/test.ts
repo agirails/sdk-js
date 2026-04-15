@@ -20,6 +20,7 @@ import { renderReceipt } from './receipt';
 import { MockRuntime } from '../../runtime/MockRuntime';
 import { inlineBanner } from '../utils/banner';
 import { uploadReceipt } from '../receiptUpload';
+import { computeDisplayFee } from '../../config/defaults';
 
 // ============================================================================
 // Command Definition
@@ -249,7 +250,9 @@ async function runTest(output: Output): Promise<void> {
 
   // Best-effort publish to agirails.app/r/<id> — mock auth requires API key.
   // On failure, fall through silently; the CLI already printed a local receipt.
-  const feeWei = computeTestFeeWei(amountWei);
+  // Fee math from canonical SDK helper (config/defaults.ts) — kept in sync
+  // with the web copy at lib/receipts/fees.ts via the parity test on web.
+  const feeWei = computeDisplayFee(amountWei);
   const netWei = amountWei - feeWei;
   const upload = await uploadReceipt(
     {
@@ -278,12 +281,6 @@ async function runTest(output: Output): Promise<void> {
   if (isTTY) {
     await promptShare(amountWei, 'mock', undefined, upload.ok ? upload.url : undefined);
   }
-}
-
-function computeTestFeeWei(amountWei: bigint): bigint {
-  const pct = (amountWei * BigInt(100)) / BigInt(10_000);
-  const floor = BigInt(50_000);
-  return pct > floor ? pct : floor;
 }
 
 // ============================================================================
