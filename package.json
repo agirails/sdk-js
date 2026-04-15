@@ -67,7 +67,7 @@
   },
   "homepage": "https://github.com/agirails/sdk-js#readme",
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.989.0",
+    "@aws-sdk/client-s3": "^3.1030.0",
     "@ethereum-attestation-service/eas-sdk": "1.6.1",
     "@irys/sdk": "0.2.11",
     "@x402/core": "~2.9.0",
@@ -106,5 +106,9 @@
   },
   "engines": {
     "node": ">=18.0.0"
+  },
+  "overrides": {
+    "axios": "^1.15.0",
+    "fast-xml-parser": "^5.3.5"
   }
 }
