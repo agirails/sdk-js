@@ -20,6 +20,7 @@ import { Output, ExitCode } from '../utils/output';
 import { mapError } from '../utils/client';
 import { resolve, join } from 'path';
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from 'fs';
+import * as readline from 'readline';
 import { computeConfigHash, serializeAgirailsMd, parseAgirailsMd } from '../../config/agirailsmd';
 import { preparePublish, extractRegistrationParams, PENDING_ENDPOINT } from '../../config/publishPipeline';
 import { savePendingPublish, getActpDir } from '../../config/pendingPublish';
@@ -206,49 +207,85 @@ async function runPublish(
       try {
         const slugResult = await checkSlug(v4Config.slug);
         if (!slugResult.available) {
-          if (slugResult.suggestion) {
-            slugSpinner.stop(true);
-            const oldSlug = v4Config.slug;
-            const newSlug = slugResult.suggestion;
-
-            // Auto-rename: update frontmatter slug, rename file, update config pointer
-            output.info(`Slug "${oldSlug}" was taken. Renamed to "${newSlug}".`);
-
-            // Rename file on disk
-            const { dirname, join: pathJoin } = await import('path');
-            const dir = dirname(resolvedPath);
-            const newPath = pathJoin(dir, `${newSlug}.md`);
-            renameSync(resolvedPath, newPath);
-
-            // Re-read, update slug in frontmatter, rewrite, re-parse, recompute hash
-            const rawContent = readFileSync(newPath, 'utf-8');
-            const parsed = parseAgirailsMd(rawContent);
-            const updatedFm = { ...(parsed.frontmatter as Record<string, unknown>), slug: newSlug };
-            const newContent = serializeAgirailsMd(updatedFm, parsed.body);
-            const tmpSlugPath = newPath + '.tmp';
-            writeFileSync(tmpSlugPath, newContent, 'utf-8');
-            renameSync(tmpSlugPath, newPath);
-
-            // Update in-memory references for the rest of publish
-            resolvedPath = newPath;
-            v4Config.slug = newSlug;
-
-            // Recompute configHash with new slug
-            const reHash = computeConfigHash(newContent);
-            configHash = reHash.configHash;
-            content = newContent;
-
-            // Update config.json identity pointer
-            try {
-              const config = loadConfig(dirname(newPath));
-              config.identity = `${newSlug}.md`;
-              saveConfig(config, dirname(newPath));
-            } catch {
-              // Best-effort
+          // Try ownership recovery before falling back to auto-rename.
+          // Scenario: user lost agent_id from AGIRAILS.md (manual edit,
+          // file replaced, scaffold redo) but still owns the slug on
+          // agirails.app. Treat this publish as an UPDATE, not NEW.
+          let recovered = false;
+          if (slugResult.owner) {
+            // projectRoot isn't bound until later in the function; derive
+            // a local equivalent inline (parent dir of the .md file).
+            const slugCheckProjectRoot = resolve(resolvedPath, '..');
+            const localSigner = await derivePotentialSigner(slugCheckProjectRoot);
+            const ownerWallet = slugResult.owner.wallet.toLowerCase();
+            if (localSigner && localSigner.toLowerCase() === ownerWallet) {
+              slugSpinner.stop(true);
+              recovered = await maybeRecoverAgentId({
+                output,
+                slug: v4Config.slug,
+                ownerAgentId: slugResult.owner.agentId,
+                resolvedPath,
+                onRestored: ({ newContent, newConfigHash }) => {
+                  // Mutate in-memory state so the rest of publish treats
+                  // this as a known-agent_id update path.
+                  v4Config!.agent_id = slugResult.owner!.agentId;
+                  configHash = newConfigHash;
+                  content = newContent;
+                },
+              });
+            } else if (localSigner) {
+              output.warning(
+                `Slug "${v4Config.slug}" is owned by ${ownerWallet} ` +
+                  `(your wallet ${localSigner.toLowerCase()} differs).`
+              );
             }
-          } else {
-            slugSpinner.stop(false);
-            throw new Error(`Slug "${v4Config.slug}" is already taken on agirails.app. Choose a different name.`);
+          }
+
+          if (!recovered) {
+            if (slugResult.suggestion) {
+              slugSpinner.stop(true);
+              const oldSlug = v4Config.slug;
+              const newSlug = slugResult.suggestion;
+
+              // Auto-rename: update frontmatter slug, rename file, update config pointer
+              output.info(`Slug "${oldSlug}" was taken. Renamed to "${newSlug}".`);
+
+              // Rename file on disk
+              const { dirname, join: pathJoin } = await import('path');
+              const dir = dirname(resolvedPath);
+              const newPath = pathJoin(dir, `${newSlug}.md`);
+              renameSync(resolvedPath, newPath);
+
+              // Re-read, update slug in frontmatter, rewrite, re-parse, recompute hash
+              const rawContent = readFileSync(newPath, 'utf-8');
+              const parsed = parseAgirailsMd(rawContent);
+              const updatedFm = { ...(parsed.frontmatter as Record<string, unknown>), slug: newSlug };
+              const newContent = serializeAgirailsMd(updatedFm, parsed.body);
+              const tmpSlugPath = newPath + '.tmp';
+              writeFileSync(tmpSlugPath, newContent, 'utf-8');
+              renameSync(tmpSlugPath, newPath);
+
+              // Update in-memory references for the rest of publish
+              resolvedPath = newPath;
+              v4Config.slug = newSlug;
+
+              // Recompute configHash with new slug
+              const reHash = computeConfigHash(newContent);
+              configHash = reHash.configHash;
+              content = newContent;
+
+              // Update config.json identity pointer
+              try {
+                const config = loadConfig(dirname(newPath));
+                config.identity = `${newSlug}.md`;
+                saveConfig(config, dirname(newPath));
+              } catch {
+                // Best-effort
+              }
+            } else {
+              slugSpinner.stop(false);
+              throw new Error(`Slug "${v4Config.slug}" is already taken on agirails.app. Choose a different name.`);
+            }
           }
         } else {
           slugSpinner.stop(true);
@@ -261,6 +298,10 @@ async function runPublish(
         }
         if ((slugErr as Error).message.includes('was taken')) {
           // Auto-rename succeeded — not an error
+        } else if ((slugErr as Error).message.includes('OWNERSHIP_RECOVERY_REQUIRES_TTY')) {
+          // Re-throw — the user needs to add agent_id to AGIRAILS.md manually
+          slugSpinner.stop(false);
+          throw slugErr;
         } else {
           slugSpinner.stop(false);
           // Non-fatal: slug check API failure doesn't block publish
@@ -794,4 +835,91 @@ async function activateOnTestnet(
 
   output.success('Minted 1,000 test USDC to Smart Wallet');
   return { txHash: receipt.hash, smartWalletAddress };
+}
+
+// ============================================================================
+// Slug Ownership Recovery
+// ============================================================================
+
+/**
+ * Best-effort lookup of the local EOA signer that would publish this agent.
+ * Reads the keystore (testnet network — same one used downstream) without
+ * surfacing errors: missing keystore returns undefined so the recovery flow
+ * silently falls through to existing auto-rename behavior.
+ *
+ * @internal Exported for unit tests; not part of the SDK public API.
+ */
+export async function derivePotentialSigner(projectRoot: string): Promise<string | undefined> {
+  try {
+    const { resolvePrivateKey } = await import('../../wallet/keystore');
+    const pk = await resolvePrivateKey(projectRoot, { network: 'testnet' });
+    if (!pk) return undefined;
+    return new ethers.Wallet(pk).address;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Confirm with the user that we should restore the lost `agent_id` for a
+ * slug they already own, then write it back to AGIRAILS.md so subsequent
+ * publish steps follow the update path.
+ *
+ * - TTY: interactive y/N prompt (default Y on Enter)
+ * - Non-TTY: throw OWNERSHIP_RECOVERY_REQUIRES_TTY with an actionable
+ *   message (CI/agent flows must opt in by adding `agent_id:` to the file)
+ *
+ * Returns true when recovery succeeded; false when the user declined and
+ * the caller should fall back to auto-rename.
+ *
+ * @internal Exported for unit tests; not part of the SDK public API.
+ */
+export async function maybeRecoverAgentId(opts: {
+  output: Output;
+  slug: string;
+  ownerAgentId: string;
+  resolvedPath: string;
+  onRestored: (args: { newContent: string; newConfigHash: string }) => void;
+}): Promise<boolean> {
+  const { output, slug, ownerAgentId, resolvedPath, onRestored } = opts;
+
+  if (!process.stdin.isTTY) {
+    throw new Error(
+      `OWNERSHIP_RECOVERY_REQUIRES_TTY: slug "${slug}" is owned by your wallet ` +
+        `(agent_id ${ownerAgentId}), but AGIRAILS.md is missing the agent_id field. ` +
+        `Add this line to your frontmatter and re-run actp publish:\n` +
+        `  agent_id: "${ownerAgentId}"`
+    );
+  }
+
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  const answer: string = await new Promise((resolve) => {
+    rl.question(
+      `Slug "${slug}" is owned by your wallet (agent_id ${ownerAgentId}).\n` +
+        `Restore agent_id and update existing agent? [Y/n] `,
+      (a) => {
+        rl.close();
+        resolve(a.trim().toLowerCase());
+      }
+    );
+  });
+
+  if (answer === 'n' || answer === 'no') {
+    output.info('Skipped recovery — proceeding with auto-rename.');
+    return false;
+  }
+
+  // Recover: persist agent_id to disk + recompute hash.
+  const raw = readFileSync(resolvedPath, 'utf-8');
+  const parsed = parseAgirailsMd(raw);
+  const updatedFm = { ...(parsed.frontmatter as Record<string, unknown>), agent_id: ownerAgentId };
+  const newContent = serializeAgirailsMd(updatedFm, parsed.body);
+  const tmp = resolvedPath + '.tmp';
+  writeFileSync(tmp, newContent, 'utf-8');
+  renameSync(tmp, resolvedPath);
+
+  const { configHash: newConfigHash } = computeConfigHash(newContent);
+  onRestored({ newContent, newConfigHash });
+  output.success(`Restored agent_id ${ownerAgentId}. Treating as update.`);
+  return true;
 }

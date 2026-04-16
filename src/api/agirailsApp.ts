@@ -33,6 +33,20 @@ export interface CheckSlugResult {
   available: boolean;
   /** If not available, the next available slug (e.g. "code-reviewer-2") */
   suggestion?: string;
+  /**
+   * Public on-chain identity of the agent that already owns this slug.
+   * Present only when `available === false` AND the slug has been
+   * published on-chain (drafts won't carry an owner block).
+   *
+   * Used by the SDK publish flow to detect "I already own this slug,
+   * recover my agent_id" instead of silently auto-renaming to slug-2.
+   */
+  owner?: {
+    /** Owner's on-chain wallet (lowercase hex) — Smart Wallet if AA */
+    wallet: string;
+    /** AgentRegistry tokenId / on_chain_id as a string */
+    agentId: string;
+  };
 }
 
 export interface UpsertAgentParams {
