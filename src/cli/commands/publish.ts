@@ -645,15 +645,10 @@ async function runPublish(
     const hasEndpoint = frontmatter.endpoint && frontmatter.endpoint !== PENDING_ENDPOINT;
     output.print('');
     output.print('Next steps:');
-    if (!hasEndpoint) {
-      output.print('  1. Set your endpoint:    Add "endpoint: https://..." to AGIRAILS.md');
-      output.print('  2. Check endpoint:       actp health');
-      output.print('  3. Check your balance:   actp balance');
-      output.print('  4. Verify config match:  actp diff');
-    } else {
-      output.print('  1. Check endpoint:       actp health');
-      output.print('  2. Check your balance:   actp balance');
-      output.print('  3. Verify config match:  actp diff');
+    output.print('  1. Check your balance:   actp balance');
+    output.print('  2. Verify config match:  actp diff');
+    if (hasEndpoint) {
+      output.print('  3. Probe endpoint:       actp health');
     }
 
     // Suggest test payment on testnet
@@ -662,11 +657,15 @@ async function runPublish(
       output.print(`  Try a test payment: actp pay agirails.app/a/${v4Config.slug} 5`);
     }
 
-    // Warn if placeholder endpoint
+    // Inform about endpoint — it is OPTIONAL for ACTP (escrow + on-chain
+    // settlement work without HTTP). It is only required for x402 atomic
+    // HTTP payments or for public job-board discovery.
     if (!hasEndpoint) {
       output.print('');
-      output.warning('No endpoint set — your agent can\'t receive jobs yet.');
-      output.print('  Add "endpoint: https://your-agent.com/webhook" to AGIRAILS.md, then: actp publish');
+      output.info('No endpoint set. ACTP escrow flows do not need one — requesters');
+      output.print('  pay your wallet directly via on-chain escrow. Set an endpoint only if');
+      output.print('  you want to (a) accept x402 instant HTTP payments, or (b) be discoverable');
+      output.print('  for public job-board polling. To add: edit "endpoint:" in AGIRAILS.md, then re-run actp publish.');
     }
   } catch (error) {
     spinner.stop(false);

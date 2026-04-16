@@ -112,19 +112,31 @@ async function runHealth(
   }
 
   // ── Check 2: Endpoint set and not placeholder ───────────────────────
+  // Endpoint is OPTIONAL for ACTP (escrow + on-chain settlement work
+  // without HTTP). It is only required for x402 atomic HTTP payments or
+  // public job-board polling. Treat missing endpoint as "skip" — not fatal.
   if (!fatal) {
     const { PENDING_ENDPOINT } = await import('../../config/publishPipeline');
     const endpoint = frontmatter.endpoint as string | undefined;
     if (!endpoint || endpoint === PENDING_ENDPOINT) {
-      checks.push({ name: 'Endpoint', status: 'fail', detail: 'No endpoint set (placeholder or missing)' });
-      fatal = true;
+      checks.push({
+        name: 'Endpoint',
+        status: 'warn',
+        detail: 'Not set — ACTP works without it; only needed for x402 or public job-board discovery',
+      });
+      // Skip remaining endpoint probes but do not block subsequent checks.
+      // The rest of `runHealthChecks` reads frontmatter.endpoint and is
+      // already wrapped in `if (!fatal)`; we leave it in place but flip a
+      // local flag so endpoint-specific probes are skipped cleanly.
+      frontmatter.endpoint = undefined;
     } else {
       checks.push({ name: 'Endpoint', status: 'pass', detail: endpoint });
     }
   }
 
   // ── Check 3 & 4: Endpoint reachable + response time ─────────────────
-  if (!fatal) {
+  // Skip if no endpoint was set (handled as a "warn", not a fatal).
+  if (!fatal && frontmatter.endpoint) {
     const endpoint = frontmatter.endpoint as string;
     const probeResult = await probeEndpoint(endpoint, timeoutMs);
 
