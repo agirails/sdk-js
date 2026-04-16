@@ -160,10 +160,21 @@ async function runInit(options: InitOptions, output: Output, cmd?: Command): Pro
       options.intent = String(mdConfig.intent);
     }
 
-    // capabilities/services → service (first entry)
+    // capabilities/services → service (first entry).
+    // Services can be either plain strings (legacy) or {type, ...} objects
+    // (canonical, V4) — coerce both to plain string capability names.
+    const toCapName = (entry: unknown): string => {
+      if (typeof entry === 'string') return entry;
+      if (entry && typeof entry === 'object') {
+        const obj = entry as Record<string, unknown>;
+        return String(obj.type ?? obj.service_type ?? '');
+      }
+      return '';
+    };
     const caps = mdConfig.capabilities || mdConfig.services;
     if (!isExplicit('service') && Array.isArray(caps) && caps.length > 0) {
-      options.service = String(caps[0]);
+      const first = toCapName(caps[0]);
+      if (first) options.service = first;
     }
 
     // price
@@ -177,7 +188,9 @@ async function runInit(options: InitOptions, output: Output, cmd?: Command): Pro
     if (mdConfig.name) lines.push(`  Agent: ${String(mdConfig.name)}`);
     if (mdConfig.intent) lines.push(`  Intent: ${options.intent || mdConfig.intent}`);
     const logCaps = mdConfig.capabilities || mdConfig.services;
-    if (Array.isArray(logCaps)) lines.push(`  Capabilities: ${logCaps.join(', ')}`);
+    if (Array.isArray(logCaps)) {
+      lines.push(`  Capabilities: ${logCaps.map(toCapName).filter(Boolean).join(', ')}`);
+    }
     if (mdConfig.price != null) lines.push(`  Price: $${mdConfig.price} USDC`);
 
     output.info('Found AGIRAILS.md \u2014 using config from file');
@@ -253,7 +266,15 @@ async function runInit(options: InitOptions, output: Output, cmd?: Command): Pro
     ...(mdConfig && mdConfig.name ? { agentName: String(mdConfig.name) } : {}),
     ...(mdConfig && mdConfig.intent ? { intent: String(mdConfig.intent) as 'earn' | 'pay' | 'both' } : {}),
     ...(mdConfig && Array.isArray(mdConfig.capabilities ?? mdConfig.services)
-      ? { capabilities: ((mdConfig.capabilities ?? mdConfig.services) as unknown[]).map(String) }
+      ? {
+          capabilities: ((mdConfig.capabilities ?? mdConfig.services) as unknown[])
+            .map((e) =>
+              typeof e === 'string'
+                ? e
+                : String((e as Record<string, unknown>)?.type ?? (e as Record<string, unknown>)?.service_type ?? '')
+            )
+            .filter(Boolean),
+        }
       : {}),
     ...(mdConfig && mdConfig.price != null ? { price: Number(mdConfig.price) } : {}),
     ...(mdConfig && mdConfig.concurrency != null ? { concurrency: Number(mdConfig.concurrency) } : {}),

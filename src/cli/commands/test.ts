@@ -141,7 +141,7 @@ async function runTest(output: Output): Promise<void> {
   // Parse identity
   const content = fs.readFileSync(identityPath, 'utf-8');
   const config = parseAgirailsMdV4(content);
-  const testJob = selectTestJob(config.services);
+  const testJob = selectTestJob(config.services.map(s => s.type));
 
   // Render banner + section header (human mode only)
   if (output.mode === 'human') {
@@ -235,7 +235,7 @@ async function runTest(output: Output): Promise<void> {
   renderReceipt(
     {
       agent: config.name,
-      service: config.services[0],
+      service: config.services[0].type,
       amountWei,
       network: 'mock',
       txId,

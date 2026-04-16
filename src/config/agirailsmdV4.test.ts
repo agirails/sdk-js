@@ -113,6 +113,64 @@ describe('parseAgirailsMdV4 — required fields', () => {
 });
 
 // ============================================================================
+// parseAgirailsMdV4 — services in canonical object form
+// ============================================================================
+
+describe('parseAgirailsMdV4 — services as objects', () => {
+  test('parses services as {type, price, min_price, max_price} entries', () => {
+    const md = `---
+name: Pro Reviewer
+services:
+  - type: code-review
+    price: "5"
+    min_price: 4.95
+    max_price: 5.05
+  - type: security-audit
+    price: "10"
+pricing:
+  base: 5
+---
+body`;
+    const config = parseAgirailsMdV4(md);
+    expect(config.services).toEqual([
+      { type: 'code-review', price: '5', min_price: 4.95, max_price: 5.05 },
+      { type: 'security-audit', price: '10' },
+    ]);
+  });
+
+  test('mixed string + object entries are normalized to entries', () => {
+    const md = `---
+name: Mixed
+services:
+  - code-review
+  - { type: security-audit, min_price: 1, max_price: 2 }
+pricing:
+  base: 5
+---
+body`;
+    const config = parseAgirailsMdV4(md);
+    expect(config.services).toEqual([
+      { type: 'code-review' },
+      { type: 'security-audit', min_price: 1, max_price: 2 },
+    ]);
+  });
+
+  test('skips invalid entries (no type) but keeps valid ones', () => {
+    const md = `---
+name: PartialJunk
+services:
+  - { price: "5" }
+  - code-review
+pricing:
+  base: 5
+---
+body`;
+    const config = parseAgirailsMdV4(md);
+    expect(config.services).toEqual([{ type: 'code-review' }]);
+  });
+});
+
+// ============================================================================
 // parseAgirailsMdV4 — minimal config with defaults
 // ============================================================================
 
@@ -131,8 +189,8 @@ describe('parseAgirailsMdV4 — defaults', () => {
     expect(config.slug).toBe('code-reviewer');
   });
 
-  test('parses services', () => {
-    expect(config.services).toEqual(['code-review']);
+  test('parses services (legacy strings lifted to entries)', () => {
+    expect(config.services).toEqual([{ type: 'code-review' }]);
   });
 
   test('parses pricing.base', () => {
@@ -204,8 +262,11 @@ describe('parseAgirailsMdV4 — full config', () => {
     expect(config.slug).toBe('code-reviewer-pro');
   });
 
-  test('parses multiple services', () => {
-    expect(config.services).toEqual(['code-review', 'security-audit']);
+  test('parses multiple services (legacy strings lifted to entries)', () => {
+    expect(config.services).toEqual([
+      { type: 'code-review' },
+      { type: 'security-audit' },
+    ]);
   });
 
   test('parses full pricing', () => {
@@ -312,7 +373,7 @@ describe('validateAgirailsMdV4', () => {
     return {
       name: 'Test',
       slug: 'test',
-      services: ['testing'],
+      services: [{ type: 'testing' }],
       pricing: {
         base: 5.0,
         currency: 'USDC',

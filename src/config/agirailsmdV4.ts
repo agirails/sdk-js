@@ -44,10 +44,31 @@ export interface AgirailsMdV4Covenant {
   returns: Record<string, string>;
 }
 
+/**
+ * Per-service descriptor as it lives in {slug}.md frontmatter.
+ *
+ * Mirrors what the SDK publish pipeline (`extractRegistrationParams`)
+ * reads from each `services[]` entry to populate AgentRegistry's
+ * per-service price band on-chain. `min_price` / `max_price` are the
+ * bounds AgentRegistry enforces; `price` is the human-readable display
+ * value (kept as a string for YAML lossless round-trip).
+ */
+export interface AgirailsMdV4ServiceEntry {
+  type: string;
+  price?: string;
+  min_price?: number;
+  max_price?: number;
+}
+
 export interface AgirailsMdV4Config {
   name: string;
   slug: string;
-  services: string[];
+  /**
+   * Services this agent provides, normalized to objects.
+   * Legacy `services: ["code-review", ...]` (plain strings) is accepted
+   * by the parser and lifted to `[{type: "code-review"}, ...]`.
+   */
+  services: AgirailsMdV4ServiceEntry[];
   pricing: AgirailsMdV4Pricing;
   network: 'mock' | 'testnet' | 'mainnet';
   sla: AgirailsMdV4SLA;
@@ -110,9 +131,11 @@ function buildV4Config(
   // Slug: from YAML or generated from name
   const slug = getString(fm, 'slug') || generateSlug(name);
 
-  // Services
-  let services = getStringArray(fm, 'services');
-  if (services.length === 0) services = getStringArray(fm, 'capabilities');
+  // Services — accept both legacy ["code-review", ...] (plain strings)
+  // and canonical [{type, price, min_price, max_price}, ...] (objects).
+  // Lift everything to AgirailsMdV4ServiceEntry so downstream code has
+  // one shape to reason about.
+  const services = parseServices(fm);
   if (services.length === 0) {
     throw new Error('Missing required field: services (must be a non-empty array)');
   }
@@ -200,6 +223,39 @@ function buildV4Config(
  * - `howToRequest` = from that heading to next ## or EOF
  * - If heading missing, entire body = description
  */
+/**
+ * Parse `services` (or fall back to legacy `capabilities`) into a uniform
+ * AgirailsMdV4ServiceEntry[] regardless of whether the YAML used the
+ * legacy plain-string form or the canonical object form.
+ */
+function parseServices(fm: Record<string, unknown>): AgirailsMdV4ServiceEntry[] {
+  const raw = (Array.isArray(fm.services) && fm.services.length > 0)
+    ? fm.services
+    : (Array.isArray(fm.capabilities) ? fm.capabilities : []);
+
+  return (raw as unknown[]).flatMap((entry): AgirailsMdV4ServiceEntry[] => {
+    if (typeof entry === 'string') {
+      const type = entry.trim();
+      return type ? [{ type }] : [];
+    }
+    if (entry && typeof entry === 'object') {
+      const obj = entry as Record<string, unknown>;
+      const type = String(obj.type ?? obj.service_type ?? '').trim();
+      if (!type) return [];
+      const out: AgirailsMdV4ServiceEntry = { type };
+      if (obj.price !== undefined) out.price = String(obj.price);
+      if (obj.min_price !== undefined && Number.isFinite(Number(obj.min_price))) {
+        out.min_price = Number(obj.min_price);
+      }
+      if (obj.max_price !== undefined && Number.isFinite(Number(obj.max_price))) {
+        out.max_price = Number(obj.max_price);
+      }
+      return [out];
+    }
+    return [];
+  });
+}
+
 function parseBody(body: string): { description: string; howToRequest: string } {
   const heading = V4_CONSTRAINTS.HOW_TO_REQUEST_HEADING;
   const idx = body.indexOf(heading);

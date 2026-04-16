@@ -104,17 +104,37 @@ async function main(): Promise<void> {
         process.exit(ExitCode.INVALID_INPUT);
       }
 
-      // Build frontmatter
+      // Build frontmatter.
+      //
+      // Services emit as objects { type, price, min_price, max_price } —
+      // not plain strings — because the SDK publish pipeline
+      // (`extractRegistrationParams`) reads `svc.type` and `svc.min_price`/
+      // `svc.max_price` to populate per-service on-chain price bands on
+      // AgentRegistry. Plain strings throw "Empty service type" at publish.
+      // Default band is 1% around base price to avoid the 0..1000 USDC
+      // fallback when min/max are absent.
+      const minPrice = Math.max(0.01, price * 0.99);
+      const maxPrice = price * 1.01;
       const frontmatter = {
         name: name.trim(),
         slug,
         version: '1.0.0',
         network: V4_DEFAULTS.network,
-        services: [service],
+        services: [
+          {
+            type: service,
+            price: String(price),
+            min_price: minPrice,
+            max_price: maxPrice,
+          },
+        ],
         pricing: {
           base: price,
           currency: V4_DEFAULTS.pricing.currency,
           unit: V4_DEFAULTS.pricing.unit,
+          min_price: minPrice,
+          max_price: maxPrice,
+          negotiable: false,
         },
         sla: { ...V4_DEFAULTS.sla },
         payment: { modes: [...V4_DEFAULTS.payment.modes] },

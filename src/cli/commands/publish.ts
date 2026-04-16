@@ -535,7 +535,7 @@ async function runPublish(
             config: {
               name: v4Config.name,
               description: (v4Config.description || "").replace(/^#\s+[^\n]+\n*/, "").trim(),
-              capabilities: v4Config.services,
+              capabilities: v4Config.services.map(s => s.type),
               pricing: {
                 model: "fixed",
                 amount: String(v4Config.pricing.base),
