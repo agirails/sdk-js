@@ -9,3 +9,9 @@ export type { SessionMapping } from './SessionStore';
 
 export { BuyerOrchestrator } from './BuyerOrchestrator';
 export type { NegotiationResult, RoundResult, OrchestratorConfig, ProgressEvent } from './BuyerOrchestrator';
+
+export { ProviderPolicyEngine, parseTtl as parseProviderTtl } from './ProviderPolicy';
+export type { ProviderPolicy, ProviderPolicyViolation, ProviderPolicyResult, IncomingRequest } from './ProviderPolicy';
+
+export { ProviderOrchestrator } from './ProviderOrchestrator';
+export type { ProviderOrchestratorConfig, QuoteDecision, QuoteResult, CounterDecision } from './ProviderOrchestrator';

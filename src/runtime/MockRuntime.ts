@@ -28,6 +28,9 @@ import {
   TransactionState,
 } from './types/MockState';
 import { IACTPRuntime, CreateTransactionParams } from './IACTPRuntime';
+import { QuoteBuilder, QuoteMessage } from '../builders/QuoteBuilder';
+import { Wallet as EthersWallet } from 'ethers';
+import { InMemoryNonceManager } from '../utils/NonceManager';
 
 // ============================================================================
 // Custom Error Classes
@@ -778,6 +781,45 @@ export class MockRuntime implements IACTPRuntime {
       tx.events.push(event);
       this.persistEvent(event, state);
     });
+  }
+
+  /**
+   * Submit an AIP-2 price quote: INITIATED → QUOTED with canonical
+   * quote hash stored in `tx.quoteHash` (mirror of on-chain metadata).
+   *
+   * AIP-2.1: this is the only sanctioned entry point for reaching
+   * QUOTED. Raw `transitionState(txId, 'QUOTED', customProof)` still
+   * works for compatibility but produces a hash the buyer-side verifier
+   * cannot reconstruct from the QuoteMessage (legacy path, see §3.6).
+   */
+  async submitQuote(txId: string, quote: QuoteMessage): Promise<void> {
+    // Compute the canonical hash off the verifier-authoritative shape.
+    // Use a throwaway QuoteBuilder — computeHash is signer-independent
+    // (strips the signature field before hashing) so a random wallet +
+    // empty nonce manager yield the same hash any verifier computes.
+    const hasher = new QuoteBuilder(EthersWallet.createRandom(), new InMemoryNonceManager());
+    const quoteHash = hasher.computeHash(quote);
+
+    // Mock runtime stores the hash on the transaction; on-chain the
+    // same bytes land in `agents[msg.sender].metadata` via the
+    // kernel's transitionState(QUOTED, proof) branch. Keeping it here
+    // means mock-mode buyers can run the same cross-reference check
+    // they'd run against real chain state.
+    await this.stateManager.withLock(async (state) => {
+      const tx = state.transactions[txId];
+      if (!tx) {
+        throw new TransactionNotFoundError(txId);
+      }
+      if (tx.state !== 'INITIATED') {
+        throw new InvalidStateTransitionError(txId, tx.state, 'QUOTED');
+      }
+      tx.quoteHash = quoteHash;
+    });
+
+    // transitionState handles the actual state bump + event emission
+    // + lock re-entry. Passing the hash as `proof` for parity with
+    // BlockchainRuntime where the kernel reads the same bytes.
+    await this.transitionState(txId, 'QUOTED', quoteHash);
   }
 
     // ============================================================================

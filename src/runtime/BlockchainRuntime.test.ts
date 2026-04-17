@@ -777,4 +777,92 @@ describe('BlockchainRuntime edge cases', () => {
 
     warnSpy.mockRestore();
   });
+
+  // ==========================================================================
+  // submitQuote (AIP-2.1 §3.5 — canonical entry point for QUOTED)
+  // ==========================================================================
+
+  describe('submitQuote', () => {
+    const { QuoteBuilder } = require('../builders/QuoteBuilder');
+    const { InMemoryNonceManager } = require('../utils/NonceManager');
+
+    it('delegates to kernel.submitQuote with canonical hash recomputed', async () => {
+      const runtime = new BlockchainRuntime({
+        network: 'base-sepolia',
+        signer: mockSigner,
+        provider: mockProvider,
+      });
+      await runtime.initialize();
+
+      // Build a canonical quote. Provider wallet is the kernel's mocked
+      // signer (mockSigner) — in production submitQuote must be called
+      // by the transaction's provider; here we just need any wallet
+      // because the kernel mock doesn't enforce.
+      const providerWallet = Wallet.createRandom();
+      const builder = new QuoteBuilder(providerWallet, new InMemoryNonceManager());
+      const quote = await builder.build({
+        txId: '0xabcd1234567890abcd1234567890abcd1234567890abcd1234567890abcd1234',
+        provider: `did:ethr:84532:${providerWallet.address}`,
+        consumer: 'did:ethr:84532:0x2222222222222222222222222222222222222222',
+        quotedAmount: '7000000',
+        originalAmount: '5000000',
+        maxPrice: '10000000',
+        chainId: 84532,
+        kernelAddress: '0x1234567890123456789012345678901234567890',
+      });
+      const expectedHash = builder.computeHash(quote);
+
+      const kernelSpy = jest
+        .spyOn((runtime as any).kernel, 'submitQuote')
+        .mockResolvedValue(undefined);
+
+      await runtime.submitQuote(
+        '0xabcd1234567890abcd1234567890abcd1234567890abcd1234567890abcd1234',
+        quote,
+      );
+
+      expect(kernelSpy).toHaveBeenCalledTimes(1);
+      expect(kernelSpy).toHaveBeenCalledWith(
+        '0xabcd1234567890abcd1234567890abcd1234567890abcd1234567890abcd1234',
+        expectedHash,
+      );
+
+      kernelSpy.mockRestore();
+    });
+
+    it('propagates kernel errors (wrong state / wrong caller)', async () => {
+      const runtime = new BlockchainRuntime({
+        network: 'base-sepolia',
+        signer: mockSigner,
+        provider: mockProvider,
+      });
+      await runtime.initialize();
+
+      const providerWallet = Wallet.createRandom();
+      const builder = new QuoteBuilder(providerWallet, new InMemoryNonceManager());
+      const quote = await builder.build({
+        txId: '0xabcd1234567890abcd1234567890abcd1234567890abcd1234567890abcd1234',
+        provider: `did:ethr:84532:${providerWallet.address}`,
+        consumer: 'did:ethr:84532:0x2222222222222222222222222222222222222222',
+        quotedAmount: '7000000',
+        originalAmount: '5000000',
+        maxPrice: '10000000',
+        chainId: 84532,
+        kernelAddress: '0x1234567890123456789012345678901234567890',
+      });
+
+      const kernelSpy = jest
+        .spyOn((runtime as any).kernel, 'submitQuote')
+        .mockRejectedValue(new Error('Only provider can submit quote'));
+
+      await expect(
+        runtime.submitQuote(
+          '0xabcd1234567890abcd1234567890abcd1234567890abcd1234567890abcd1234',
+          quote,
+        ),
+      ).rejects.toThrow('Only provider can submit quote');
+
+      kernelSpy.mockRestore();
+    });
+  });
 });

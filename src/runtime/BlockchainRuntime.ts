@@ -25,6 +25,9 @@ import { NetworkConfig, getNetwork } from '../config/networks';
 import { IACTPRuntime, CreateTransactionParams } from './IACTPRuntime';
 import { MockTransaction, TransactionState } from './types/MockState';
 import { ValidationError } from '../errors';
+import { QuoteBuilder, QuoteMessage } from '../builders/QuoteBuilder';
+import { Wallet as EthersWallet } from 'ethers';
+import { InMemoryNonceManager } from '../utils/NonceManager';
 import { ServiceHash, DisputeWindow } from '../utils/Helpers';
 import { IUsedAttestationTracker, createUsedAttestationTracker } from '../utils/UsedAttestationTracker';
 import { IReceivedNonceTracker, createReceivedNonceTracker } from '../utils/ReceivedNonceTracker';
@@ -522,6 +525,29 @@ export class BlockchainRuntime implements IACTPRuntime {
     this.requireInitialized();
     await this.ensureConnected();
     await this.kernel.acceptQuote(txId, BigInt(newAmount));
+  }
+
+  /**
+   * Submit an AIP-2 price quote on-chain.
+   *
+   * Delegates to the SDK's `ACTPKernel.submitQuote(txId, quoteHash)`
+   * wrapper, which itself calls the kernel's `transitionState(QUOTED,
+   * encodedHash)`. The canonical hash is recomputed here (signer-
+   * independent) to guarantee the wire format matches what any
+   * receiver's verifier will reconstruct from the QuoteMessage.
+   *
+   * See AIP-2.1-DRAFT §3.5 Option D1.
+   */
+  async submitQuote(txId: string, quote: QuoteMessage): Promise<void> {
+    this.requireInitialized();
+    await this.ensureConnected();
+
+    const hasher = new QuoteBuilder(EthersWallet.createRandom(), new InMemoryNonceManager());
+    const quoteHash = hasher.computeHash(quote);
+
+    // The kernel wrapper already handles proof encoding + state
+    // transition + confirmations. Pay-in for not re-implementing here.
+    await this.kernel.submitQuote(txId, quoteHash);
   }
 
     /**

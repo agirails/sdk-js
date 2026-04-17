@@ -112,6 +112,17 @@ export interface MockTransaction {
   /** Delivery proof hash (null if not delivered) */
   deliveryProof: string | null;
 
+  /**
+   * Quote hash (null if not yet quoted).
+   *
+   * Mirrors the on-chain `AgentProfile.metadata` field that AIP-2 writes
+   * when a transaction transitions INITIATED → QUOTED. Canonical
+   * keccak256 of the signed AIP-2 `QuoteMessage` (signature field
+   * stripped). Stored so buyer-side verifiers can cross-reference the
+   * off-chain quote they received with the hash committed on-chain.
+   */
+  quoteHash?: string | null;
+
   /** List of events emitted during transaction lifecycle */
   events: MockEvent[];
 

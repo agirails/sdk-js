@@ -1702,4 +1702,127 @@ describe('MockRuntime', () => {
       expect(tx!.state).toBe('SETTLED');
     });
   });
+
+  // ==========================================================================
+  // submitQuote (AIP-2.1 §3.5 — canonical entry point for QUOTED)
+  // ==========================================================================
+
+  describe('submitQuote', () => {
+    const { QuoteBuilder } = require('../builders/QuoteBuilder');
+    const { Wallet } = require('ethers');
+    const { InMemoryNonceManager } = require('../utils/NonceManager');
+
+    const KERNEL_ADDRESS = '0x1234567890123456789012345678901234567890';
+
+    async function buildQuote(params: {
+      txId: string;
+      providerWallet: { address: string };
+      quotedAmount: string;
+      originalAmount: string;
+      maxPrice: string;
+    }): Promise<import('../builders/QuoteBuilder').QuoteMessage> {
+      const builder = new QuoteBuilder(params.providerWallet, new InMemoryNonceManager());
+      return builder.build({
+        txId: params.txId,
+        provider: `did:ethr:84532:${params.providerWallet.address}`,
+        consumer: 'did:ethr:84532:0x2222222222222222222222222222222222222222',
+        quotedAmount: params.quotedAmount,
+        originalAmount: params.originalAmount,
+        maxPrice: params.maxPrice,
+        chainId: 84532,
+        kernelAddress: KERNEL_ADDRESS,
+      });
+    }
+
+    it('transitions INITIATED → QUOTED and stores the canonical quote hash', async () => {
+      const providerWallet = Wallet.createRandom();
+      const txId = await runtime.createTransaction(
+        createTxParams({ amount: '5000000' }),
+      );
+      const quote = await buildQuote({
+        txId,
+        providerWallet,
+        quotedAmount: '7000000',
+        originalAmount: '5000000',
+        maxPrice: '10000000',
+      });
+
+      await runtime.submitQuote(txId, quote);
+
+      const tx = await runtime.getTransaction(txId);
+      expect(tx!.state).toBe('QUOTED');
+      expect(tx!.quoteHash).toMatch(/^0x[a-fA-F0-9]{64}$/);
+    });
+
+    it('stored quoteHash matches what the SDK verifier reconstructs', async () => {
+      // Critical invariant: the buyer-side verifier will compute
+      // QuoteBuilder.computeHash(quote) and compare it to whatever the
+      // runtime stored. If they diverge, no buyer can trust our quotes.
+      const providerWallet = Wallet.createRandom();
+      const txId = await runtime.createTransaction(createTxParams({ amount: '5000000' }));
+      const quote = await buildQuote({
+        txId,
+        providerWallet,
+        quotedAmount: '7000000',
+        originalAmount: '5000000',
+        maxPrice: '10000000',
+      });
+
+      await runtime.submitQuote(txId, quote);
+      const tx = await runtime.getTransaction(txId);
+
+      const verifier = new QuoteBuilder(Wallet.createRandom(), new InMemoryNonceManager());
+      expect(verifier.computeHash(quote)).toBe(tx!.quoteHash);
+    });
+
+    it('emits StateTransitioned event (INITIATED → QUOTED)', async () => {
+      const providerWallet = Wallet.createRandom();
+      const txId = await runtime.createTransaction(createTxParams({ amount: '5000000' }));
+      const quote = await buildQuote({
+        txId,
+        providerWallet,
+        quotedAmount: '7000000',
+        originalAmount: '5000000',
+        maxPrice: '10000000',
+      });
+
+      await runtime.submitQuote(txId, quote);
+      const tx = await runtime.getTransaction(txId);
+      const stateEvent = tx!.events.find((e) => e.type === 'StateTransitioned');
+      expect(stateEvent).toBeDefined();
+      expect(stateEvent!.data).toMatchObject({ oldState: 'INITIATED', newState: 'QUOTED' });
+    });
+
+    it('rejects submitQuote when transaction does not exist', async () => {
+      const providerWallet = Wallet.createRandom();
+      const quote = await buildQuote({
+        txId: '0x' + 'f'.repeat(64),
+        providerWallet,
+        quotedAmount: '7000000',
+        originalAmount: '5000000',
+        maxPrice: '10000000',
+      });
+      await expect(
+        runtime.submitQuote('0x' + 'f'.repeat(64), quote),
+      ).rejects.toThrow(TransactionNotFoundError);
+    });
+
+    it('rejects submitQuote when transaction is not in INITIATED state', async () => {
+      // After linkEscrow the tx moves to COMMITTED. Quoting from there
+      // is a forbidden transition per the 8-state machine.
+      await runtime.mintTokens('0xRequester', '10000000');
+      const providerWallet = Wallet.createRandom();
+      const txId = await runtime.createTransaction(createTxParams({ amount: '5000000' }));
+      await runtime.linkEscrow(txId, '5000000'); // → COMMITTED
+
+      const quote = await buildQuote({
+        txId,
+        providerWallet,
+        quotedAmount: '7000000',
+        originalAmount: '5000000',
+        maxPrice: '10000000',
+      });
+      await expect(runtime.submitQuote(txId, quote)).rejects.toThrow(InvalidStateTransitionError);
+    });
+  });
 });

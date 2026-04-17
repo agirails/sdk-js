@@ -176,6 +176,22 @@ export {
   InMemoryDedupStore,
   buildChannelPath,
 } from './transport/QuoteChannel';
+
+// Provider-side negotiation (AIP-2.1 §5.2 Phase 2)
+export { ProviderOrchestrator } from './negotiation/ProviderOrchestrator';
+export { ProviderPolicyEngine } from './negotiation/ProviderPolicy';
+export type {
+  ProviderOrchestratorConfig,
+  QuoteDecision,
+  QuoteResult,
+  CounterDecision,
+} from './negotiation/ProviderOrchestrator';
+export type {
+  ProviderPolicy,
+  ProviderPolicyViolation,
+  ProviderPolicyResult,
+  IncomingRequest,
+} from './negotiation/ProviderPolicy';
 export type {
   ChannelPayload,
   DedupStore,

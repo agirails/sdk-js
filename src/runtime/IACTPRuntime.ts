@@ -12,6 +12,7 @@
  */
 
 import { MockTransaction, TransactionState } from './types/MockState';
+import type { QuoteMessage } from '../builders/QuoteBuilder';
 
 /**
  * Parameters for creating a new transaction.
@@ -139,6 +140,41 @@ export interface IACTPRuntime {
    * @param newAmount - New amount in USDC wei (string for BigNumber precision)
    */
   acceptQuote(txId: string, newAmount: string): Promise<void>;
+
+  /**
+   * Submit an AIP-2 price quote, transitioning INITIATED → QUOTED.
+   *
+   * Wraps `transitionState(txId, 'QUOTED', proof)` with a strict proof
+   * construction: the canonical keccak256 hash of the signed
+   * AIP-2 QuoteMessage, ABI-encoded as bytes32. That hash is what the
+   * on-chain contract stores in `txn.metadata` (ACTPKernel.sol:248) so
+   * any receiver can cross-reference the off-chain quote message with
+   * what was committed on-chain.
+   *
+   * AIP-2.1 makes this the single canonical entry point for reaching
+   * QUOTED — provider code should NOT call `transitionState(QUOTED, …)`
+   * with a hand-rolled proof. The builder hash is the only format the
+   * buyer-side verifier will accept (see AIP-2.1-DRAFT §3.5 Option D1
+   * and §3.6 for the legacy-hash migration plan).
+   *
+   * Preconditions: transaction exists, is in INITIATED state, caller is
+   * the transaction's provider.
+   *
+   * @param txId - Transaction ID (bytes32 hex)
+   * @param quote - Signed QuoteMessage. Callers must build + sign it
+   *                via QuoteBuilder before passing here; this method
+   *                never signs, only transitions.
+   *
+   * @throws {TransactionNotFoundError} If transaction doesn't exist
+   * @throws {InvalidStateTransitionError} If not in INITIATED state
+   *
+   * @example
+   * ```typescript
+   * const quote = await quoteBuilder.build({ … });
+   * await runtime.submitQuote(txId, quote);
+   * ```
+   */
+  submitQuote(txId: string, quote: QuoteMessage): Promise<void>;
 
   /**
    * Gets a transaction by ID.
