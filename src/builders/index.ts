@@ -15,3 +15,10 @@ export {
   QuoteMessage,
   AIP2QuoteTypes
 } from './QuoteBuilder';
+
+export {
+  CounterOfferBuilder,
+  CounterOfferParams,
+  CounterOfferMessage,
+  AIP21CounterOfferTypes
+} from './CounterOfferBuilder';

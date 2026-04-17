@@ -165,7 +165,25 @@ export { DIDResolver } from './protocol/DIDResolver';
 
 // Builders
 export { QuoteBuilder } from './builders/QuoteBuilder';
+export { CounterOfferBuilder } from './builders/CounterOfferBuilder';
+export type { CounterOfferMessage, CounterOfferParams } from './builders/CounterOfferBuilder';
 export { DeliveryProofBuilder } from './builders/DeliveryProofBuilder';
+
+// Transport (AIP-2.1 quote/counter-offer channel)
+export {
+  QuoteChannelClient,
+  QuoteChannelHandler,
+  InMemoryDedupStore,
+  buildChannelPath,
+} from './transport/QuoteChannel';
+export type {
+  ChannelPayload,
+  DedupStore,
+  HandlerContext,
+  HandlerResult,
+  QuoteChannelClientConfig,
+  QuoteChannelHandlerConfig,
+} from './transport/QuoteChannel';
 
 // Config
 export { getNetwork } from './config/networks';
