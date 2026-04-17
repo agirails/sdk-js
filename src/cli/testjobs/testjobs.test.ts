@@ -186,17 +186,22 @@ describe('renderReceipt', () => {
     jest.restoreAllMocks();
   });
 
-  test('human mode renders fee breakdown (Amount/Fee/Net)', () => {
+  test('human mode surfaces net amount in ceremonial receipt', () => {
     const output = new Output('human');
     const lines: string[] = [];
     jest.spyOn(console, 'log').mockImplementation((msg: string) => { lines.push(msg); });
 
     renderReceipt(receiptData, output);
 
-    const joined = lines.join('\n');
-    expect(joined).toMatch(/Amount\s+\$5\.00 USDC/);
-    expect(joined).toMatch(/Fee\s+\$0\.05 USDC/);
-    expect(joined).toMatch(/Net\s+\$4\.95 USDC/);
+    // Strip ANSI escape codes before asserting — the ceremonial receipt
+    // uses colors that otherwise break literal substring matches.
+    // eslint-disable-next-line no-control-regex
+    const stripAnsi = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, '');
+    const joined = stripAnsi(lines.join('\n'));
+    // Human receipt is ceremonial (not a fee breakdown table) — it shows
+    // net earnings + provenance. Fee breakdown lives in JSON mode.
+    expect(joined).toContain('earned $4.95 USDC');
+    expect(joined).toContain('SETTLED');
 
     jest.restoreAllMocks();
   });
