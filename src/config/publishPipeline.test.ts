@@ -524,11 +524,51 @@ describe('extractRegistrationParams — intent: pay short-circuit', () => {
     expect(result.serviceDescriptors).toHaveLength(1);
   });
 
-  test('preserves endpoint placeholder for pay-only', () => {
+  test('preserves endpoint placeholder for pay-only with no slug', () => {
     const result = extractRegistrationParams({
       intent: 'pay',
       servicesNeeded: ['translation'],
     });
+    // No slug = no profile URL to derive from = legacy sentinel
     expect(result.endpoint).toBe(PENDING_ENDPOINT);
+  });
+});
+
+// ============================================================================
+// Default discovery endpoint — slug-aware, replaces legacy sentinel
+// ============================================================================
+
+describe('extractRegistrationParams — default endpoint via slug', () => {
+  test('falls back to agirails.app profile URL when slug present and endpoint missing', () => {
+    const result = extractRegistrationParams({
+      slug: 'code-reviewer',
+      services: [{ type: 'code-review' }],
+    });
+    expect(result.endpoint).toBe('https://agirails.app/a/code-reviewer');
+  });
+
+  test('falls back to legacy sentinel when slug missing entirely', () => {
+    const result = extractRegistrationParams({
+      services: [{ type: 'code-review' }],
+    });
+    expect(result.endpoint).toBe(PENDING_ENDPOINT);
+  });
+
+  test('respects explicitly set endpoint over slug-derived default', () => {
+    const result = extractRegistrationParams({
+      slug: 'code-reviewer',
+      endpoint: 'https://my-agent.example.com/api',
+      services: [{ type: 'code-review' }],
+    });
+    expect(result.endpoint).toBe('https://my-agent.example.com/api');
+  });
+
+  test('pay-only also gets slug-derived default endpoint', () => {
+    const result = extractRegistrationParams({
+      slug: 'code-buyer',
+      intent: 'pay',
+      servicesNeeded: ['code-review'],
+    });
+    expect(result.endpoint).toBe('https://agirails.app/a/code-buyer');
   });
 });

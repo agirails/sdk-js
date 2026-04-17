@@ -22,7 +22,7 @@ import { resolve, join } from 'path';
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from 'fs';
 import * as readline from 'readline';
 import { computeConfigHash, serializeAgirailsMd, parseAgirailsMd } from '../../config/agirailsmd';
-import { preparePublish, extractRegistrationParams, PENDING_ENDPOINT } from '../../config/publishPipeline';
+import { preparePublish, extractRegistrationParams, PENDING_ENDPOINT, defaultDiscoveryEndpoint } from '../../config/publishPipeline';
 import { savePendingPublish, getActpDir } from '../../config/pendingPublish';
 import { addToGitignore, loadConfig, saveConfig, isInitialized, CLIConfig, CONFIG_DEFAULTS } from '../utils/config';
 import { ethers } from 'ethers';
@@ -469,37 +469,51 @@ async function runPublish(
 
     // ================================================================
     // ALWAYS activate on testnet (one command, both networks per SPEC)
+    //
+    // Pay-only short-circuit: AgentRegistry requires serviceDescriptors > 0
+    // and pay-only agents have none, so we skip on-chain registration
+    // entirely. Their identity is wallet + agirails.app DB record; no
+    // gas spent, no test USDC minted, no pending-publish files left.
     // ================================================================
     let testnetTxHash: string | undefined;
     let smartWalletAddress: string | undefined;
-    const activationSpinner = output.spinner('Activating on testnet...');
-    try {
-      const activationResult = await activateOnTestnet(
-        projectRoot, configHash, cid,
-        regParams.endpoint, regParams.serviceDescriptors, output,
-      );
-      activationSpinner.stop(true);
-      if (activationResult) {
-        testnetTxHash = activationResult.txHash;
-        smartWalletAddress = activationResult.smartWalletAddress;
-        output.success(`Testnet activation: ${testnetTxHash}`);
-      } else {
-        output.info('Testnet: already up-to-date.');
-      }
-    } catch (activationError) {
-      activationSpinner.stop(false);
-      // Save testnet pending as fallback — will activate on first testnet payment
-      savePendingPublish({ ...pendingData, network: 'base-sepolia' });
-      output.warning(
-        `Testnet activation failed: ${(activationError as Error).message}\n` +
-        '  Saved as pending — will activate on first testnet payment.'
-      );
-    }
+    const isPayOnly = v4Config?.intent === 'pay';
 
-    // Save mainnet pending (lazy — activates on first mainnet payment).
-    // This is intentional even when config mode is testnet: the agent may later
-    // switch to mainnet, and the pending file ensures activation happens automatically.
-    savePendingPublish({ ...pendingData, network: 'base-mainnet' });
+    if (isPayOnly) {
+      output.info(
+        'Pay-only agent: skipping on-chain registration. ' +
+          'Identity is your wallet + agirails.app profile.'
+      );
+    } else {
+      const activationSpinner = output.spinner('Activating on testnet...');
+      try {
+        const activationResult = await activateOnTestnet(
+          projectRoot, configHash, cid,
+          regParams.endpoint, regParams.serviceDescriptors, output,
+        );
+        activationSpinner.stop(true);
+        if (activationResult) {
+          testnetTxHash = activationResult.txHash;
+          smartWalletAddress = activationResult.smartWalletAddress;
+          output.success(`Testnet activation: ${testnetTxHash}`);
+        } else {
+          output.info('Testnet: already up-to-date.');
+        }
+      } catch (activationError) {
+        activationSpinner.stop(false);
+        // Save testnet pending as fallback — will activate on first testnet payment
+        savePendingPublish({ ...pendingData, network: 'base-sepolia' });
+        output.warning(
+          `Testnet activation failed: ${(activationError as Error).message}\n` +
+          '  Saved as pending — will activate on first testnet payment.'
+        );
+      }
+
+      // Save mainnet pending (lazy — activates on first mainnet payment).
+      // This is intentional even when config mode is testnet: the agent may later
+      // switch to mainnet, and the pending file ensures activation happens automatically.
+      savePendingPublish({ ...pendingData, network: 'base-mainnet' });
+    }
 
     // ================================================================
     // Write-back: wallet, agent_id, did into AGIRAILS.md frontmatter
@@ -722,13 +736,16 @@ async function runPublish(
     output.print('');
     output.print('Mainnet: on-chain activation will happen on your first payment.');
 
-    // Context-aware next steps
-    const hasEndpoint = frontmatter.endpoint && frontmatter.endpoint !== PENDING_ENDPOINT;
+    // Context-aware next steps. Endpoint is optional; when absent we
+    // send the agent's agirails.app profile URL on-chain as a default.
+    const customEndpoint = frontmatter.endpoint
+      && frontmatter.endpoint !== PENDING_ENDPOINT
+      && frontmatter.endpoint !== defaultDiscoveryEndpoint(v4Config?.slug);
     output.print('');
     output.print('Next steps:');
     output.print('  1. Check your balance:   actp balance');
     output.print('  2. Verify config match:  actp diff');
-    if (hasEndpoint) {
+    if (customEndpoint) {
       output.print('  3. Probe endpoint:       actp health');
     }
 
@@ -738,15 +755,21 @@ async function runPublish(
       output.print(`  Try a test payment: actp pay agirails.app/a/${v4Config.slug} 5`);
     }
 
-    // Inform about endpoint — it is OPTIONAL for ACTP (escrow + on-chain
-    // settlement work without HTTP). It is only required for x402 atomic
-    // HTTP payments or for public job-board discovery.
-    if (!hasEndpoint) {
+    // Inform about endpoint default — it is OPTIONAL. When unset, the
+    // on-chain endpoint defaults to the agent's profile URL on
+    // agirails.app, which is a real navigable page (vs the legacy
+    // pending.agirails.io 404). Set a custom endpoint only if you want
+    // x402 atomic HTTP payments or off-protocol job intake.
+    if (!customEndpoint && v4Config?.slug) {
       output.print('');
-      output.info('No endpoint set. ACTP escrow flows do not need one — requesters');
-      output.print('  pay your wallet directly via on-chain escrow. Set an endpoint only if');
-      output.print('  you want to (a) accept x402 instant HTTP payments, or (b) be discoverable');
-      output.print('  for public job-board polling. To add: edit "endpoint:" in AGIRAILS.md, then re-run actp publish.');
+      output.info(
+        `No custom endpoint set — using your profile URL as the discovery anchor: ` +
+          `${defaultDiscoveryEndpoint(v4Config.slug)}`
+      );
+      output.print(
+        '  Set a custom endpoint only if you want x402 instant HTTP payments or ' +
+          'off-protocol job intake (HTTPS webhook). Otherwise leave it as is.'
+      );
     }
   } catch (error) {
     spinner.stop(false);

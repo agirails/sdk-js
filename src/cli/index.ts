@@ -62,6 +62,7 @@ import { createFindCommand } from './commands/find';
 import { createNegotiateCommand } from './commands/negotiate';
 import { createAutopublishCommand } from './commands/autopublish';
 import { createHealthCommand } from './commands/health';
+import { createRepairCommand } from './commands/repair';
 
 // ============================================================================
 // Program Setup
@@ -138,6 +139,9 @@ program.addCommand(createAutopublishCommand());
 
 // Phase 3: Health check
 program.addCommand(createHealthCommand());
+
+// On-chain shape repair (drop phantom services, update endpoint, toggle flags)
+program.addCommand(createRepairCommand());
 
 // ============================================================================
 // Error Handling

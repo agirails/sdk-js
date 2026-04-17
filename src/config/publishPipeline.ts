@@ -67,7 +67,29 @@ export interface PublishResult {
 // Registration Helpers
 // ============================================================================
 
+/**
+ * @deprecated Use `defaultDiscoveryEndpoint(slug)` instead. Kept for
+ * backward compatibility with code that compares against this exact
+ * sentinel — new agents should never see this URL because we now
+ * default to the agent's agirails.app profile when no endpoint is set.
+ */
 export const PENDING_ENDPOINT = 'https://pending.agirails.io';
+
+const AGIRAILS_PROFILE_BASE = 'https://agirails.app/a';
+
+/**
+ * Default discovery endpoint when the owner doesn't set one.
+ *
+ * Spec: endpoint is OPTIONAL. AgentRegistry.registerAgent requires a
+ * non-empty string at the contract level (kernel guard), so we send
+ * the agent's public profile URL as a meaningful default — anyone
+ * resolving the endpoint can navigate to the agent's page and learn
+ * how to interact off-protocol. Beats `pending.agirails.io` (404).
+ */
+export function defaultDiscoveryEndpoint(slug: string | undefined): string {
+  if (!slug) return PENDING_ENDPOINT;
+  return `${AGIRAILS_PROFILE_BASE}/${slug}`;
+}
 
 /** Default values for capabilities-to-services conversion */
 const SERVICE_DEFAULTS = {
@@ -119,6 +141,9 @@ function usdcToBaseUnits(value: number, fieldName: string): bigint {
 export function extractRegistrationParams(
   frontmatter: Record<string, unknown>
 ): { endpoint: string; serviceDescriptors: ServiceDescriptor[] } {
+  const slug = typeof frontmatter.slug === 'string' ? frontmatter.slug : undefined;
+  const fallbackEndpoint = defaultDiscoveryEndpoint(slug);
+
   // Pay-only short-circuit: never register as provider on-chain.
   const intent = typeof frontmatter.intent === 'string'
     ? frontmatter.intent.toLowerCase()
@@ -126,7 +151,7 @@ export function extractRegistrationParams(
   if (intent === 'pay') {
     const endpoint = typeof frontmatter.endpoint === 'string' && frontmatter.endpoint
       ? frontmatter.endpoint
-      : PENDING_ENDPOINT;
+      : fallbackEndpoint;
     return { endpoint, serviceDescriptors: [] };
   }
 
@@ -135,10 +160,11 @@ export function extractRegistrationParams(
     frontmatter = { ...frontmatter, capabilities: frontmatter.serviceTypes };
   }
 
-  // Endpoint: use frontmatter field or placeholder
+  // Endpoint: use frontmatter field or default to the agent's profile URL
+  // (slug-derived). Beats the legacy `pending.agirails.io` sentinel.
   const endpoint = typeof frontmatter.endpoint === 'string' && frontmatter.endpoint
     ? frontmatter.endpoint
-    : PENDING_ENDPOINT;
+    : fallbackEndpoint;
 
   // Try explicit services first
   if (Array.isArray(frontmatter.services) && frontmatter.services.length > 0) {
@@ -341,22 +367,37 @@ export async function publishAgirailsMd(options: PublishOptions): Promise<Publis
     arweaveTxId = arweaveResult.txId;
   }
 
-  // Step 4: Auto-register if needed, then publish on-chain
-  const registry = new AgentRegistry(registryAddress, signer, gasSettings);
-  const registryClient = new AgentRegistryClient(registryAddress, signer, gasSettings);
+  // Step 4: Auto-register if needed, then publish on-chain.
+  //
+  // Pay-only short-circuit: AgentRegistry.registerAgent requires
+  // serviceDescriptors > 0 (contract guard), so a buyer-only agent
+  // cannot be on-chain at all under the current kernel. We skip both
+  // registerAgent and publishConfig — pay-only identity lives off-chain
+  // (wallet + agirails.app DB record). IPFS upload above already gave
+  // them a content-addressed config; that's enough.
+  const intent = typeof frontmatter.intent === 'string'
+    ? frontmatter.intent.toLowerCase()
+    : 'earn';
   let registered = false;
+  let txHash: string | undefined;
 
-  const signerAddress = await signer.getAddress();
-  const profile = await registry.getAgent(signerAddress);
+  if (intent !== 'pay') {
+    const registry = new AgentRegistry(registryAddress, signer, gasSettings);
+    const registryClient = new AgentRegistryClient(registryAddress, signer, gasSettings);
 
-  if (!profile) {
-    // Not registered — extract params from frontmatter and auto-register
-    const regParams = extractRegistrationParams(frontmatter);
-    await registry.registerAgent(regParams);
-    registered = true;
+    const signerAddress = await signer.getAddress();
+    const profile = await registry.getAgent(signerAddress);
+
+    if (!profile) {
+      // Not registered — extract params from frontmatter and auto-register
+      const regParams = extractRegistrationParams(frontmatter);
+      await registry.registerAgent(regParams);
+      registered = true;
+    }
+
+    const result = await registryClient.publishConfig(cid, configHash);
+    txHash = result.txHash;
   }
-
-  const { txHash } = await registryClient.publishConfig(cid, configHash);
 
   // Step 5: Update frontmatter with publish metadata
   const updatedFrontmatter = {

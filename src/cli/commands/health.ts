@@ -112,22 +112,26 @@ async function runHealth(
   }
 
   // ── Check 2: Endpoint set and not placeholder ───────────────────────
-  // Endpoint is OPTIONAL for ACTP (escrow + on-chain settlement work
-  // without HTTP). It is only required for x402 atomic HTTP payments or
-  // public job-board polling. Treat missing endpoint as "skip" — not fatal.
+  // Endpoint is OPTIONAL. When absent, the SDK uses the agent's
+  // agirails.app profile URL as a discovery default — that's a real
+  // navigable page, not something to "probe" with HEAD. So missing /
+  // default endpoint is "skip" (warn-level), only a custom HTTPS
+  // endpoint triggers reachability probes below.
   if (!fatal) {
-    const { PENDING_ENDPOINT } = await import('../../config/publishPipeline');
+    const { PENDING_ENDPOINT, defaultDiscoveryEndpoint } = await import('../../config/publishPipeline');
+    const slug = (frontmatter.slug as string | undefined) || undefined;
+    const defaultEp = defaultDiscoveryEndpoint(slug);
     const endpoint = frontmatter.endpoint as string | undefined;
-    if (!endpoint || endpoint === PENDING_ENDPOINT) {
+    const isDefaultOrMissing = !endpoint || endpoint === PENDING_ENDPOINT || endpoint === defaultEp;
+    if (isDefaultOrMissing) {
       checks.push({
         name: 'Endpoint',
         status: 'warn',
-        detail: 'Not set — ACTP works without it; only needed for x402 or public job-board discovery',
+        detail: endpoint === defaultEp
+          ? `Default discovery URL (${defaultEp}) — set a custom HTTPS endpoint only for x402 or off-protocol intake`
+          : 'Not set — ACTP works without it; only needed for x402 or public job-board discovery',
       });
       // Skip remaining endpoint probes but do not block subsequent checks.
-      // The rest of `runHealthChecks` reads frontmatter.endpoint and is
-      // already wrapped in `if (!fatal)`; we leave it in place but flip a
-      // local flag so endpoint-specific probes are skipped cleanly.
       frontmatter.endpoint = undefined;
     } else {
       checks.push({ name: 'Endpoint', status: 'pass', detail: endpoint });
