@@ -242,14 +242,32 @@ describe('CounterOfferBuilder', () => {
       await expect(builder.verify(tampered, KERNEL_ADDRESS)).rejects.toThrow('expired');
     });
 
-    it('rejects a message whose counteredAt is too old (skew check)', async () => {
+    it('accepts an old counteredAt as long as expiresAt has not passed', async () => {
+      // Long-TTL quotes/counters (15-30 min) are normal in real
+      // negotiations. Rejecting on a past counteredAt would break them.
+      // Only future-dated skew is rejected; past is bounded by expiresAt.
+      const msg = await builder.build(baseParams());
+      const now = Math.floor(Date.now() / 1000);
+      const tampered = await reSign(
+        wallet,
+        {
+          ...msg,
+          counteredAt: msg.counteredAt - 600, // 10 min ago
+          expiresAt: now + 600,                // still valid for 10 min
+        },
+        KERNEL_ADDRESS,
+      );
+      await expect(builder.verify(tampered, KERNEL_ADDRESS)).resolves.toBe(true);
+    });
+
+    it('rejects a message whose counteredAt is claimed in the future', async () => {
       const msg = await builder.build(baseParams());
       const tampered = await reSign(
         wallet,
-        { ...msg, counteredAt: msg.counteredAt - 600 },
+        { ...msg, counteredAt: msg.counteredAt + 600 },
         KERNEL_ADDRESS,
       );
-      await expect(builder.verify(tampered, KERNEL_ADDRESS)).rejects.toThrow('5-minute tolerance');
+      await expect(builder.verify(tampered, KERNEL_ADDRESS)).rejects.toThrow('future');
     });
 
     it('rejects a counter that is not actually a counter (>= quote)', async () => {

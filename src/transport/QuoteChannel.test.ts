@@ -14,6 +14,7 @@ import {
   QuoteChannelHandler,
   InMemoryDedupStore,
   buildChannelPath,
+  assertSafePeerUrl,
 } from './QuoteChannel';
 import { QuoteBuilder, QuoteMessage } from '../builders/QuoteBuilder';
 import { CounterOfferBuilder, CounterOfferMessage } from '../builders/CounterOfferBuilder';
@@ -71,33 +72,85 @@ describe('buildChannelPath', () => {
   });
 });
 
+describe('assertSafePeerUrl', () => {
+  it('accepts well-formed https:// public URLs', () => {
+    expect(() => assertSafePeerUrl('https://provider.example.com/agent/quote-channel/84532/0x', false)).not.toThrow();
+    expect(() => assertSafePeerUrl('https://93.184.216.34', false)).not.toThrow(); // example.com IP
+  });
+
+  it('rejects malformed URLs', () => {
+    expect(() => assertSafePeerUrl('not a url', false)).toThrow(/Invalid peer URL/);
+  });
+
+  it('bypasses all checks when allowInsecureTargets=true', () => {
+    expect(() => assertSafePeerUrl('http://localhost:3000', true)).not.toThrow();
+    expect(() => assertSafePeerUrl('https://169.254.169.254', true)).not.toThrow();
+  });
+
+  it('rejects IPv6 loopback ::1', () => {
+    expect(() => assertSafePeerUrl('https://[::1]:8080', false)).toThrow(/loopback/);
+  });
+
+  it('rejects IPv6 link-local fe80::', () => {
+    expect(() => assertSafePeerUrl('https://[fe80::1]:8080', false)).toThrow(/link-local/);
+  });
+
+  it('rejects IPv6 ULA fc00::/7', () => {
+    expect(() => assertSafePeerUrl('https://[fc00::1]:8080', false)).toThrow(/ULA/);
+    expect(() => assertSafePeerUrl('https://[fd12:3456::1]:8080', false)).toThrow(/ULA/);
+  });
+
+  it('rejects subdomain of localhost (e.g. foo.localhost)', () => {
+    expect(() => assertSafePeerUrl('https://attacker.localhost:8080', false)).toThrow(/localhost/);
+  });
+});
+
 // ============================================================================
 // InMemoryDedupStore
 // ============================================================================
 
 describe('InMemoryDedupStore', () => {
-  it('returns fresh on first check, duplicate on second', async () => {
+  it('returns recorded on first call, duplicate on second', async () => {
     const store = new InMemoryDedupStore();
-    expect(await store.check('k1')).toBe('fresh');
-    await store.record('k1', 60_000);
-    expect(await store.check('k1')).toBe('duplicate');
+    expect(await store.recordOnce('k1', 60_000)).toBe('recorded');
+    expect(await store.recordOnce('k1', 60_000)).toBe('duplicate');
   });
 
-  it('expires after TTL', async () => {
+  it('expires after TTL — expired key accepts a fresh record', async () => {
     const store = new InMemoryDedupStore();
-    await store.record('k1', 1); // 1ms TTL
+    await store.recordOnce('k1', 1); // 1ms TTL
     await new Promise((r) => setTimeout(r, 10));
-    expect(await store.check('k1')).toBe('fresh');
+    expect(await store.recordOnce('k1', 60_000)).toBe('recorded');
   });
 
   it('bounds map size — oldest entries evicted past maxSize', async () => {
+    // Strict invariant: size ≤ maxSize at all times. After 4 records
+    // with maxSize=3, exactly one key is gone — and it's the
+    // earliest-inserted one. The survivors behave as duplicates on
+    // re-record; the evicted one gets recorded fresh.
     const store = new InMemoryDedupStore(3);
-    await store.record('a', 60_000);
-    await store.record('b', 60_000);
-    await store.record('c', 60_000);
-    await store.record('d', 60_000); // pushes 'a' out
-    expect(await store.check('a')).toBe('fresh');
-    expect(await store.check('b')).toBe('duplicate');
+    await store.recordOnce('a', 60_000);
+    await store.recordOnce('b', 60_000);
+    await store.recordOnce('c', 60_000);
+    await store.recordOnce('d', 60_000); // pushes 'a' out
+
+    expect(await store.recordOnce('a', 60_000)).toBe('recorded'); // a was evicted
+    expect(await store.recordOnce('c', 60_000)).toBe('duplicate'); // c still there
+    expect(await store.recordOnce('d', 60_000)).toBe('duplicate'); // d still there
+  });
+
+  it('atomic: many concurrent recordOnce for same key yield exactly one recorded', async () => {
+    // Single-threaded JS event loop makes this trivially atomic in-memory.
+    // The test is here to lock in the *contract* for future backends (Redis,
+    // etc.) — whatever implementation is wired in must preserve this property.
+    const store = new InMemoryDedupStore();
+    const results = await Promise.all(
+      Array.from({ length: 100 }, () => store.recordOnce('race', 60_000)),
+    );
+    const recorded = results.filter((r) => r === 'recorded').length;
+    const duplicate = results.filter((r) => r === 'duplicate').length;
+    expect(recorded).toBe(1);
+    expect(duplicate).toBe(99);
   });
 });
 
@@ -315,6 +368,63 @@ describe('QuoteChannelClient', () => {
     const client = new QuoteChannelClient({ fetchImpl: fakeFetch as typeof fetch, timeoutMs: 50 });
 
     await expect(client.sendQuote('https://provider.example.com', quote)).rejects.toThrow();
+  });
+
+  it('rejects http:// peer endpoints by default (SSRF guard)', async () => {
+    const quote = await buildQuote(providerWallet);
+    const client = new QuoteChannelClient({
+      fetchImpl: (() => { throw new Error('fetch should not be called'); }) as unknown as typeof fetch,
+    });
+    await expect(client.sendQuote('http://provider.example.com', quote)).rejects.toThrow(
+      /https:\/\//,
+    );
+  });
+
+  it('allows http:// when allowInsecureTargets is explicitly set (dev mode)', async () => {
+    const quote = await buildQuote(providerWallet);
+    const fakeFetch = async (): Promise<Response> => new Response('{}', { status: 201 });
+    const client = new QuoteChannelClient({
+      fetchImpl: fakeFetch as typeof fetch,
+      allowInsecureTargets: true,
+    });
+    await expect(
+      client.sendQuote('http://localhost:3000', quote),
+    ).resolves.toBeUndefined();
+  });
+
+  it('rejects localhost even over https:// by default', async () => {
+    const quote = await buildQuote(providerWallet);
+    const client = new QuoteChannelClient({
+      fetchImpl: (() => { throw new Error('no fetch'); }) as unknown as typeof fetch,
+    });
+    await expect(client.sendQuote('https://localhost:8443', quote)).rejects.toThrow(/localhost/);
+  });
+
+  it('rejects cloud metadata / link-local IP', async () => {
+    const quote = await buildQuote(providerWallet);
+    const client = new QuoteChannelClient({
+      fetchImpl: (() => { throw new Error('no fetch'); }) as unknown as typeof fetch,
+    });
+    await expect(client.sendQuote('https://169.254.169.254', quote)).rejects.toThrow(
+      /link-local|cloud-metadata/,
+    );
+  });
+
+  it('rejects RFC1918 private IP (10.x / 172.16-31.x / 192.168.x)', async () => {
+    const quote = await buildQuote(providerWallet);
+    const client = new QuoteChannelClient({
+      fetchImpl: (() => { throw new Error('no fetch'); }) as unknown as typeof fetch,
+    });
+    await expect(client.sendQuote('https://10.0.0.5', quote)).rejects.toThrow(/RFC1918/);
+    await expect(client.sendQuote('https://192.168.1.1', quote)).rejects.toThrow(/RFC1918/);
+    await expect(client.sendQuote('https://172.20.0.5', quote)).rejects.toThrow(/RFC1918/);
+  });
+
+  it('does NOT reject public IP ranges like 172.15.x (outside RFC1918 172.16-31)', async () => {
+    const quote = await buildQuote(providerWallet);
+    const fakeFetch = async (): Promise<Response> => new Response('{}', { status: 201 });
+    const client = new QuoteChannelClient({ fetchImpl: fakeFetch as typeof fetch });
+    await expect(client.sendQuote('https://172.15.0.1', quote)).resolves.toBeUndefined();
   });
 
   it('sendCounter posts to the same path shape using counter.chainId/txId', async () => {

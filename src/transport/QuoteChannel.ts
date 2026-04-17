@@ -61,15 +61,36 @@ export type ChannelPayload =
 // ============================================================================
 
 export interface DedupStore {
-  /** Return 'duplicate' if key was seen within TTL; 'fresh' otherwise. */
-  check(key: string): Promise<'fresh' | 'duplicate'>;
-  /** Record a fresh key with TTL (ms). Idempotent. */
-  record(key: string, ttlMs: number): Promise<void>;
+  /**
+   * Atomic "record if absent". Returns:
+   *   'recorded' — the key was not present (or had expired) and has now
+   *                been recorded with the given TTL. Caller treats this
+   *                POST as fresh and performs side effects.
+   *   'duplicate' — the key was already present and unexpired. Caller
+   *                 must return an idempotent cached response without
+   *                 performing side effects.
+   *
+   * MUST be atomic at the backend level. Single-process JS gets this
+   * trivially (no real concurrency); Redis implementations use
+   * `SET key 1 NX PX ttlMs` which is natively atomic and correctly
+   * handles multiple concurrent workers competing on the same key.
+   *
+   * Separate check+record would open a TOCTOU window where two
+   * workers both observe 'fresh' and both commit — that's the P2
+   * audit finding this interface closes.
+   */
+  recordOnce(key: string, ttlMs: number): Promise<'recorded' | 'duplicate'>;
 }
 
 /**
  * Single-process in-memory LRU. Callers replace this in production
- * with Redis or whatever distributed store they prefer.
+ * with a distributed store (Redis SET NX EX, DynamoDB conditional put,
+ * Postgres INSERT ... ON CONFLICT DO NOTHING, etc).
+ *
+ * Atomicity here is free because JavaScript event-loop execution is
+ * single-threaded — a `recordOnce` call cannot be interrupted mid-way.
+ * Multi-worker deployments MUST use a real distributed store or will
+ * see duplicate 'recorded' returns across workers.
  */
 export class InMemoryDedupStore implements DedupStore {
   private readonly entries: Map<string, number> = new Map(); // key → expires_at_ms
@@ -79,29 +100,32 @@ export class InMemoryDedupStore implements DedupStore {
     this.maxSize = maxSize;
   }
 
-  async check(key: string): Promise<'fresh' | 'duplicate'> {
-    this.evict();
+  async recordOnce(key: string, ttlMs: number): Promise<'recorded' | 'duplicate'> {
+    this.dropExpired();
+    const now = Date.now();
     const exp = this.entries.get(key);
-    if (!exp) return 'fresh';
-    if (exp <= Date.now()) {
-      this.entries.delete(key);
-      return 'fresh';
+    if (exp !== undefined && exp > now) {
+      return 'duplicate';
     }
-    return 'duplicate';
+    // Atomic in single-threaded JS — the check above and this set happen
+    // without any await in between, so no other task can interleave.
+    this.entries.set(key, now + ttlMs);
+    // Trim AFTER the set so `size <= maxSize` is an invariant. Trimming
+    // before the set would still leave the map at maxSize+1 after set.
+    this.trimToSize();
+    return 'recorded';
   }
 
-  async record(key: string, ttlMs: number): Promise<void> {
-    this.evict();
-    this.entries.set(key, Date.now() + ttlMs);
-  }
-
-  /** Remove expired + bound the map size. */
-  private evict(): void {
+  /** Drop entries whose TTL has elapsed. O(n) — fine for our sizes. */
+  private dropExpired(): void {
     const now = Date.now();
     for (const [k, exp] of this.entries) {
       if (exp <= now) this.entries.delete(k);
     }
-    // Bound on size (approximate LRU by insertion order — Map preserves it).
+  }
+
+  /** Bound the map at `maxSize` by evicting oldest-inserted keys. */
+  private trimToSize(): void {
     while (this.entries.size > this.maxSize) {
       const firstKey = this.entries.keys().next().value;
       if (firstKey === undefined) break;
@@ -119,15 +143,28 @@ export interface QuoteChannelClientConfig {
   timeoutMs?: number;
   /** Override fetch for tests. Defaults to global fetch. */
   fetchImpl?: typeof fetch;
+  /**
+   * Allow insecure targets (http://, localhost, RFC1918, link-local).
+   * Default false (production hardening). Set to true ONLY for local
+   * dev or integration tests running against a mock server.
+   *
+   * Note: this is a URL-string check only. DNS rebinding can still bypass
+   * it — production deployments that are extra paranoid should put the
+   * client behind an HTTP proxy that enforces the same rules against the
+   * resolved IP at request time.
+   */
+  allowInsecureTargets?: boolean;
 }
 
 export class QuoteChannelClient {
   private readonly timeoutMs: number;
   private readonly fetchImpl: typeof fetch;
+  private readonly allowInsecureTargets: boolean;
 
   constructor(cfg: QuoteChannelClientConfig = {}) {
     this.timeoutMs = cfg.timeoutMs ?? 10_000;
     this.fetchImpl = cfg.fetchImpl ?? fetch;
+    this.allowInsecureTargets = cfg.allowInsecureTargets ?? false;
   }
 
   /** POST a provider quote to the buyer's endpoint. */
@@ -153,6 +190,14 @@ export class QuoteChannelClient {
     payload: ChannelPayload,
   ): Promise<void> {
     const url = `${stripTrailingSlash(peerEndpoint)}${buildChannelPath(chainId, txId)}`;
+
+    // SSRF guard. Peer endpoints come from on-chain AgentRegistry / the
+    // agirails.app DB — both technically writable by an adversary. A
+    // malicious endpoint pointing at http://169.254.169.254/ (AWS metadata),
+    // http://localhost:8080 (internal service), or http://10.x.x.x (RFC1918
+    // internal) would have the client leak signed payloads inside the
+    // deployer's infrastructure. Fail fast in `new URL()` + string checks.
+    assertSafePeerUrl(url, this.allowInsecureTargets);
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
@@ -293,16 +338,18 @@ export class QuoteChannelHandler {
 
     // 6. Dedup via nonce LRU. Key is (type, signerDID, nonce) — uniquely
     // identifies a signed message within its issuing agent's nonce space.
+    // Single atomic recordOnce() call (not check-then-record) so concurrent
+    // workers competing on the same key see exactly one 'recorded'; the
+    // rest see 'duplicate' and return the idempotent cached response.
     const signerDID = payload.type === 'agirails.quote.v1'
       ? payload.message.provider
       : payload.message.consumer;
     const dedupKey = `${payload.type}:${signerDID}:${payload.message.nonce}`;
 
-    const check = await this.dedupStore.check(dedupKey);
-    if (check === 'duplicate') {
+    const outcome = await this.dedupStore.recordOnce(dedupKey, DEDUP_TTL_SECONDS * 1000);
+    if (outcome === 'duplicate') {
       return { status: 200, body: { accepted: true, duplicate: true } };
     }
-    await this.dedupStore.record(dedupKey, DEDUP_TTL_SECONDS * 1000);
 
     return { status: 201, body: { accepted: true, duplicate: false } };
   }
@@ -314,6 +361,92 @@ export class QuoteChannelHandler {
 
 function stripTrailingSlash(url: string): string {
   return url.endsWith('/') ? url.slice(0, -1) : url;
+}
+
+/**
+ * Reject peer URLs that could SSRF into local / internal infrastructure.
+ *
+ * Rules (default, `allowInsecureTargets=false`):
+ *   - scheme MUST be https
+ *   - hostname MUST NOT be `localhost`
+ *   - hostname MUST NOT be a literal loopback IP (127.x.x.x, ::1)
+ *   - hostname MUST NOT be a literal link-local IP (169.254.x.x, fe80::/10)
+ *     — this also covers AWS metadata at 169.254.169.254
+ *   - hostname MUST NOT be a literal RFC1918 private IP (10.x, 172.16-31.x,
+ *     192.168.x) or IPv6 ULA (fc00::/7)
+ *
+ * Dev mode (`allowInsecureTargets=true`): no restrictions, callers
+ * opting in are responsible for their own network security.
+ *
+ * @throws Error if the URL fails the checks. Error message is deliberately
+ *   specific so test fixtures and diagnostics can assert on it.
+ * @internal Exported for unit tests.
+ */
+export function assertSafePeerUrl(url: string, allowInsecureTargets: boolean): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error(`Invalid peer URL: ${url}`);
+  }
+
+  if (allowInsecureTargets) return;
+
+  if (parsed.protocol !== 'https:') {
+    throw new Error(
+      `Peer URL must use https:// (got ${parsed.protocol}//). ` +
+        `Set allowInsecureTargets=true on the QuoteChannelClient for dev/test only.`,
+    );
+  }
+
+  // Node's URL() keeps brackets around IPv6 hosts. Strip them so the
+  // downstream string checks work uniformly for IPv4 and IPv6 literals.
+  const rawHost = parsed.hostname.toLowerCase();
+  const host = rawHost.startsWith('[') && rawHost.endsWith(']')
+    ? rawHost.slice(1, -1)
+    : rawHost;
+
+  if (host === 'localhost' || host.endsWith('.localhost')) {
+    throw new Error(`Peer URL points at localhost (${host}) — refusing (SSRF guard)`);
+  }
+
+  // IPv4 literals
+  const ipv4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (ipv4) {
+    const [, a, b] = ipv4.map(Number) as unknown as [string, number, number, number, number];
+    if (a === 127) {
+      throw new Error(`Peer URL points at loopback IP (${host}) — refusing (SSRF guard)`);
+    }
+    if (a === 169 && b === 254) {
+      throw new Error(
+        `Peer URL points at link-local / cloud-metadata IP (${host}) — refusing (SSRF guard)`,
+      );
+    }
+    if (a === 10) {
+      throw new Error(`Peer URL points at RFC1918 10.x.x.x (${host}) — refusing (SSRF guard)`);
+    }
+    if (a === 192 && b === 168) {
+      throw new Error(`Peer URL points at RFC1918 192.168.x.x (${host}) — refusing (SSRF guard)`);
+    }
+    if (a === 172 && b >= 16 && b <= 31) {
+      throw new Error(`Peer URL points at RFC1918 172.16-31.x (${host}) — refusing (SSRF guard)`);
+    }
+  }
+
+  // IPv6 literals — URL() wraps with brackets; the hostname getter strips them.
+  if (host === '::1') {
+    throw new Error(`Peer URL points at IPv6 loopback (${host}) — refusing (SSRF guard)`);
+  }
+  if (host.startsWith('fe80:') || host.startsWith('fe80::')) {
+    throw new Error(`Peer URL points at IPv6 link-local (${host}) — refusing (SSRF guard)`);
+  }
+  // IPv6 ULA fc00::/7 → high byte starts with 0xfc or 0xfd.
+  if (host.startsWith('fc') || host.startsWith('fd')) {
+    // Narrow to the fc00::/7 pattern: fc?? or fd?? as the first group.
+    if (/^(fc|fd)[0-9a-f]{0,2}:/.test(host)) {
+      throw new Error(`Peer URL points at IPv6 ULA (${host}) — refusing (SSRF guard)`);
+    }
+  }
 }
 
 function isChannelPayload(x: unknown): x is ChannelPayload {

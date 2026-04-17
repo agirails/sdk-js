@@ -198,9 +198,14 @@ export class QuoteBuilder {
       throw new Error('Quote expired');
     }
 
-    // 5. Timestamp freshness check
-    if (Math.abs(now - quote.quotedAt) > 300) {
-      throw new Error('Quote timestamp outside 5-minute tolerance');
+    // 5. Timestamp freshness — one-sided: the signed `quotedAt` must not
+    // claim a time in the future beyond clock-skew tolerance. "Too old"
+    // is bounded by `expiresAt` (checked above); rejecting on past
+    // timestamps breaks any negotiation where the buyer takes longer
+    // than 5 min to inspect a 15-minute quote. AIP-2 §2.2.1 only
+    // specifies the future side ("Must be ≤ current time + 300s").
+    if (quote.quotedAt > now + 300) {
+      throw new Error('Quote timestamp is in the future beyond skew tolerance');
     }
 
     return true;

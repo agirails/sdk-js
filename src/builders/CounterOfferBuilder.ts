@@ -223,8 +223,13 @@ export class CounterOfferBuilder {
     if (message.expiresAt < now) {
       throw new Error('Counter-offer expired');
     }
-    if (Math.abs(now - message.counteredAt) > TIMESTAMP_GRACE_SECONDS) {
-      throw new Error('counteredAt outside 5-minute tolerance');
+    // One-sided skew — only reject timestamps claiming the future.
+    // The "too old" side is bounded by expiresAt (checked above).
+    // Mirrors QuoteBuilder post-audit behavior so long-TTL counters
+    // (15-30 min, common in real negotiation) don't get rejected
+    // just because the buyer paused 6 minutes to decide.
+    if (message.counteredAt > now + TIMESTAMP_GRACE_SECONDS) {
+      throw new Error('counteredAt is in the future beyond skew tolerance');
     }
 
     return true;
