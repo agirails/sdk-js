@@ -71,14 +71,14 @@ describe('ProviderPolicyEngine', () => {
       const engine = new ProviderPolicyEngine(basePolicy());
       const r = engine.evaluate(req({ maxPrice: '15000000' })); // $15
       expect(r.allowed).toBe(true);
-      expect(r.recommended_quote_amount).toBe(10); // ideal
+      expect(r.recommended_quote_amount_base_units).toBe('10000000'); // $10 ideal in base units
     });
 
     it('quotes at maxPrice when it falls between floor and ideal', () => {
       const engine = new ProviderPolicyEngine(basePolicy());
       const r = engine.evaluate(req({ maxPrice: '7000000' })); // $7
       expect(r.allowed).toBe(true);
-      expect(r.recommended_quote_amount).toBe(7);
+      expect(r.recommended_quote_amount_base_units).toBe('7000000');
     });
 
     it('skips requests for services we don\'t offer', () => {
@@ -110,6 +110,16 @@ describe('ProviderPolicyEngine', () => {
       expect(r.violations.some((v) => v.rule === 'currency_mismatch')).toBe(true);
     });
 
+    it('skips on unit mismatch (hour vs job)', () => {
+      // Regression for the P1 audit finding: policy is per-job, buyer
+      // request is per-hour. Engine must reject to avoid accidentally
+      // quoting $5 for 8 hours when policy meant $5 per job.
+      const engine = new ProviderPolicyEngine(basePolicy());
+      const r = engine.evaluate(req({ unit: 'hour' }));
+      expect(r.allowed).toBe(false);
+      expect(r.violations.some((v) => v.rule === 'unit_mismatch')).toBe(true);
+    });
+
     it('accumulates multiple violations in one pass', () => {
       const engine = new ProviderPolicyEngine(basePolicy());
       const r = engine.evaluate(req({
@@ -120,6 +130,22 @@ describe('ProviderPolicyEngine', () => {
       const rules = r.violations.map((v) => v.rule);
       expect(rules).toContain('service_not_offered');
       expect(rules).toContain('max_price_below_floor');
+    });
+
+    it('handles very large amounts without float precision drift', () => {
+      // maxPrice well beyond Number.MAX_SAFE_INTEGER when expressed in
+      // base units — the earlier Number(BigInt)/1e6 dance would lose
+      // digits here. Engine must keep the comparison exact.
+      const engine = new ProviderPolicyEngine(basePolicy({
+        pricing: {
+          min_acceptable: { amount: 1_000_000, currency: 'USDC', unit: 'job' },
+          ideal_price: { amount: 10_000_000, currency: 'USDC', unit: 'job' },
+        },
+      }));
+      // $20,000,000 in base units = 20_000_000_000_000n (> 2^53).
+      const r = engine.evaluate(req({ maxPrice: '20000000000000' }));
+      expect(r.allowed).toBe(true);
+      expect(r.recommended_quote_amount_base_units).toBe('10000000000000'); // $10M ideal
     });
   });
 

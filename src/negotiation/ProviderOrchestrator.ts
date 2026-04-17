@@ -55,7 +55,12 @@ export interface ProviderOrchestratorConfig {
 }
 
 export type QuoteDecision =
-  | { action: 'quote'; amount: number; reason: string }
+  | {
+      action: 'quote';
+      /** Quote amount in base units (bigint-as-string) to avoid float drift. */
+      amountBaseUnits: string;
+      reason: string;
+    }
   | { action: 'skip'; reason: string; violations: ReadonlyArray<{ rule: string; detail: string }> };
 
 export interface QuoteResult {
@@ -116,8 +121,8 @@ export class ProviderOrchestrator {
     }
     return {
       action: 'quote',
-      amount: result.recommended_quote_amount!,
-      reason: `Policy passed; recommended quote $${result.recommended_quote_amount}`,
+      amountBaseUnits: result.recommended_quote_amount_base_units!,
+      reason: `Policy passed; recommended quote ${result.recommended_quote_amount_base_units} base units`,
     };
   }
 
@@ -141,18 +146,23 @@ export class ProviderOrchestrator {
       return { decision };
     }
 
-    // Build + sign QuoteMessage.
-    const quotedAmountBaseUnits = BigInt(Math.round(decision.amount * 1_000_000)).toString();
+    // Build + sign QuoteMessage. Amount stays in base units throughout
+    // (no float round-trip). Currency / decimals come from policy —
+    // hardcoding would silently mask a config drift if we ever support
+    // non-USDC tokens. QuoteBuilder validates USDC/6 today; other
+    // currencies will throw there until the builder grows support.
     const now = Math.floor(Date.now() / 1000);
+    const currency = this.policyEngine.policyCurrency;
+    const decimals = currency.toUpperCase() === 'USDC' ? 6 : 6; // placeholder for future currencies
     const quote = await this.quoteBuilder.build({
       txId: req.txId,
       provider: providerDID,
       consumer: req.consumer,
-      quotedAmount: quotedAmountBaseUnits,
+      quotedAmount: decision.amountBaseUnits,
       originalAmount: req.offeredAmount,
       maxPrice: req.maxPrice,
-      currency: 'USDC',
-      decimals: 6,
+      currency,
+      decimals,
       expiresAt: now + this.policyEngine.quoteTtlSeconds,
       chainId: this.chainId,
       kernelAddress: this.kernelAddress,

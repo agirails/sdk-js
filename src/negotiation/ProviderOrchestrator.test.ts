@@ -102,7 +102,7 @@ describe('ProviderOrchestrator', () => {
       const decision = orch.evaluateRequest(makeReq(txId, { maxPrice: '15000000' }));
       expect(decision.action).toBe('quote');
       if (decision.action === 'quote') {
-        expect(decision.amount).toBe(10); // ideal
+        expect(decision.amountBaseUnits).toBe('10000000'); // $10 ideal
       }
     });
 
@@ -216,6 +216,65 @@ describe('ProviderOrchestrator', () => {
       // Critical: on-chain succeeded even though off-chain failed.
       const tx = await runtime.getTransaction(txId);
       expect(tx!.state).toBe('QUOTED');
+    });
+
+    it('propagates policy currency into the QuoteMessage (no hardcoding)', async () => {
+      // Regression for audit finding P1 #2. Orchestrator used to hardcode
+      // currency: 'USDC', decimals: 6 regardless of policy. Now it must
+      // read them from policy so a mis-configured policy becomes a loud
+      // schema failure rather than silent drift.
+      const txId = await makeInflightTxn();
+      const channel = mockChannel();
+      const orch = new ProviderOrchestrator({
+        policy: makePolicy(),
+        runtime,
+        signer: providerWallet,
+        kernelAddress: KERNEL,
+        chainId: 84532,
+        channel,
+      });
+
+      const result = await orch.quote(
+        makeReq(txId, { maxPrice: '15000000' }),
+        `did:ethr:84532:${providerWallet.address}`,
+        'https://buyer.test',
+      );
+
+      expect(result.quote).toBeDefined();
+      expect(result.quote!.currency).toBe('USDC');
+      expect(result.quote!.decimals).toBe(6);
+    });
+
+    it('preserves exact base-unit amount from policy through to the signed quote', async () => {
+      // Regression for audit finding P2. Previous impl converted the
+      // base-unit amount to a Number via Math.round(amount * 1e6),
+      // which drifts for large values. Now it's BigInt-string all the
+      // way through.
+      const txId = await makeInflightTxn();
+      const channel = mockChannel();
+      // Policy with a big, exact amount — $10.5 = 10500000 base units.
+      const orch = new ProviderOrchestrator({
+        policy: makePolicy({
+          pricing: {
+            min_acceptable: { amount: 5, currency: 'USDC', unit: 'job' },
+            ideal_price: { amount: 10.5, currency: 'USDC', unit: 'job' },
+          },
+        }),
+        runtime,
+        signer: providerWallet,
+        kernelAddress: KERNEL,
+        chainId: 84532,
+        channel,
+      });
+
+      const result = await orch.quote(
+        makeReq(txId, { maxPrice: '15000000' }),
+        `did:ethr:84532:${providerWallet.address}`,
+        'https://buyer.test',
+      );
+
+      expect(result.quote).toBeDefined();
+      expect(result.quote!.quotedAmount).toBe('10500000');
     });
 
     it('skips the off-chain POST when no endpoint is provided', async () => {
