@@ -599,11 +599,19 @@ async function runPublish(
 
     // ================================================================
     // Phase 1: API upsert to agirails.app (post-chain, non-blocking)
-    // Uses agent_id from YAML or freshly minted (publishMetadata).
-    // API routes: POST /api/v1/agents (dual auth: session + wallet-sig)
+    //
+    // Two flows:
+    //  - earn/both: agent_id is required and verified on-chain via
+    //    ownerOf(tokenId) == wallet. agent_id comes from YAML or from
+    //    freshly minted publishMetadata (testnet activation).
+    //  - pay-only:  no agent_id (no on-chain registration). Sync still
+    //    happens — the wallet signature proves the wallet owns the
+    //    slug, which is the only auth we need for buyer-only agents.
     // ================================================================
     const effectiveAgentId = v4Config?.agent_id || publishMetadata.agent_id;
-    if (v4Config && effectiveAgentId && walletAddress) {
+    const isPayOnlyForSync = v4Config?.intent === 'pay';
+    const canSync = v4Config && walletAddress && (effectiveAgentId || isPayOnlyForSync);
+    if (canSync && v4Config && walletAddress) {
       const apiSpinner = output.spinner('Syncing with agirails.app...');
       try {
         const publishTimestamp = Math.floor(Date.now() / 1000);
@@ -618,7 +626,10 @@ async function runPublish(
           const sig = await signer.signMessage(upsertMessage);
           const apiResult = await upsertAgent({
             slug: v4Config.slug,
-            agentId: effectiveAgentId,
+            // Omit agentId for pay-only (no on-chain NFT to verify against).
+            // Web side skips ownerOf check when agentId is absent and trusts
+            // the wallet signature as sole proof of ownership.
+            ...(effectiveAgentId ? { agentId: effectiveAgentId } : {}),
             wallet: smartWalletAddress || existingWallet || walletAddress,
             signer: walletAddress, // EOA that signed the message
             configCid: cid,
@@ -630,6 +641,11 @@ async function runPublish(
             config: {
               name: v4Config.name,
               description: (v4Config.description || "").replace(/^#\s+[^\n]+\n*/, "").trim(),
+              // P1: include intent so web isPubliclyVisible() can hide
+              // pay-only agents from public discovery on first sync. Without
+              // this, a freshly synced pay-only agent leaks publicly until
+              // the next re-publish.
+              intent: v4Config.intent,
               capabilities: v4Config.services.map(s => s.type),
               pricing: {
                 model: "fixed",
@@ -679,7 +695,7 @@ async function runPublish(
         output.warning(`agirails.app sync failed: ${(apiErr as Error).message}`);
         output.print('  Agent is on-chain. Retry with: actp publish');
       }
-    } else if (v4Config && !v4Config.agent_id) {
+    } else if (v4Config && !v4Config.agent_id && !isPayOnlyForSync) {
       output.info('First publish — agirails.app sync will happen on re-publish (after agent_id is assigned).');
     }
 

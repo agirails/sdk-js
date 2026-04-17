@@ -51,7 +51,13 @@ export interface CheckSlugResult {
 
 export interface UpsertAgentParams {
   slug: string;
-  agentId: string;
+  /**
+   * AgentRegistry tokenId. Optional: pay-only buyer agents do not
+   * register on AgentRegistry (no NFT minted), so they have no
+   * agent_id. Omit to upsert without on-chain ownership check —
+   * the wallet signature alone proves the wallet controls the slug.
+   */
+  agentId?: string;
   /** On-chain wallet address (Smart Wallet if AA-enabled, EOA otherwise) */
   wallet: string;
   /**
