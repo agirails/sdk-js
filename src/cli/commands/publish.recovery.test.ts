@@ -39,7 +39,11 @@ import { maybeRecoverAgentId } from './publish';
 describe('maybeRecoverAgentId', () => {
   let tmpDir: string;
   let mdPath: string;
-  let originalIsTTY: boolean;
+  // Save/restore isTTY via plain assignment — matches the pattern used by
+  // cli.test.ts. Using Object.defineProperty here converts the descriptor
+  // (Node's tty stream defines isTTY as a getter) and was triggering a
+  // uv_cwd cascade when other tests touched process.stdin afterwards.
+  let originalIsTTY: boolean | undefined;
 
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'recovery-test-'));
@@ -63,12 +67,12 @@ pricing:
   });
 
   afterEach(() => {
-    Object.defineProperty(process.stdin, 'isTTY', { value: originalIsTTY, configurable: true });
+    (process.stdin as { isTTY?: boolean }).isTTY = originalIsTTY;
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
   it('throws OWNERSHIP_RECOVERY_REQUIRES_TTY in non-TTY environments', async () => {
-    Object.defineProperty(process.stdin, 'isTTY', { value: false, configurable: true });
+    (process.stdin as { isTTY?: boolean }).isTTY = false;
 
     const output = new Output('quiet');
     const onRestored = jest.fn();
@@ -89,7 +93,7 @@ pricing:
   });
 
   it('error message tells the user the exact agent_id line to paste', async () => {
-    Object.defineProperty(process.stdin, 'isTTY', { value: false, configurable: true });
+    (process.stdin as { isTTY?: boolean }).isTTY = false;
     const output = new Output('quiet');
 
     await expect(
@@ -104,7 +108,7 @@ pricing:
   });
 
   it('writes agent_id back to AGIRAILS.md and calls onRestored when user accepts (TTY)', async () => {
-    Object.defineProperty(process.stdin, 'isTTY', { value: true, configurable: true });
+    (process.stdin as { isTTY?: boolean }).isTTY = true;
     nextAnswer = 'y';
 
     const output = new Output('quiet');
@@ -126,7 +130,7 @@ pricing:
   });
 
   it('returns false and leaves file untouched when user declines (TTY, "n")', async () => {
-    Object.defineProperty(process.stdin, 'isTTY', { value: true, configurable: true });
+    (process.stdin as { isTTY?: boolean }).isTTY = true;
     nextAnswer = 'n';
 
     const output = new Output('quiet');
@@ -147,7 +151,7 @@ pricing:
   });
 
   it('treats empty input (just Enter) as Yes — the [Y/n] default', async () => {
-    Object.defineProperty(process.stdin, 'isTTY', { value: true, configurable: true });
+    (process.stdin as { isTTY?: boolean }).isTTY = true;
     nextAnswer = '';
 
     const output = new Output('quiet');
