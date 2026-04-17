@@ -475,3 +475,60 @@ describe('serviceTypes backward compatibility', () => {
     })).toThrow('services');
   });
 });
+
+// ============================================================================
+// Pay-only intent: protocol-level guard against phantom provider registration
+// ============================================================================
+
+describe('extractRegistrationParams — intent: pay short-circuit', () => {
+  test('returns empty serviceDescriptors when intent is pay, even with services present', () => {
+    // Authoring drift safety net: if a pay-only file slips through with a
+    // services block (e.g. handwritten by an LLM), we still must not
+    // register it as a provider on AgentRegistry.
+    const result = extractRegistrationParams({
+      intent: 'pay',
+      services: [{ type: 'code-review', price: '20', min_price: 5, max_price: 50 }],
+    });
+    expect(result.serviceDescriptors).toEqual([]);
+  });
+
+  test('returns empty serviceDescriptors when intent is pay with no services', () => {
+    const result = extractRegistrationParams({
+      intent: 'pay',
+      servicesNeeded: ['translation'],
+    });
+    expect(result.serviceDescriptors).toEqual([]);
+  });
+
+  test('intent is case-insensitive (PAY same as pay)', () => {
+    const result = extractRegistrationParams({
+      intent: 'PAY',
+      services: [{ type: 'code-review' }],
+    });
+    expect(result.serviceDescriptors).toEqual([]);
+  });
+
+  test('intent: both still registers as provider (not short-circuited)', () => {
+    const result = extractRegistrationParams({
+      intent: 'both',
+      services: [{ type: 'code-review', price: '5', min_price: 4.95, max_price: 5.05 }],
+    });
+    expect(result.serviceDescriptors).toHaveLength(1);
+    expect(result.serviceDescriptors[0].serviceType).toBe('code-review');
+  });
+
+  test('default intent (earn) registers as provider', () => {
+    const result = extractRegistrationParams({
+      services: [{ type: 'code-review' }],
+    });
+    expect(result.serviceDescriptors).toHaveLength(1);
+  });
+
+  test('preserves endpoint placeholder for pay-only', () => {
+    const result = extractRegistrationParams({
+      intent: 'pay',
+      servicesNeeded: ['translation'],
+    });
+    expect(result.endpoint).toBe(PENDING_ENDPOINT);
+  });
+});

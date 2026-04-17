@@ -60,15 +60,41 @@ export interface AgirailsMdV4ServiceEntry {
   max_price?: number;
 }
 
+export type AgirailsMdV4Intent = 'earn' | 'pay' | 'both';
+
 export interface AgirailsMdV4Config {
   name: string;
   slug: string;
   /**
+   * What this agent does on the network. Defaults to 'earn'.
+   *  - earn: provides services and gets paid → registered on AgentRegistry
+   *  - pay:  only requests services from other agents → NOT registered as
+   *          provider on AgentRegistry; `services` must be empty
+   *  - both: provides AND requests
+   */
+  intent: AgirailsMdV4Intent;
+  /**
    * Services this agent provides, normalized to objects.
    * Legacy `services: ["code-review", ...]` (plain strings) is accepted
    * by the parser and lifted to `[{type: "code-review"}, ...]`.
+   *
+   * For `intent: 'pay'`, this is always empty — pay-only agents do not
+   * provide services. The parser will not throw on missing services
+   * when intent is 'pay'.
    */
   services: AgirailsMdV4ServiceEntry[];
+  /**
+   * Capability tags this agent wants to BUY from others. Required when
+   * intent is 'pay' or 'both'. Spec field name: `servicesNeeded`
+   * (alternate snake-case `services_needed` is also accepted).
+   */
+  servicesNeeded: string[];
+  /**
+   * Default budget per request in USDC. Used by buyers/agents when
+   * calling `request()` without an explicit `budget`. Spec: only
+   * meaningful when intent is 'pay' or 'both'.
+   */
+  budget?: number;
   pricing: AgirailsMdV4Pricing;
   network: 'mock' | 'testnet' | 'mainnet';
   sla: AgirailsMdV4SLA;
@@ -131,21 +157,45 @@ function buildV4Config(
   // Slug: from YAML or generated from name
   const slug = getString(fm, 'slug') || generateSlug(name);
 
+  // Intent — earn (default), pay, or both. Drives whether services are
+  // required and whether the agent registers as a provider on-chain.
+  const intentRaw = (getString(fm, 'intent') || V4_DEFAULTS.intent).toLowerCase();
+  const intent: AgirailsMdV4Intent = (V4_CONSTRAINTS.VALID_INTENTS as readonly string[]).includes(intentRaw)
+    ? (intentRaw as AgirailsMdV4Intent)
+    : V4_DEFAULTS.intent;
+
   // Services — accept both legacy ["code-review", ...] (plain strings)
   // and canonical [{type, price, min_price, max_price}, ...] (objects).
   // Lift everything to AgirailsMdV4ServiceEntry so downstream code has
-  // one shape to reason about.
+  // one shape to reason about. Pay-only agents may have no services.
   const services = parseServices(fm);
-  if (services.length === 0) {
+  if (services.length === 0 && intent !== 'pay') {
     throw new Error('Missing required field: services (must be a non-empty array)');
   }
 
-  // Pricing
+  // Services this agent wants to BUY. Required when intent is pay/both.
+  // Spec field: `servicesNeeded` (also accept `services_needed`).
+  let servicesNeeded = getStringArray(fm, 'servicesNeeded');
+  if (servicesNeeded.length === 0) servicesNeeded = getStringArray(fm, 'services_needed');
+  if (intent !== 'earn' && servicesNeeded.length === 0) {
+    throw new Error(
+      `Missing required field: servicesNeeded (intent: ${intent} requires at least one capability to buy)`
+    );
+  }
+
+  // Default budget per request — top-level, only meaningful for pay/both.
+  const budget = getNumber(fm, 'budget');
+
+  // Pricing — required for earn/both (you set your selling price); for
+  // pay-only the file may legitimately omit pricing.base, in which case
+  // we fall back to the budget so downstream consumers always have a
+  // numeric anchor (UI cards, fee math, etc.).
   const pricingRaw = getObject(fm, 'pricing');
-  const base = getNumber(pricingRaw, 'base');
-  if (base === undefined || base === null) {
+  const baseRaw = getNumber(pricingRaw, 'base');
+  if (baseRaw === undefined && intent !== 'pay') {
     throw new Error('Missing required field: pricing.base');
   }
+  const base = baseRaw ?? budget ?? 0;
 
   const pricing: AgirailsMdV4Pricing = {
     base,
@@ -197,7 +247,10 @@ function buildV4Config(
   return {
     name,
     slug,
+    intent,
     services,
+    servicesNeeded,
+    budget,
     pricing,
     network,
     sla,

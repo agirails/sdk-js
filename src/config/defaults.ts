@@ -12,6 +12,14 @@
 // ============================================================================
 
 export const V4_DEFAULTS = {
+  /**
+   * What this agent does on the network:
+   *   earn — provides services and gets paid (default)
+   *   pay  — only requests services from other agents (no on-chain provider role)
+   *   both — provides AND requests
+   * Spec: AGIRAILS.md > Step 4 > intent.
+   */
+  intent: 'earn' as const,
   pricing: {
     currency: 'USDC' as const,
     unit: 'job',
@@ -54,6 +62,8 @@ export const V4_CONSTRAINTS = {
   VALID_NETWORKS: ['mock', 'testnet', 'mainnet'] as const,
   /** Valid payment modes */
   VALID_PAYMENT_MODES: ['actp', 'x402'] as const,
+  /** Valid intent values */
+  VALID_INTENTS: ['earn', 'pay', 'both'] as const,
   /** Heading that splits description from howToRequest */
   HOW_TO_REQUEST_HEADING: '## How to Request This Service',
 } as const;

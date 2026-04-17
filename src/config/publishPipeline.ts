@@ -108,11 +108,28 @@ function usdcToBaseUnits(value: number, fieldName: string): bigint {
  * - `services`: full ServiceDescriptor objects with pricing
  * - `capabilities`: simple string list, auto-converted with defaults
  *
- * @throws Error if neither services nor capabilities are present
+ * Pay-only intent: returns an empty serviceDescriptors[] regardless of
+ * any `services` field that may be present. Pay-only agents do not
+ * register as providers on AgentRegistry — they only call request().
+ * This guard is the protocol-level safeguard; CLI front-ends should
+ * also reject the misshape upstream with a clearer error.
+ *
+ * @throws Error if intent is earn/both and neither services nor capabilities are present
  */
 export function extractRegistrationParams(
   frontmatter: Record<string, unknown>
 ): { endpoint: string; serviceDescriptors: ServiceDescriptor[] } {
+  // Pay-only short-circuit: never register as provider on-chain.
+  const intent = typeof frontmatter.intent === 'string'
+    ? frontmatter.intent.toLowerCase()
+    : 'earn';
+  if (intent === 'pay') {
+    const endpoint = typeof frontmatter.endpoint === 'string' && frontmatter.endpoint
+      ? frontmatter.endpoint
+      : PENDING_ENDPOINT;
+    return { endpoint, serviceDescriptors: [] };
+  }
+
   // Normalize legacy serviceTypes → capabilities (backward compat)
   if (Array.isArray(frontmatter.serviceTypes) && !frontmatter.capabilities) {
     frontmatter = { ...frontmatter, capabilities: frontmatter.serviceTypes };

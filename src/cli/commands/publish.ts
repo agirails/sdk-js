@@ -201,6 +201,46 @@ async function runPublish(
       // Not a v4 file — skip slug check (backward compatible with v3 AGIRAILS.md)
     }
 
+    // Intent / shape validation. Catches the common authoring drift where a
+    // pay-only agent ships a `services` block that would silently register
+    // it as a phantom provider on AgentRegistry. We strip the misshape
+    // here (so the rewritten frontmatter persists to disk after publish)
+    // and hard-fail when required fields are missing.
+    if (v4Config) {
+      if (v4Config.intent === 'pay' && v4Config.services.length > 0) {
+        output.warning(
+          `intent: pay agents do not provide services — stripping services block ` +
+            `before publish (was: ${v4Config.services.map(s => s.type).join(', ')}).`
+        );
+        v4Config.services = [];
+        const parsed = parseAgirailsMd(content);
+        const updatedFm = { ...(parsed.frontmatter as Record<string, unknown>) };
+        delete updatedFm.services;
+        const newContent = serializeAgirailsMd(updatedFm, parsed.body);
+        writeFileSync(resolvedPath + '.tmp', newContent, 'utf-8');
+        renameSync(resolvedPath + '.tmp', resolvedPath);
+        content = newContent;
+        const reHash = computeConfigHash(newContent);
+        configHash = reHash.configHash;
+      }
+      if (v4Config.intent === 'pay' && v4Config.servicesNeeded.length === 0) {
+        throw new Error(
+          'intent: pay requires servicesNeeded — list at least one capability your agent will buy.'
+        );
+      }
+      if (v4Config.intent === 'earn' && v4Config.services.length === 0) {
+        throw new Error(
+          'intent: earn requires services — list at least one capability your agent will provide.'
+        );
+      }
+      if (v4Config.intent === 'both' && v4Config.services.length === 0) {
+        throw new Error('intent: both requires at least one entry in services (provider side).');
+      }
+      if (v4Config.intent === 'both' && v4Config.servicesNeeded.length === 0) {
+        throw new Error('intent: both requires at least one entry in servicesNeeded (buyer side).');
+      }
+    }
+
     if (v4Config && !v4Config.agent_id) {
       // First publish — check slug availability
       const slugSpinner = output.spinner(`Checking slug availability: ${v4Config.slug}...`);

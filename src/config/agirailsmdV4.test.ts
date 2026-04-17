@@ -171,6 +171,111 @@ body`;
 });
 
 // ============================================================================
+// parseAgirailsMdV4 — intent semantics
+// ============================================================================
+
+describe('parseAgirailsMdV4 — intent', () => {
+  test('defaults intent to "earn" when not present', () => {
+    const md = `---
+name: Default Intent
+services: [code-review]
+pricing:
+  base: 5
+---
+body`;
+    expect(parseAgirailsMdV4(md).intent).toBe('earn');
+  });
+
+  test('parses intent: pay with servicesNeeded and no services', () => {
+    const md = `---
+name: Pay Only
+intent: pay
+servicesNeeded: [code-review, translation]
+budget: 20
+---
+body`;
+    const config = parseAgirailsMdV4(md);
+    expect(config.intent).toBe('pay');
+    expect(config.services).toEqual([]);
+    expect(config.servicesNeeded).toEqual(['code-review', 'translation']);
+    expect(config.budget).toBe(20);
+    // base falls back to budget when pricing is omitted entirely
+    expect(config.pricing.base).toBe(20);
+  });
+
+  test('accepts snake_case `services_needed` as alias', () => {
+    const md = `---
+name: SnakeCase
+intent: pay
+services_needed: [code-review]
+---
+body`;
+    expect(parseAgirailsMdV4(md).servicesNeeded).toEqual(['code-review']);
+  });
+
+  test('intent: pay throws when servicesNeeded is empty', () => {
+    const md = `---
+name: PayNoNeeds
+intent: pay
+---
+body`;
+    expect(() => parseAgirailsMdV4(md)).toThrow(/servicesNeeded/);
+  });
+
+  test('intent: pay no longer throws on missing services', () => {
+    const md = `---
+name: PayNoServices
+intent: pay
+servicesNeeded: [code-review]
+---
+body`;
+    expect(() => parseAgirailsMdV4(md)).not.toThrow();
+  });
+
+  test('intent: pay no longer throws on missing pricing.base', () => {
+    const md = `---
+name: PayNoPrice
+intent: pay
+servicesNeeded: [code-review]
+budget: 15
+---
+body`;
+    expect(() => parseAgirailsMdV4(md)).not.toThrow();
+    expect(parseAgirailsMdV4(md).pricing.base).toBe(15);
+  });
+
+  test('intent: both parses both blocks', () => {
+    const md = `---
+name: Both
+intent: both
+services: [code-review]
+servicesNeeded: [translation]
+pricing:
+  base: 5
+budget: 10
+---
+body`;
+    const config = parseAgirailsMdV4(md);
+    expect(config.intent).toBe('both');
+    expect(config.services).toEqual([{ type: 'code-review' }]);
+    expect(config.servicesNeeded).toEqual(['translation']);
+    expect(config.budget).toBe(10);
+  });
+
+  test('unknown intent value falls back to default', () => {
+    const md = `---
+name: Garbage
+intent: chaos
+services: [code-review]
+pricing:
+  base: 5
+---
+body`;
+    expect(parseAgirailsMdV4(md).intent).toBe('earn');
+  });
+});
+
+// ============================================================================
 // parseAgirailsMdV4 — minimal config with defaults
 // ============================================================================
 
@@ -373,7 +478,9 @@ describe('validateAgirailsMdV4', () => {
     return {
       name: 'Test',
       slug: 'test',
+      intent: 'earn',
       services: [{ type: 'testing' }],
+      servicesNeeded: [],
       pricing: {
         base: 5.0,
         currency: 'USDC',
