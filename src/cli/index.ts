@@ -63,6 +63,7 @@ import { createNegotiateCommand } from './commands/negotiate';
 import { createAutopublishCommand } from './commands/autopublish';
 import { createHealthCommand } from './commands/health';
 import { createRepairCommand } from './commands/repair';
+import { createServeCommand } from './commands/serve';
 
 // ============================================================================
 // Program Setup
@@ -142,6 +143,9 @@ program.addCommand(createHealthCommand());
 
 // On-chain shape repair (drop phantom services, update endpoint, toggle flags)
 program.addCommand(createRepairCommand());
+
+// AIP-2.1 provider daemon (long-running quote-channel server)
+program.addCommand(createServeCommand());
 
 // ============================================================================
 // Error Handling

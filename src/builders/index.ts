@@ -22,3 +22,10 @@ export {
   CounterOfferMessage,
   AIP21CounterOfferTypes
 } from './CounterOfferBuilder';
+
+export {
+  CounterAcceptBuilder,
+  CounterAcceptParams,
+  CounterAcceptMessage,
+  AIP21CounterAcceptTypes
+} from './CounterAcceptBuilder';

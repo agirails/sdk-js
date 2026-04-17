@@ -167,6 +167,8 @@ export { DIDResolver } from './protocol/DIDResolver';
 export { QuoteBuilder } from './builders/QuoteBuilder';
 export { CounterOfferBuilder } from './builders/CounterOfferBuilder';
 export type { CounterOfferMessage, CounterOfferParams } from './builders/CounterOfferBuilder';
+export { CounterAcceptBuilder } from './builders/CounterAcceptBuilder';
+export type { CounterAcceptMessage, CounterAcceptParams } from './builders/CounterAcceptBuilder';
 export { DeliveryProofBuilder } from './builders/DeliveryProofBuilder';
 
 // Transport (AIP-2.1 quote/counter-offer channel)

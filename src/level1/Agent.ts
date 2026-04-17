@@ -13,6 +13,7 @@ import * as os from 'os';
 import * as fs from 'fs';
 import { ethers } from 'ethers';
 import { ACTPClient } from '../ACTPClient';
+import type { ProviderOrchestrator } from '../negotiation/ProviderOrchestrator';
 import { resolvePrivateKey } from '../wallet/keystore';
 import { Job, JobHandler, JobContext } from './types/Job';
 import { RequestOptions, RequestResult, NetworkOption } from './types/Options';
@@ -238,6 +239,14 @@ export class Agent extends EventEmitter {
    * ACTP Client instance
    */
   private _client?: ACTPClient;
+  /**
+   * AIP-2.1 ProviderOrchestrator. When set via setProviderOrchestrator(),
+   * the counter-offer pricing path emits canonical AIP-2 quote messages
+   * instead of the legacy ad-hoc hash. Optional — agents that don't
+   * opt in continue with the historical hash format which the
+   * buyer-side verifier still accepts via §3.6 legacy fallback.
+   */
+  private _providerOrchestrator?: ProviderOrchestrator;
 
   /**
    * Registered services
@@ -691,9 +700,37 @@ export class Agent extends EventEmitter {
     return this._client;
   }
 
+  /**
+   * Attach an AIP-2.1 ProviderOrchestrator. Once set, the counter-offer
+   * pricing path emits canonical signed QuoteMessages and submits via
+   * the runtime's submitQuote (instead of the legacy ad-hoc hash).
+   *
+   * Optional — agents that never call this keep the pre-AIP-2.1 hash
+   * format which the buyer-side verifier still accepts via §3.6
+   * legacy fallback during the migration grace window.
+   */
+  setProviderOrchestrator(orchestrator: ProviderOrchestrator): void {
+    this._providerOrchestrator = orchestrator;
+  }
+
   // =========================================================================
   // Private Methods
   // =========================================================================
+
+  /**
+   * Best-effort service-type extraction for a counter-offer routed
+   * through ProviderOrchestrator. The transaction record doesn't
+   * formally carry a service-type field; we look at the matched
+   * handler if any, else fall back to the first registered service
+   * the agent advertises, else 'general'.
+   */
+  private findServiceTypeForTx(tx: import('../runtime/types/MockState').MockTransaction): string {
+    const matched = this.findServiceHandler(tx);
+    if (matched) return matched.config.name;
+    const firstRegistered = this.services.keys().next().value;
+    if (firstRegistered) return firstRegistered;
+    return 'general';
+  }
 
   /**
    * Start polling for new jobs
@@ -1024,27 +1061,76 @@ export class Agent extends EventEmitter {
           return false;
         }
 
-        // Counter-offer: provider accepts at reduced margin (budget >= cost but < ideal price).
-        // ACTP invariant: tx.amount is immutable — escrow is always at buyer's original offer.
-        // The QUOTED proof documents the provider's ideal price for audit trail / transparency,
+        // Counter-offer: provider accepts at reduced margin (budget >= cost
+        // but < ideal price).
+        //
+        // Two paths:
+        //  1. AIP-2.1 canonical (preferred) — owner attached a configured
+        //     `providerOrchestrator` via setProviderOrchestrator(). We
+        //     route the quote through it so it builds a signed
+        //     AIP-2 QuoteMessage, computes the canonical hash, and
+        //     submits via runtime.submitQuote (state transition + hash
+        //     storage in one). Buyer-side BuyerOrchestrator can verify
+        //     end-to-end.
+        //  2. Legacy ad-hoc hash (fallback) — when no orchestrator is
+        //     configured, emit the historical
+        //     keccak256(JSON.stringify({txId, providerIdealPrice,
+        //     actualEscrow, provider})) shape. The buyer's
+        //     verifyQuoteHashOnChain has a `legacy` matcher that
+        //     accepts this shape for migration grace (§3.6).
+        //
+        // ACTP invariant either way: tx.amount is immutable. The QUOTED
+        // proof documents the provider's ideal price for audit trail
         // but does NOT change the on-chain escrow amount.
         if (calculation.decision === 'counter-offer') {
           try {
+            const providerIdealPrice = String(Math.round(calculation.price * 1_000_000));
+
+            if (this._providerOrchestrator) {
+              const chainId = (this._client!.runtime as unknown as { networkConfig?: { chainId?: number } })
+                .networkConfig?.chainId ?? 84532;
+              const result = await this._providerOrchestrator.quote(
+                {
+                  txId: tx.id,
+                  consumer: `did:ethr:${chainId}:${tx.requester}`,
+                  offeredAmount: tx.amount,
+                  // No separate ceiling on Transaction — set max to
+                  // provider's quoted price so the orchestrator's
+                  // policy band check passes.
+                  maxPrice: providerIdealPrice,
+                  deadline: tx.deadline,
+                  serviceType: this.findServiceTypeForTx(tx),
+                  currency: 'USDC',
+                  unit: 'job',
+                },
+                `did:ethr:${chainId}:${this.address}`,
+                undefined, // off-chain delivery handled by caller's quote-channel handler
+              );
+              this.logger.info('AIP-2.1 quote submitted via ProviderOrchestrator', {
+                txId: tx.id,
+                action: result.decision.action,
+                reason: result.decision.reason,
+                channelError: result.channelError,
+              });
+              return false;
+            }
+
+            // Legacy ad-hoc hash path. Buyer's verifier matches via §3.6
+            // legacy fallback. Existing pre-AIP-2.1 agents continue to
+            // function unchanged.
             const { keccak256, toUtf8Bytes, AbiCoder } = await import('ethers');
-            const providerIdealPrice = String(Math.round(calculation.price * 1_000_000)); // USDC base units
             const quoteHash = keccak256(toUtf8Bytes(
               JSON.stringify({ txId: tx.id, providerIdealPrice, actualEscrow: tx.amount, provider: this.address })
             ));
             const proof = AbiCoder.defaultAbiCoder().encode(['bytes32'], [quoteHash]);
             await this._client!.runtime.transitionState(tx.id, 'QUOTED', proof);
 
-            this.logger.info('Counter-offer quoted (accepting at reduced margin)', {
+            this.logger.info('Counter-offer quoted via legacy hash (no providerOrchestrator configured)', {
               txId: tx.id,
               providerIdealPrice,
               actualEscrow: tx.amount,
               reason: calculation.reason,
             });
-            // Don't auto-accept — buyer must linkEscrow after reviewing quote
             return false;
           } catch (quoteError) {
             this.logger.error('Counter-offer submission failed', { txId: tx.id }, quoteError as Error);
