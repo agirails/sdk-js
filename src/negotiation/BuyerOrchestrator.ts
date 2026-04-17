@@ -16,11 +16,17 @@
  * Accepts ACTPClient for on-chain operations. Caller manages lifecycle.
  */
 
+import type { Signer } from 'ethers';
 import { discoverAgents, DiscoverAgent, DiscoverParams } from '../api/agirailsApp';
 import { PolicyEngine, BuyerPolicy, QuoteOffer } from './PolicyEngine';
 import { DecisionEngine, CandidateStats } from './DecisionEngine';
 import { SessionStore } from './SessionStore';
 import { IACTPRuntime, CreateTransactionParams } from '../runtime/IACTPRuntime';
+import { QuoteMessage } from '../builders/QuoteBuilder';
+import { CounterOfferBuilder } from '../builders/CounterOfferBuilder';
+import { QuoteChannelClient } from '../transport/QuoteChannel';
+import { NonceManager, InMemoryNonceManager } from '../utils/NonceManager';
+import { verifyQuoteHashOnChain, VerifySource } from './verifyQuoteOnChain';
 
 // ============================================================================
 // Types
@@ -75,6 +81,40 @@ export type ProgressEvent =
 // BuyerOrchestrator
 // ============================================================================
 
+/**
+ * AIP-2.1 extras — all optional so existing constructor call sites
+ * keep working unchanged. Wire them in when the caller wants real
+ * negotiation (counter-offers). Without them the orchestrator still
+ * runs the fixed-price flow.
+ */
+export interface BuyerNegotiationContext {
+  /** Buyer's EOA signer — signs CounterOfferMessages. */
+  signer?: Signer;
+  /** ACTPKernel address for the chain. Required for counter signing. */
+  kernelAddress?: string;
+  /** Chain id (84532 / 8453). Required for counter signing. */
+  chainId?: number;
+  /** Nonce manager for counter messages. Defaults to an in-memory one. */
+  nonceManager?: NonceManager;
+  /** Off-chain transport used to POST counter-offers. */
+  channel?: QuoteChannelClient;
+}
+
+/**
+ * Cached context for a received quote. Pushed by caller via
+ * `setReceivedQuote` when their quote-channel handler validates an
+ * incoming provider quote.
+ */
+interface ReceivedQuote {
+  quote: QuoteMessage;
+  /** Endpoint to POST counter-offers to (provider's quote channel). */
+  providerEndpoint?: string;
+  /** Provider EOA address — used for legacy hash fallback. */
+  providerAddress?: string;
+  /** tx.amount at QUOTED — used for legacy hash fallback. */
+  actualEscrow?: string;
+}
+
 export class BuyerOrchestrator {
   private policy: BuyerPolicy;
   private policyEngine: PolicyEngine;
@@ -82,12 +122,22 @@ export class BuyerOrchestrator {
   private sessionStore: SessionStore;
   private runtime: IACTPRuntime;
   private requesterAddress: string;
+  private negotiation: BuyerNegotiationContext;
+  private counterBuilder?: CounterOfferBuilder;
+
+  /** Quotes pushed in by the caller's quote-channel handler, keyed by txId. */
+  private receivedQuotes = new Map<string, ReceivedQuote>();
+  /** Provider-acceptance-of-counter signal, keyed by txId. */
+  private counterAccepted = new Map<string, { amountBaseUnits: string }>();
+  /** Resolvers waiting on counter acceptance — woken by setCounterAccepted. */
+  private counterWaiters = new Map<string, () => void>();
 
   constructor(
     policy: BuyerPolicy,
     runtime: IACTPRuntime,
     requesterAddress: string,
     actpDir?: string,
+    negotiation: BuyerNegotiationContext = {},
   ) {
     this.policy = policy;
     this.runtime = runtime;
@@ -95,6 +145,52 @@ export class BuyerOrchestrator {
     this.policyEngine = new PolicyEngine(policy, actpDir);
     this.decisionEngine = new DecisionEngine(policy.selection.weights);
     this.sessionStore = new SessionStore(actpDir);
+    this.negotiation = negotiation;
+
+    if (negotiation.signer) {
+      this.counterBuilder = new CounterOfferBuilder(
+        negotiation.signer,
+        negotiation.nonceManager ?? new InMemoryNonceManager(),
+      );
+    }
+  }
+
+  /**
+   * Push a verified QuoteMessage into the orchestrator. Callers wire
+   * this from their QuoteChannel handler so the negotiation loop can
+   * pick it up on the next poll tick.
+   *
+   * Caller is responsible for validating the signature before pushing
+   * (the QuoteChannel handler already does this); the orchestrator
+   * layers on top by cross-referencing against on-chain hash (with
+   * legacy fallback, §3.6).
+   */
+  setReceivedQuote(
+    txId: string,
+    quote: QuoteMessage,
+    opts: { providerEndpoint?: string; providerAddress?: string; actualEscrow?: string } = {},
+  ): void {
+    this.receivedQuotes.set(txId, {
+      quote,
+      providerEndpoint: opts.providerEndpoint,
+      providerAddress: opts.providerAddress,
+      actualEscrow: opts.actualEscrow,
+    });
+  }
+
+  /**
+   * Signal that the provider has accepted our counter-offer off-chain.
+   * Callers wire this from their quote-channel handler when an
+   * "accepted" notification arrives. Wakes any negotiation round
+   * waiting on counter acceptance for this txId.
+   */
+  setCounterAccepted(txId: string, finalAmountBaseUnits: string): void {
+    this.counterAccepted.set(txId, { amountBaseUnits: finalAmountBaseUnits });
+    const waiter = this.counterWaiters.get(txId);
+    if (waiter) {
+      waiter();
+      this.counterWaiters.delete(txId);
+    }
   }
 
   /**
@@ -303,6 +399,52 @@ export class BuyerOrchestrator {
         // Non-fatal — price tracking is best-effort
       }
 
+      // 3d-bis. AIP-2.1 negotiation branch: if the caller pushed in a
+      // signed QuoteMessage via setReceivedQuote, verify it against
+      // on-chain hash (with legacy fallback) and run evaluateQuote.
+      // The branch ONLY triggers when reachedState === 'QUOTED' — the
+      // COMMITTED fast-path below bypasses negotiation entirely because
+      // the provider already locked the deal at buyer's offered amount.
+      if (reachedState === 'QUOTED') {
+        const received = this.receivedQuotes.get(txId);
+        if (received) {
+          const negResult = await this._runNegotiationRound({
+            txId,
+            received,
+            candidateSlug: candidate.slug,
+            providerAddress,
+            offer,
+            round,
+            rounds,
+            emit,
+          });
+          if (negResult.done) {
+            // Negotiation reached a terminal decision (accept or
+            // reject) — short-circuit the existing escrow logic below.
+            if (negResult.success) {
+              this.sessionStore.linkTransaction(session.commerce_session_id, txId, candidate.slug);
+              const negReason = negResult.reason ?? 'Negotiation complete';
+              emit({ type: 'complete', success: true, reason: negReason });
+              return {
+                success: true,
+                commerce_session_id: session.commerce_session_id,
+                actp_tx_id: txId,
+                selected_provider: candidate.slug,
+                rounds_used: round + 1,
+                reason: negReason,
+                rounds,
+                deadlock_detected: deadlockDetected,
+              };
+            }
+            // negResult.success === false → candidate rejected; continue
+            // outer loop to try the next one. The existing code below
+            // would attempt linkEscrow at buyer's offered price, which
+            // would happily succeed and silently ignore our rejection.
+            continue;
+          }
+        }
+      }
+
       // 3e. Reserve budget and link escrow (or recognize already-committed).
       // ACTP invariant: tx.amount is immutable (set at createTransaction).
       // Policy was already validated pre-round, so offer.unit_price
@@ -412,6 +554,277 @@ export class BuyerOrchestrator {
       rounds,
       deadlock_detected: deadlockDetected,
     };
+  }
+
+  // ============================================================================
+  // AIP-2.1 negotiation round
+  // ============================================================================
+
+  /**
+   * Run a negotiation decision for a single incoming provider quote.
+   * Called ONLY when the caller has pushed in a signed QuoteMessage via
+   * setReceivedQuote and the tx has reached QUOTED on-chain.
+   *
+   * Returns `{ done: true, success: bool, reason }` when a terminal
+   * decision is reached (accept landed COMMITTED, or candidate rejected).
+   * Returns `{ done: false }` when the caller should fall through to the
+   * existing fixed-price flow (verification failed, missing negotiation
+   * context, etc).
+   */
+  private async _runNegotiationRound(args: {
+    txId: string;
+    received: ReceivedQuote;
+    candidateSlug: string;
+    providerAddress: string;
+    offer: QuoteOffer;
+    round: number;
+    rounds: RoundResult[];
+    emit: (event: ProgressEvent) => void;
+  }): Promise<{ done: boolean; success?: boolean; reason?: string }> {
+    const { txId, received, candidateSlug, providerAddress, offer, round, rounds, emit } = args;
+
+    // 1. Cross-reference the off-chain quote with the on-chain hash.
+    //    Without a match we cannot trust the pushed message, so fall
+    //    through to the existing fixed-price flow rather than negotiate
+    //    on unverified data.
+    const onChainTx = await this.runtime.getTransaction(txId);
+    const onChainHash = onChainTx && (onChainTx as unknown as { quoteHash?: string | null }).quoteHash;
+    if (!onChainHash) {
+      return { done: false };
+    }
+    const verify = verifyQuoteHashOnChain(received.quote, onChainHash, {
+      providerAddress: received.providerAddress,
+      actualEscrow: received.actualEscrow,
+    });
+    if (!verify.match) {
+      rounds.push({
+        round: round + 1,
+        provider_slug: candidateSlug,
+        provider_address: providerAddress,
+        action: 'error',
+        reason: `Quote hash mismatch: expected ${verify.canonicalHash}, on-chain ${onChainHash}`,
+        tx_id: txId,
+      });
+      emit({ type: 'round_end', round: round + 1, action: 'error', reason: 'Quote hash mismatch' });
+      return { done: true, success: false, reason: 'hash mismatch' };
+    }
+    // Attach source tag onto the round record for observability.
+    const hashSource: VerifySource = verify.source!;
+
+    // 2. Decide accept / counter / reject.
+    const evaluation = this.decisionEngine.evaluateQuote(received.quote, this.policy);
+
+    if (evaluation.action === 'reject') {
+      try {
+        await this.runtime.transitionState(txId, 'CANCELLED');
+      } catch {
+        // Best-effort; if the tx is already terminal the cancel call
+        // may revert and that's fine.
+      }
+      rounds.push({
+        round: round + 1,
+        provider_slug: candidateSlug,
+        provider_address: providerAddress,
+        action: 'rejected',
+        reason: `${evaluation.reason} (quote source: ${hashSource})`,
+        tx_id: txId,
+        quoted_price: Number(BigInt(received.quote.quotedAmount)) / 1_000_000,
+      });
+      emit({ type: 'round_end', round: round + 1, action: 'rejected', reason: evaluation.reason });
+      return { done: true, success: false, reason: evaluation.reason };
+    }
+
+    if (evaluation.action === 'accept') {
+      // Commit at provider's quoted amount. AIP-2 sequence:
+      //   acceptQuote(txId, quotedAmount) → updates tx.amount,
+      //   linkEscrow(txId, quotedAmount) → COMMITTED.
+      const amountBaseUnits = received.quote.quotedAmount;
+      try {
+        await this.runtime.acceptQuote(txId, amountBaseUnits);
+        await this.runtime.linkEscrow(txId, amountBaseUnits);
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err);
+        rounds.push({
+          round: round + 1,
+          provider_slug: candidateSlug,
+          provider_address: providerAddress,
+          action: 'error',
+          reason: `Accept flow failed: ${reason}`,
+          tx_id: txId,
+        });
+        emit({ type: 'round_end', round: round + 1, action: 'error', reason });
+        return { done: true, success: false, reason };
+      }
+      // Update local ledger for daily-spend accounting; tolerate
+      // reservation failure (it's bookkeeping — the on-chain escrow
+      // is already locked).
+      try {
+        this.policyEngine.reserve(offer.commerce_session_id || '', Number(BigInt(amountBaseUnits)) / 1_000_000, offer.currency);
+      } catch {
+        // swallow
+      }
+      const reason = `Quote accepted at ${amountBaseUnits} base units (source: ${hashSource})`;
+      rounds.push({
+        round: round + 1,
+        provider_slug: candidateSlug,
+        provider_address: providerAddress,
+        action: 'accepted',
+        reason,
+        tx_id: txId,
+        quoted_price: Number(BigInt(amountBaseUnits)) / 1_000_000,
+      });
+      emit({ type: 'round_end', round: round + 1, action: 'accepted', reason });
+      return { done: true, success: true, reason };
+    }
+
+    // evaluation.action === 'counter'.
+    if (!this.counterBuilder || !this.negotiation.kernelAddress || !this.negotiation.chainId) {
+      // Caller requested counter-offers but didn't wire the signer.
+      // Log + fall through to accept/reject at max guard rails
+      // (treating as if counter_strategy were 'walk' would be less
+      // surprising than silently accepting above target).
+      try {
+        await this.runtime.transitionState(txId, 'CANCELLED');
+      } catch {
+        /* best-effort */
+      }
+      const reason = 'counter_strategy set but no signer/kernelAddress/chainId in BuyerNegotiationContext';
+      rounds.push({
+        round: round + 1,
+        provider_slug: candidateSlug,
+        provider_address: providerAddress,
+        action: 'error',
+        reason,
+        tx_id: txId,
+      });
+      emit({ type: 'round_end', round: round + 1, action: 'error', reason });
+      return { done: true, success: false, reason };
+    }
+
+    // Build + send counter-offer. Then wait for provider's off-chain
+    // acceptance (setCounterAccepted) or timeout.
+    const channel = this.negotiation.channel ?? new QuoteChannelClient();
+    const counterTtlSec = this.policy.negotiation.counter_response_ttl_seconds
+      ?? PolicyEngine.parseTtl(this.policy.negotiation.quote_ttl);
+    const now = Math.floor(Date.now() / 1000);
+
+    let counter;
+    try {
+      counter = await this.counterBuilder.build({
+        txId,
+        consumer: `did:ethr:${this.negotiation.chainId}:${(await this.negotiation.signer!.getAddress()).toLowerCase()}`,
+        provider: received.quote.provider,
+        quoteAmount: received.quote.quotedAmount,
+        counterAmount: evaluation.amountBaseUnits,
+        maxPrice: received.quote.maxPrice,
+        inReplyTo: verify.canonicalHash!,
+        chainId: this.negotiation.chainId,
+        kernelAddress: this.negotiation.kernelAddress,
+        expiresAt: now + counterTtlSec,
+      });
+    } catch (err) {
+      const reason = `Counter build failed: ${err instanceof Error ? err.message : String(err)}`;
+      rounds.push({
+        round: round + 1,
+        provider_slug: candidateSlug,
+        provider_address: providerAddress,
+        action: 'error',
+        reason,
+        tx_id: txId,
+      });
+      emit({ type: 'round_end', round: round + 1, action: 'error', reason });
+      return { done: true, success: false, reason };
+    }
+
+    if (received.providerEndpoint) {
+      try {
+        await channel.sendCounter(received.providerEndpoint, counter);
+      } catch (err) {
+        const reason = `Counter channel POST failed: ${err instanceof Error ? err.message : String(err)}`;
+        rounds.push({
+          round: round + 1,
+          provider_slug: candidateSlug,
+          provider_address: providerAddress,
+          action: 'error',
+          reason,
+          tx_id: txId,
+        });
+        emit({ type: 'round_end', round: round + 1, action: 'error', reason });
+        return { done: true, success: false, reason };
+      }
+    }
+
+    // Wait for provider's acceptance signal or timeout.
+    const accepted = await this._waitForCounterAcceptance(txId, counterTtlSec * 1000);
+    if (!accepted) {
+      try {
+        await this.runtime.transitionState(txId, 'CANCELLED');
+      } catch {
+        /* best-effort */
+      }
+      const reason = `Counter acceptance not received within ${counterTtlSec}s`;
+      rounds.push({
+        round: round + 1,
+        provider_slug: candidateSlug,
+        provider_address: providerAddress,
+        action: 'timeout',
+        reason,
+        tx_id: txId,
+      });
+      emit({ type: 'round_end', round: round + 1, action: 'timeout', reason });
+      return { done: true, success: false, reason };
+    }
+
+    const finalAmount = accepted.amountBaseUnits;
+    try {
+      await this.runtime.acceptQuote(txId, finalAmount);
+      await this.runtime.linkEscrow(txId, finalAmount);
+    } catch (err) {
+      const reason = `Accept-counter flow failed: ${err instanceof Error ? err.message : String(err)}`;
+      rounds.push({
+        round: round + 1,
+        provider_slug: candidateSlug,
+        provider_address: providerAddress,
+        action: 'error',
+        reason,
+        tx_id: txId,
+      });
+      emit({ type: 'round_end', round: round + 1, action: 'error', reason });
+      return { done: true, success: false, reason };
+    }
+    const reason = `Counter accepted at ${finalAmount} base units (source: ${hashSource})`;
+    rounds.push({
+      round: round + 1,
+      provider_slug: candidateSlug,
+      provider_address: providerAddress,
+      action: 'accepted',
+      reason,
+      tx_id: txId,
+      quoted_price: Number(BigInt(finalAmount)) / 1_000_000,
+    });
+    emit({ type: 'round_end', round: round + 1, action: 'accepted', reason });
+    return { done: true, success: true, reason };
+  }
+
+  /** Resolve when setCounterAccepted(txId, …) is called, or on timeout. */
+  private async _waitForCounterAcceptance(
+    txId: string,
+    timeoutMs: number,
+  ): Promise<{ amountBaseUnits: string } | null> {
+    // Already accepted before we started waiting? Return immediately.
+    const existing = this.counterAccepted.get(txId);
+    if (existing) return existing;
+
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        this.counterWaiters.delete(txId);
+        resolve(null);
+      }, timeoutMs);
+      this.counterWaiters.set(txId, () => {
+        clearTimeout(timer);
+        resolve(this.counterAccepted.get(txId) ?? null);
+      });
+    });
   }
 
   // ============================================================================

@@ -29,12 +29,47 @@ export interface BuyerPolicy {
   negotiation: {
     rounds_max: number;
     quote_ttl: string; // e.g. "15m"
+
+    // AIP-2.1 additions — all optional for backward compatibility with
+    // existing policy JSON files. Missing fields fall back to defaults
+    // that preserve the original "fixed price, no counter-offer" flow.
+
+    /**
+     * Maximum back-and-forth rounds with ONE provider before walking
+     * away. 1 = take the provider's first quote or reject (no counter).
+     * 2+ = send counter-offer(s) within this budget. Defaults to 1.
+     */
+    rounds_per_provider?: number;
+
+    /**
+     * How to compute counter-offer amounts when policy decides to
+     * negotiate rather than accept:
+     *   'midpoint'  — (quote + target) / 2. Balanced.
+     *   'undercut'  — target (our ideal). Aggressive.
+     *   'walk'      — no counter; reject. Default for rounds_per_provider=1.
+     */
+    counter_strategy?: 'midpoint' | 'undercut' | 'walk';
+
+    /**
+     * Seconds to wait for provider's explicit off-chain acceptance
+     * of a counter-offer before we give up and cancel. Defaults to
+     * the quote_ttl value (provider has as long to respond as their
+     * original quote was valid for).
+     */
+    counter_response_ttl_seconds?: number;
   };
   selection: {
     min_reputation?: number;
     prioritize: ('quality' | 'price' | 'speed' | 'reliability')[];
     weights?: { quality?: number; price?: number; speed?: number; reliability?: number };
   };
+  /**
+   * Target unit price buyer would prefer to pay (separate from the hard
+   * maxUnit ceiling above). Used by DecisionEngine.evaluateQuote to
+   * decide accept-vs-counter: if provider quote ≤ target → accept.
+   * Defaults to 50% of max_unit_price.
+   */
+  target_unit_price?: { amount: number; currency: string; unit: string };
 }
 
 export interface QuoteOffer {

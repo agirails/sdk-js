@@ -1,5 +1,11 @@
 /**
- * DecisionEngine — Weighted scoring for agent candidate ranking.
+ * DecisionEngine — Weighted scoring for agent candidate ranking + per-quote
+ * negotiation decisions.
+ *
+ * Two responsibilities:
+ *   rank(candidates, maxPrice?)         — pick who to quote-request
+ *   evaluateQuote(quote, policy, …)     — AIP-2.1: decide accept|counter|reject
+ *                                         given a provider's signed QuoteMessage
  *
  * Scores policy-valid candidates using configurable weights:
  *   score = w_quality * quality + w_price * price + w_speed * speed + w_reliability * reliability
@@ -8,6 +14,8 @@
  *
  * Tie-breakers: lower price → better on-time rate → earlier in discovery results.
  */
+
+import type { BuyerPolicy } from './PolicyEngine';
 
 // ============================================================================
 // Types
@@ -39,6 +47,41 @@ export interface ScoredCandidate {
     reliability: number;
   };
 }
+
+// ============================================================================
+// AIP-2.1 evaluateQuote types
+// ============================================================================
+
+/**
+ * Minimal quote shape evaluateQuote operates on. Keeps DecisionEngine
+ * decoupled from the full QuoteMessage type + signature verification
+ * (that's BuyerOrchestrator's job).
+ */
+export interface QuoteForEvaluation {
+  /** Base units as string (bigint-safe). */
+  quotedAmount: string;
+  /** Base units as string. */
+  originalAmount: string;
+  /** Base units as string. */
+  maxPrice: string;
+  /** `true` when the provider flags this as their final offer. */
+  final_offer?: boolean;
+}
+
+/**
+ * Decision for a single incoming provider quote.
+ *
+ * - accept  → caller calls acceptQuote(txId, provider's quotedAmount)
+ *             then linkEscrow. Commits at provider's price.
+ * - counter → caller builds + sends a CounterOfferMessage at
+ *             `amountBaseUnits`. On provider's acceptance, caller
+ *             calls acceptQuote at the counter amount + linkEscrow.
+ * - reject  → caller transitions CANCELLED and tries next candidate.
+ */
+export type QuoteEvaluation =
+  | { action: 'accept'; reason: string }
+  | { action: 'counter'; amountBaseUnits: string; reason: string }
+  | { action: 'reject'; reason: string };
 
 // ============================================================================
 // Constants
@@ -159,5 +202,112 @@ export class DecisionEngine {
     });
 
     return scored;
+  }
+
+  /**
+   * AIP-2.1 §5.2 — decide whether to accept a provider's quote,
+   * counter at a better price, or reject outright.
+   *
+   * Decision tree (all arithmetic in BigInt base units; no float drift):
+   *
+   * 1. Quote exceeds maxPrice               → reject
+   * 2. Provider flagged final_offer         → accept if ≤ max; else reject
+   * 3. Quote ≤ target                        → accept (we'd take this
+   *                                            without negotiating)
+   * 4. Rounds budget exhausted              → accept if ≤ max; else reject
+   * 5. counter_strategy === 'walk'          → reject (no counter-offers)
+   * 6. Otherwise                             → counter at strategy amount
+   *
+   * Defaults when policy fields are omitted:
+   *   rounds_per_provider    = 1          (original fixed-price flow)
+   *   counter_strategy       = 'walk'     (no counter unless opted in)
+   *   target_unit_price      = 50% of max (conservative — prefer accept)
+   *
+   * @param quote    - minimal shape of the provider's signed quote
+   * @param policy   - buyer policy; defaults applied inline
+   * @param roundsUsedSoFar - how many rounds we've already spent with
+   *                   THIS provider on THIS txId (0 on first evaluation)
+   */
+  evaluateQuote(
+    quote: QuoteForEvaluation,
+    policy: BuyerPolicy,
+    roundsUsedSoFar = 0,
+  ): QuoteEvaluation {
+    let quoted: bigint;
+    let max: bigint;
+    try {
+      quoted = BigInt(quote.quotedAmount);
+      max = BigInt(quote.maxPrice);
+    } catch {
+      return { action: 'reject', reason: 'Quote has non-numeric amount fields' };
+    }
+
+    if (quoted > max) {
+      return { action: 'reject', reason: `Quote ${quoted} exceeds maxPrice ${max}` };
+    }
+
+    // Target unit price — defaults to 50% of max when policy omits it.
+    // Convert both to base units for comparison. Target is a
+    // per-unit-price in human-readable amount, so scale to base units
+    // with the same decimals the quote is using. We assume 6 (USDC)
+    // until currency is wired end-to-end; validated by the policy.
+    const maxHuman = policy.constraints.max_unit_price.amount;
+    const targetHuman = policy.target_unit_price?.amount ?? maxHuman * 0.5;
+    const targetBu = BigInt(Math.round(targetHuman * 1_000_000));
+
+    if (quote.final_offer === true) {
+      // Provider flagged last round — accept if we can afford it,
+      // otherwise walk. No point trying to counter something marked
+      // "take it or leave it".
+      return quoted <= max
+        ? { action: 'accept', reason: 'Final offer from provider, within max' }
+        : { action: 'reject', reason: 'Final offer exceeds max (should already be filtered above, defense-in-depth)' };
+    }
+
+    if (quoted <= targetBu) {
+      return { action: 'accept', reason: `Quote ${quoted} ≤ target ${targetBu}` };
+    }
+
+    const roundsPerProvider = policy.negotiation.rounds_per_provider ?? 1;
+    if (roundsUsedSoFar + 1 >= roundsPerProvider) {
+      // We're on our last permitted round with this provider. Accept if
+      // affordable rather than walk away; the alternative is starting
+      // over with a worse-ranked candidate.
+      return quoted <= max
+        ? { action: 'accept', reason: `Rounds budget exhausted; accepting ${quoted} ≤ max ${max}` }
+        : { action: 'reject', reason: 'Rounds budget exhausted and quote > max' };
+    }
+
+    const strategy = policy.negotiation.counter_strategy ?? 'walk';
+    if (strategy === 'walk') {
+      return { action: 'reject', reason: 'Quote above target and counter_strategy=walk' };
+    }
+
+    // Compute counter amount per strategy. Never below platform minimum
+    // ($0.05 = 50_000 base units) — that's a QuoteBuilder invariant too,
+    // so we front-load the check to avoid handing the builder garbage.
+    const PLATFORM_MIN = 50_000n;
+    let counterBu: bigint;
+    if (strategy === 'undercut') {
+      // Go straight to our target; provider can take it or counter-back.
+      counterBu = targetBu;
+    } else {
+      // midpoint: halfway between quoted and target.
+      counterBu = (quoted + targetBu) / 2n;
+    }
+    if (counterBu < PLATFORM_MIN) counterBu = PLATFORM_MIN;
+    if (counterBu >= quoted) {
+      // Counter must be strictly below quote for CounterOfferBuilder to
+      // accept it (otherwise "just accept the quote"). Fall back to
+      // accepting the provider's quote if our strategy math doesn't
+      // yield a lower amount.
+      return { action: 'accept', reason: 'Counter math would not undercut — accepting provider quote' };
+    }
+
+    return {
+      action: 'counter',
+      amountBaseUnits: counterBu.toString(),
+      reason: `counter_strategy=${strategy}: counter at ${counterBu} vs quote ${quoted}`,
+    };
   }
 }
