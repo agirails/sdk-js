@@ -192,6 +192,38 @@ export type {
   ProviderPolicyResult,
   IncomingRequest,
 } from './negotiation/ProviderPolicy';
+
+// Buyer-side negotiation (AIP-2.1 §5.3 Phase 3)
+export { BuyerOrchestrator } from './negotiation/BuyerOrchestrator';
+export type {
+  NegotiationResult,
+  RoundResult,
+  OrchestratorConfig,
+  ProgressEvent,
+  BuyerNegotiationContext,
+} from './negotiation/BuyerOrchestrator';
+export { PolicyEngine } from './negotiation/PolicyEngine';
+export type {
+  BuyerPolicy,
+  QuoteOffer,
+  PolicyViolation,
+  PolicyResult,
+} from './negotiation/PolicyEngine';
+export { DecisionEngine } from './negotiation/DecisionEngine';
+export type {
+  ScoringWeights,
+  CandidateStats,
+  ScoredCandidate,
+  QuoteForEvaluation,
+  QuoteEvaluation,
+} from './negotiation/DecisionEngine';
+export { verifyQuoteHashOnChain } from './negotiation/verifyQuoteOnChain';
+export type {
+  VerifySource,
+  VerifyOnChainResult,
+} from './negotiation/verifyQuoteOnChain';
+export { SessionStore } from './negotiation/SessionStore';
+export type { SessionMapping } from './negotiation/SessionStore';
 export type {
   ChannelPayload,
   DedupStore,

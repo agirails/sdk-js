@@ -583,6 +583,17 @@ export class BuyerOrchestrator {
   }): Promise<{ done: boolean; success?: boolean; reason?: string }> {
     const { txId, received, candidateSlug, providerAddress, offer, round, rounds, emit } = args;
 
+    // Any `done: true` return from this method means the tx reached a
+    // terminal decision — cleanup per-tx state before returning so
+    // long-running daemon callers don't accumulate entries in
+    // receivedQuotes / counterAccepted over thousands of negotiations.
+    const terminate = (
+      result: { done: true; success: boolean; reason: string },
+    ): { done: true; success: boolean; reason: string } => {
+      this._cleanupTxState(txId);
+      return result;
+    };
+
     // 1. Cross-reference the off-chain quote with the on-chain hash.
     //    Without a match we cannot trust the pushed message, so fall
     //    through to the existing fixed-price flow rather than negotiate
@@ -606,7 +617,7 @@ export class BuyerOrchestrator {
         tx_id: txId,
       });
       emit({ type: 'round_end', round: round + 1, action: 'error', reason: 'Quote hash mismatch' });
-      return { done: true, success: false, reason: 'hash mismatch' };
+      return terminate({ done: true, success: false, reason: 'hash mismatch' });
     }
     // Attach source tag onto the round record for observability.
     const hashSource: VerifySource = verify.source!;
@@ -628,10 +639,10 @@ export class BuyerOrchestrator {
         action: 'rejected',
         reason: `${evaluation.reason} (quote source: ${hashSource})`,
         tx_id: txId,
-        quoted_price: Number(BigInt(received.quote.quotedAmount)) / 1_000_000,
+        quoted_price: this._baseUnitsForLog(received.quote.quotedAmount),
       });
       emit({ type: 'round_end', round: round + 1, action: 'rejected', reason: evaluation.reason });
-      return { done: true, success: false, reason: evaluation.reason };
+      return terminate({ done: true, success: false, reason: evaluation.reason });
     }
 
     if (evaluation.action === 'accept') {
@@ -653,13 +664,13 @@ export class BuyerOrchestrator {
           tx_id: txId,
         });
         emit({ type: 'round_end', round: round + 1, action: 'error', reason });
-        return { done: true, success: false, reason };
+        return terminate({ done: true, success: false, reason });
       }
       // Update local ledger for daily-spend accounting; tolerate
       // reservation failure (it's bookkeeping — the on-chain escrow
       // is already locked).
       try {
-        this.policyEngine.reserve(offer.commerce_session_id || '', Number(BigInt(amountBaseUnits)) / 1_000_000, offer.currency);
+        this.policyEngine.reserve(offer.commerce_session_id || '', this._baseUnitsForLog(amountBaseUnits), offer.currency);
       } catch {
         // swallow
       }
@@ -671,10 +682,10 @@ export class BuyerOrchestrator {
         action: 'accepted',
         reason,
         tx_id: txId,
-        quoted_price: Number(BigInt(amountBaseUnits)) / 1_000_000,
+        quoted_price: this._baseUnitsForLog(amountBaseUnits),
       });
       emit({ type: 'round_end', round: round + 1, action: 'accepted', reason });
-      return { done: true, success: true, reason };
+      return terminate({ done: true, success: true, reason });
     }
 
     // evaluation.action === 'counter'.
@@ -698,7 +709,7 @@ export class BuyerOrchestrator {
         tx_id: txId,
       });
       emit({ type: 'round_end', round: round + 1, action: 'error', reason });
-      return { done: true, success: false, reason };
+      return terminate({ done: true, success: false, reason });
     }
 
     // Build + send counter-offer. Then wait for provider's off-chain
@@ -733,25 +744,45 @@ export class BuyerOrchestrator {
         tx_id: txId,
       });
       emit({ type: 'round_end', round: round + 1, action: 'error', reason });
-      return { done: true, success: false, reason };
+      return terminate({ done: true, success: false, reason });
     }
 
-    if (received.providerEndpoint) {
+    // Without an endpoint we have nowhere to deliver the signed counter.
+    // Cancel immediately rather than wait counter_response_ttl seconds
+    // for a provider that can't possibly hear from us.
+    if (!received.providerEndpoint) {
       try {
-        await channel.sendCounter(received.providerEndpoint, counter);
-      } catch (err) {
-        const reason = `Counter channel POST failed: ${err instanceof Error ? err.message : String(err)}`;
-        rounds.push({
-          round: round + 1,
-          provider_slug: candidateSlug,
-          provider_address: providerAddress,
-          action: 'error',
-          reason,
-          tx_id: txId,
-        });
-        emit({ type: 'round_end', round: round + 1, action: 'error', reason });
-        return { done: true, success: false, reason };
+        await this.runtime.transitionState(txId, 'CANCELLED');
+      } catch {
+        /* best-effort */
       }
+      const reason = 'Cannot deliver counter — no providerEndpoint set on received quote';
+      rounds.push({
+        round: round + 1,
+        provider_slug: candidateSlug,
+        provider_address: providerAddress,
+        action: 'error',
+        reason,
+        tx_id: txId,
+      });
+      emit({ type: 'round_end', round: round + 1, action: 'error', reason });
+      return terminate({ done: true, success: false, reason });
+    }
+
+    try {
+      await channel.sendCounter(received.providerEndpoint, counter);
+    } catch (err) {
+      const reason = `Counter channel POST failed: ${err instanceof Error ? err.message : String(err)}`;
+      rounds.push({
+        round: round + 1,
+        provider_slug: candidateSlug,
+        provider_address: providerAddress,
+        action: 'error',
+        reason,
+        tx_id: txId,
+      });
+      emit({ type: 'round_end', round: round + 1, action: 'error', reason });
+      return terminate({ done: true, success: false, reason });
     }
 
     // Wait for provider's acceptance signal or timeout.
@@ -772,7 +803,7 @@ export class BuyerOrchestrator {
         tx_id: txId,
       });
       emit({ type: 'round_end', round: round + 1, action: 'timeout', reason });
-      return { done: true, success: false, reason };
+      return terminate({ done: true, success: false, reason });
     }
 
     const finalAmount = accepted.amountBaseUnits;
@@ -790,7 +821,7 @@ export class BuyerOrchestrator {
         tx_id: txId,
       });
       emit({ type: 'round_end', round: round + 1, action: 'error', reason });
-      return { done: true, success: false, reason };
+      return terminate({ done: true, success: false, reason });
     }
     const reason = `Counter accepted at ${finalAmount} base units (source: ${hashSource})`;
     rounds.push({
@@ -800,10 +831,10 @@ export class BuyerOrchestrator {
       action: 'accepted',
       reason,
       tx_id: txId,
-      quoted_price: Number(BigInt(finalAmount)) / 1_000_000,
+      quoted_price: this._baseUnitsForLog(finalAmount),
     });
     emit({ type: 'round_end', round: round + 1, action: 'accepted', reason });
-    return { done: true, success: true, reason };
+    return terminate({ done: true, success: true, reason });
   }
 
   /** Resolve when setCounterAccepted(txId, …) is called, or on timeout. */
@@ -825,6 +856,30 @@ export class BuyerOrchestrator {
         resolve(this.counterAccepted.get(txId) ?? null);
       });
     });
+  }
+
+  /**
+   * Free per-tx negotiation state at terminal outcomes (accept commits,
+   * reject CANCELLED, timeout). Long-running daemon-style runners would
+   * otherwise leak both maps unbounded as txIds accumulate.
+   *
+   * Idempotent — safe to call from multiple cleanup sites.
+   */
+  private _cleanupTxState(txId: string): void {
+    this.receivedQuotes.delete(txId);
+    this.counterAccepted.delete(txId);
+    this.counterWaiters.delete(txId);
+  }
+
+  /**
+   * Display-only downcast: USDC base-units string → Number for the
+   * RoundResult.quoted_price log field. Loses precision above
+   * Number.MAX_SAFE_INTEGER / 1e6 (~$9 quadrillion) but every
+   * comparison the orchestrator actually MAKES uses the bigint
+   * string. The on-chain tx.amount is the source of truth.
+   */
+  private _baseUnitsForLog(baseUnitsStr: string): number {
+    return Number(BigInt(baseUnitsStr)) / 1_000_000;
   }
 
   // ============================================================================

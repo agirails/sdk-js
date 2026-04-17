@@ -246,14 +246,14 @@ export class DecisionEngine {
       return { action: 'reject', reason: `Quote ${quoted} exceeds maxPrice ${max}` };
     }
 
-    // Target unit price — defaults to 50% of max when policy omits it.
-    // Convert both to base units for comparison. Target is a
-    // per-unit-price in human-readable amount, so scale to base units
-    // with the same decimals the quote is using. We assume 6 (USDC)
-    // until currency is wired end-to-end; validated by the policy.
-    const maxHuman = policy.constraints.max_unit_price.amount;
-    const targetHuman = policy.target_unit_price?.amount ?? maxHuman * 0.5;
-    const targetBu = BigInt(Math.round(targetHuman * 1_000_000));
+    // Target unit price — defaults to half of max when policy omits it.
+    // Convert via string-based scaling (no Number * 1e6 round-trip)
+    // so big amounts ($9q+ in base units) stay precise. Default-half
+    // path uses BigInt division which is also exact.
+    const maxHumanRaw = policy.constraints.max_unit_price.amount;
+    const targetBu = policy.target_unit_price
+      ? humanToBaseUnits(policy.target_unit_price.amount, 1_000_000n)
+      : humanToBaseUnits(maxHumanRaw, 1_000_000n) / 2n;
 
     if (quote.final_offer === true) {
       // Provider flagged last round — accept if we can afford it,
@@ -310,4 +310,21 @@ export class DecisionEngine {
       reason: `counter_strategy=${strategy}: counter at ${counterBu} vs quote ${quoted}`,
     };
   }
+}
+
+/**
+ * Convert a human amount (e.g. 5, 10.5) to base units as bigint
+ * using string parsing — never goes through Number * 1e6, so amounts
+ * past the JavaScript safe-integer range still scale exactly.
+ *
+ * `perUsd` should equal 10^decimals for the target currency
+ * (1_000_000n for USDC's 6 decimals).
+ */
+function humanToBaseUnits(amount: number, perUsd: bigint): bigint {
+  const [whole, frac = ''] = String(amount).split('.');
+  const decimalsLen = String(perUsd).length - 1;
+  const fracPadded = (frac + '0'.repeat(decimalsLen)).slice(0, decimalsLen);
+  const wholeBu = BigInt(whole) * perUsd;
+  const fracBu = fracPadded ? BigInt(fracPadded) : 0n;
+  return wholeBu + fracBu;
 }

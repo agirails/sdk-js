@@ -19,6 +19,21 @@
       "types": "./dist/server/index.d.ts",
       "require": "./dist/server/index.js",
       "default": "./dist/server/index.js"
+    },
+    "./negotiation": {
+      "types": "./dist/negotiation/index.d.ts",
+      "require": "./dist/negotiation/index.js",
+      "default": "./dist/negotiation/index.js"
+    },
+    "./builders": {
+      "types": "./dist/builders/index.d.ts",
+      "require": "./dist/builders/index.js",
+      "default": "./dist/builders/index.js"
+    },
+    "./transport": {
+      "types": "./dist/transport/QuoteChannel.d.ts",
+      "require": "./dist/transport/QuoteChannel.js",
+      "default": "./dist/transport/QuoteChannel.js"
     }
   },
   "bin": {

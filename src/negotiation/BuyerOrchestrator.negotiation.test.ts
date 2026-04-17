@@ -301,6 +301,108 @@ describe('BuyerOrchestrator — AIP-2.1 negotiation', () => {
   }, 15_000);
 
   // ==========================================================================
+  // counter without providerEndpoint must fail-fast (no TTL wait)
+  // ==========================================================================
+
+  it('counter path with no providerEndpoint cancels immediately, does not wait TTL', async () => {
+    // counter_response_ttl_seconds is 60s. Test runs in well under 5s.
+    // If we accidentally wait for the timeout, this fails on jest's
+    // own test timeout long before the 60s expires.
+    const channel = new QuoteChannelClient({
+      fetchImpl: (async () => new Response('{}', { status: 201 })) as unknown as typeof fetch,
+      allowInsecureTargets: true,
+    });
+    const orch = new BuyerOrchestrator(
+      makePolicy({
+        rounds_per_provider: 3,
+        counter_strategy: 'midpoint',
+        target_unit_price: { amount: 5, currency: 'USDC', unit: 'job' },
+        counter_response_ttl_seconds: 60, // long TTL — must NOT be hit
+      }),
+      runtime,
+      buyerWallet.address,
+      testDir,
+      { signer: buyerWallet, kernelAddress: KERNEL, chainId: 84532, channel },
+    );
+
+    const negPromise = orch.negotiate({ pollIntervalMs: 50 });
+    let txId: string | undefined;
+    for (let i = 0; i < 40; i++) {
+      const all = await runtime.getAllTransactions();
+      if (all.length > 0) {
+        txId = all[0].id;
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    expect(txId).toBeDefined();
+
+    // Push quote WITHOUT providerEndpoint — counter has nowhere to go.
+    const quote = await preparePushedQuote(txId!, '7000000');
+    orch.setReceivedQuote(txId!, quote, {
+      providerAddress: providerWallet.address,
+      actualEscrow: '5000000',
+      // providerEndpoint deliberately omitted
+    });
+
+    const start = Date.now();
+    const result = await negPromise;
+    const elapsed = Date.now() - start;
+    expect(result.success).toBe(false);
+    expect(elapsed).toBeLessThan(3000); // way under the 60s TTL
+    const lastRound = result.rounds[result.rounds.length - 1];
+    expect(lastRound.action).toBe('error');
+    expect(lastRound.reason).toMatch(/no providerEndpoint/);
+    const tx = await runtime.getTransaction(txId!);
+    expect(tx!.state).toBe('CANCELLED');
+  }, 10_000);
+
+  // ==========================================================================
+  // memory cleanup after terminal outcome
+  // ==========================================================================
+
+  it('frees per-tx state after a terminal negotiation outcome (memory hygiene)', async () => {
+    await runtime.mintTokens(buyerWallet.address, '100000000');
+    const orch = new BuyerOrchestrator(
+      makePolicy({ target_unit_price: { amount: 8, currency: 'USDC', unit: 'job' } }),
+      runtime,
+      buyerWallet.address,
+      testDir,
+    );
+
+    const negPromise = orch.negotiate({ pollIntervalMs: 50 });
+    let txId: string | undefined;
+    for (let i = 0; i < 40; i++) {
+      const all = await runtime.getAllTransactions();
+      if (all.length > 0) {
+        txId = all[0].id;
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    expect(txId).toBeDefined();
+
+    const quote = await preparePushedQuote(txId!, '7000000');
+    orch.setReceivedQuote(txId!, quote, {
+      providerAddress: providerWallet.address,
+      actualEscrow: '5000000',
+    });
+
+    const result = await negPromise;
+    expect(result.success).toBe(true);
+
+    // Reach into private state to verify cleanup.
+    const internal = orch as unknown as {
+      receivedQuotes: Map<string, unknown>;
+      counterAccepted: Map<string, unknown>;
+      counterWaiters: Map<string, unknown>;
+    };
+    expect(internal.receivedQuotes.has(txId!)).toBe(false);
+    expect(internal.counterAccepted.has(txId!)).toBe(false);
+    expect(internal.counterWaiters.has(txId!)).toBe(false);
+  }, 10_000);
+
+  // ==========================================================================
   // hash-mismatch path falls through to legacy or rejects
   // ==========================================================================
 
