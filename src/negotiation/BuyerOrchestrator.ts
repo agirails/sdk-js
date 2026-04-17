@@ -601,6 +601,13 @@ export class BuyerOrchestrator {
     const onChainTx = await this.runtime.getTransaction(txId);
     const onChainHash = onChainTx && (onChainTx as unknown as { quoteHash?: string | null }).quoteHash;
     if (!onChainHash) {
+      // Drop the pushed quote even though we're falling through to the
+      // fixed-price flow — keeping it would leak memory in daemon-style
+      // runners. The pushed quote was specific to THIS round; if a new
+      // (real) quote arrives later for the same txId, callers must push
+      // again. Targeted cleanup here pairs with terminate() on the
+      // done:true paths.
+      this._cleanupTxState(txId);
       return { done: false };
     }
     const verify = verifyQuoteHashOnChain(received.quote, onChainHash, {

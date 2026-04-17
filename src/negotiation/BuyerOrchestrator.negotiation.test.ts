@@ -403,6 +403,73 @@ describe('BuyerOrchestrator — AIP-2.1 negotiation', () => {
   }, 10_000);
 
   // ==========================================================================
+  // cleanup also fires on the done:false fallback path (no on-chain hash)
+  // ==========================================================================
+
+  it('frees per-tx state when negotiation falls through to fixed-price (done:false path)', async () => {
+    // Scenario: tx reaches QUOTED via raw transitionState (legacy
+    // path from a pre-AIP-2.1 agent that never wrote a canonical
+    // hash). Orchestrator enters the negotiation branch, sees no
+    // on-chain hash, returns done:false, falls through to fixed-
+    // price flow. Pre-fix bug: the pushed quote stayed in
+    // receivedQuotes forever because cleanup only ran via the
+    // terminate() wrapper on done:true paths.
+    await runtime.mintTokens(buyerWallet.address, '100000000');
+    const orch = new BuyerOrchestrator(
+      makePolicy({ target_unit_price: { amount: 8, currency: 'USDC', unit: 'job' } }),
+      runtime,
+      buyerWallet.address,
+      testDir,
+    );
+
+    const negPromise = orch.negotiate({ pollIntervalMs: 50 });
+    let txId: string | undefined;
+    for (let i = 0; i < 40; i++) {
+      const all = await runtime.getAllTransactions();
+      if (all.length > 0) {
+        txId = all[0].id;
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    expect(txId).toBeDefined();
+
+    // Push a quote the orchestrator can't verify on-chain.
+    const builder = new QuoteBuilder(providerWallet, new InMemoryNonceManager());
+    const orphanQuote = await builder.build({
+      txId: txId!,
+      provider: providerDID,
+      consumer: consumerDID,
+      quotedAmount: '7000000',
+      originalAmount: '5000000',
+      maxPrice: '10000000',
+      chainId: 84532,
+      kernelAddress: KERNEL,
+    });
+    orch.setReceivedQuote(txId!, orphanQuote, {
+      providerAddress: providerWallet.address,
+      actualEscrow: '5000000',
+    });
+
+    // Transition to QUOTED via the raw path — simulates a legacy
+    // agent that uses transitionState(QUOTED, ...) without the
+    // canonical hash format. Mock runtime stores no quoteHash in
+    // this path, so the negotiation branch's onChainHash check
+    // returns null → done:false with cleanup.
+    setTimeout(async () => {
+      try {
+        await runtime.transitionState(txId!, 'QUOTED');
+      } catch {
+        /* best-effort */
+      }
+    }, 100);
+
+    await negPromise;
+    const internal = orch as unknown as { receivedQuotes: Map<string, unknown> };
+    expect(internal.receivedQuotes.has(txId!)).toBe(false);
+  }, 10_000);
+
+  // ==========================================================================
   // hash-mismatch path falls through to legacy or rejects
   // ==========================================================================
 

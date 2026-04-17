@@ -315,14 +315,34 @@ export class DecisionEngine {
 /**
  * Convert a human amount (e.g. 5, 10.5) to base units as bigint
  * using string parsing — never goes through Number * 1e6, so amounts
- * past the JavaScript safe-integer range still scale exactly.
+ * past the JavaScript safe-integer range still scale exactly (within
+ * what JavaScript's Number can represent).
  *
  * `perUsd` should equal 10^decimals for the target currency
  * (1_000_000n for USDC's 6 decimals).
+ *
+ * Uses Number.toLocaleString to force decimal notation: `String(1e21)`
+ * yields `"1e+21"` which BigInt() rejects, so we instead emit
+ * `"1000000000000000000000"` and parse cleanly. Negatives and
+ * non-finite values fail loud.
  */
 function humanToBaseUnits(amount: number, perUsd: bigint): bigint {
-  const [whole, frac = ''] = String(amount).split('.');
+  if (!Number.isFinite(amount)) {
+    throw new Error(`humanToBaseUnits: amount must be finite (got ${amount})`);
+  }
+  if (amount < 0) {
+    throw new Error(`humanToBaseUnits: amount must be non-negative (got ${amount})`);
+  }
   const decimalsLen = String(perUsd).length - 1;
+  // toLocaleString returns fixed (decimal) notation even when the
+  // number's default String() coercion would use scientific notation.
+  // useGrouping:false strips thousands separators (",") so the parser
+  // sees a single contiguous numeric run.
+  const fixed = amount.toLocaleString('en-US', {
+    useGrouping: false,
+    maximumFractionDigits: decimalsLen,
+  });
+  const [whole, frac = ''] = fixed.split('.');
   const fracPadded = (frac + '0'.repeat(decimalsLen)).slice(0, decimalsLen);
   const wholeBu = BigInt(whole) * perUsd;
   const fracBu = fracPadded ? BigInt(fracPadded) : 0n;

@@ -168,6 +168,49 @@ describe('DecisionEngine.evaluateQuote', () => {
   });
 
   describe('precision', () => {
+    it('handles target_unit_price expressed in scientific notation (1e21)', () => {
+      // Pre-fix bug: String(1e21) → "1e+21", BigInt parse threw.
+      // toLocaleString-based scaling now handles it.
+      const r = engine.evaluateQuote(
+        {
+          quotedAmount: '1000000000000000000000000000', // 1e27 base units
+          originalAmount: '500000000000000000000000000',
+          maxPrice: '2000000000000000000000000000',
+        },
+        {
+          ...policy({ rounds_per_provider: 3, counter_strategy: 'midpoint' }),
+          constraints: {
+            max_unit_price: { amount: 2e21, currency: 'USDC', unit: 'job' },
+            max_daily_spend: { amount: 1e22, currency: 'USDC' },
+          },
+          target_unit_price: { amount: 1e21, currency: 'USDC', unit: 'job' },
+        } as BuyerPolicy,
+      );
+      // No throw — that's the regression. Decision matrix can do
+      // whatever's correct (here: counter at midpoint).
+      expect(['accept', 'counter', 'reject']).toContain(r.action);
+    });
+
+    it('throws cleanly on negative or non-finite amounts (defense)', () => {
+      // These would have produced garbage with the previous string-of-Number
+      // approach. Now they fail loud at the boundary.
+      expect(() => engine.evaluateQuote(
+        quote(),
+        {
+          ...policy({ rounds_per_provider: 3, counter_strategy: 'midpoint' }),
+          target_unit_price: { amount: -5, currency: 'USDC', unit: 'job' },
+        } as BuyerPolicy,
+      )).toThrow(/non-negative/);
+
+      expect(() => engine.evaluateQuote(
+        quote(),
+        {
+          ...policy({ rounds_per_provider: 3, counter_strategy: 'midpoint' }),
+          target_unit_price: { amount: NaN, currency: 'USDC', unit: 'job' },
+        } as BuyerPolicy,
+      )).toThrow(/finite/);
+    });
+
     it('preserves exact base-unit amounts (no float drift on big numbers)', () => {
       // $1M ideal, $10M quote, $20M max — beyond Number.MAX_SAFE_INTEGER
       // when expressed in base units. evaluateQuote must keep it exact.
