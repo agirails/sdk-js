@@ -1,5 +1,22 @@
-import { Contract, Signer, BytesLike, ethers, AbiCoder } from 'ethers';
+import { Contract, Interface, Signer, BytesLike, ethers, AbiCoder } from 'ethers';
 import ACTPKernelABI from '../abi/ACTPKernel.json';
+
+/**
+ * Legacy 16-field tuple shape for `getTransaction` — matches what's
+ * deployed on Base Mainnet (kernel `0x132B…2d29`, deployed 2026-02-09)
+ * and what was canonical through SDK 2.7.0. The current 19-field ABI
+ * (`requesterAgentId`, `disputeInitiator`, `disputeBond` appended)
+ * doesn't decode against the older deployment, so we keep this
+ * Interface as a fallback that ethers can decode against when the
+ * primary call returns BAD_DATA.
+ *
+ * When this fallback is used, the three new fields are absent —
+ * `Transaction` type already declares them optional / accepts undefined
+ * (see types/transaction.ts).
+ */
+const LEGACY_GET_TRANSACTION_IFACE = new Interface([
+  'function getTransaction(bytes32 transactionId) view returns ((bytes32 transactionId,address requester,address provider,uint8 state,uint256 amount,uint256 createdAt,uint256 updatedAt,uint256 deadline,bytes32 serviceHash,address escrowContract,bytes32 escrowId,bytes32 attestationUID,uint256 disputeWindow,bytes32 metadata,uint16 platformFeeBpsLocked,uint256 agentId))',
+]);
 import {
   State,
   StateMachine,
@@ -556,9 +573,46 @@ export class ACTPKernel {
         throw new TransactionNotFoundError(txId);
       }
 
-      throw new Error(
-        `Failed to fetch transaction ${txId}: ${typeof reason === 'string' ? reason : String(reason)}`
-      );
+      // Decode failure → fall back to legacy 16-field ABI. The deployed
+      // Base Mainnet kernel (and any older test deployments) returns
+      // the older tuple shape that the current 19-field ABI can't
+      // decode. Without this fallback every call against an older
+      // deployment surfaces as a generic decode error, and downstream
+      // BlockchainRuntime.getTransaction silently swallows it as
+      // "transaction not found" — provider sees TX_NOT_FOUND for a
+      // real on-chain tx. (Damir review report 2026-04-18, Issue A.)
+      const isDecodeFailure =
+        error?.code === 'BAD_DATA' ||
+        (typeof reason === 'string' &&
+          reason.toLowerCase().includes('could not decode result data'));
+      if (isDecodeFailure) {
+        // Surface the contract's reader (provider) for the legacy call.
+        // contract.runner is a Signer in our normal construction; it
+        // exposes `.provider` for read-only calls.
+        const runner = (this.contract as unknown as { runner?: { provider?: unknown } }).runner;
+        const readProvider = (runner?.provider ?? runner) as ethers.ContractRunner | null;
+        if (!readProvider) {
+          throw new Error(
+            `Failed to fetch transaction ${txId}: contract decode failed and no read provider available for legacy fallback`,
+          );
+        }
+        try {
+          const legacyContract = new Contract(this.address, LEGACY_GET_TRANSACTION_IFACE, readProvider);
+          txData = await legacyContract.getTransaction(txId);
+        } catch (legacyError: any) {
+          const legacyReason = legacyError?.reason || legacyError?.shortMessage || legacyError?.message || '';
+          if (typeof legacyReason === 'string' && legacyReason.toLowerCase().includes('tx missing')) {
+            throw new TransactionNotFoundError(txId);
+          }
+          throw new Error(
+            `Failed to fetch transaction ${txId} (legacy fallback also failed): ${typeof legacyReason === 'string' ? legacyReason : String(legacyReason)}`,
+          );
+        }
+      } else {
+        throw new Error(
+          `Failed to fetch transaction ${txId}: ${typeof reason === 'string' ? reason : String(reason)}`
+        );
+      }
     }
 
     // Check if transaction exists (createdAt !== 0)

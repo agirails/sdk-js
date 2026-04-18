@@ -440,6 +440,115 @@ describe('ACTPKernel', () => {
       ).rejects.toThrow(TransactionNotFoundError);
     });
 
+    describe('legacy 16-field ABI fallback (Damir review Issue A)', () => {
+      // Deployed Base mainnet kernel still returns the 16-field tuple.
+      // SDK's primary 19-field ABI decode fails with BAD_DATA; the
+      // kernel must fall back to LEGACY_GET_TRANSACTION_IFACE. Without
+      // this path the CLI surfaces TX_NOT_FOUND for real on-chain txs.
+
+      /**
+       * Fake provider that returns pre-encoded 16-field tuple bytes for
+       * eth_call. Lets the real Contract+Interface decode pipeline run
+       * end-to-end inside the unit test — no ethers.Contract spy.
+       */
+      function makeLegacyProvider(encodedHex: string): { call: (tx: unknown) => Promise<string> } {
+        return {
+          call: jest.fn().mockResolvedValue(encodedHex),
+        };
+      }
+
+      function encodeLegacyTuple(values: {
+        transactionId: string; requester: string; provider: string;
+        state: number; amount: bigint;
+        createdAt: bigint; updatedAt: bigint; deadline: bigint;
+        serviceHash: string; escrowContract: string; escrowId: string;
+        attestationUID: string; disputeWindow: bigint; metadata: string;
+        platformFeeBpsLocked: number; agentId: bigint;
+      }): string {
+        const coder = ethers.AbiCoder.defaultAbiCoder();
+        return coder.encode(
+          ['(bytes32,address,address,uint8,uint256,uint256,uint256,uint256,bytes32,address,bytes32,bytes32,uint256,bytes32,uint16,uint256)'],
+          [[
+            values.transactionId, values.requester, values.provider,
+            values.state, values.amount,
+            values.createdAt, values.updatedAt, values.deadline,
+            values.serviceHash, values.escrowContract, values.escrowId,
+            values.attestationUID, values.disputeWindow, values.metadata,
+            values.platformFeeBpsLocked, values.agentId,
+          ]],
+        );
+      }
+
+      it('falls back to legacy ABI on BAD_DATA and returns a normalized Transaction', async () => {
+        // Primary 19-field contract fails to decode (simulates what
+        // happens against deployed Base mainnet kernel).
+        mockContract.getTransaction.mockRejectedValue({
+          code: 'BAD_DATA',
+          message: 'could not decode result data',
+        });
+
+        // Pre-encode the legacy 16-field tuple as raw bytes. The real
+        // Contract+Interface pipeline inside the fallback will decode
+        // these correctly.
+        const encoded = encodeLegacyTuple({
+          transactionId: TX_ID,
+          requester: REQUESTER,
+          provider: PROVIDER,
+          state: 5, // SETTLED
+          amount: 2000000n,
+          createdAt: 1700000000n,
+          updatedAt: 1700000100n,
+          deadline: 1700086400n,
+          serviceHash: ethers.ZeroHash,
+          escrowContract: '0x6aAF45882c4b0dD34130ecC790bb5Ec6be7fFb99',
+          escrowId: TX_ID,
+          attestationUID: ethers.ZeroHash,
+          disputeWindow: 172800n,
+          metadata: ethers.ZeroHash,
+          platformFeeBpsLocked: 100,
+          agentId: 0n,
+        });
+        mockContract.runner = { provider: makeLegacyProvider(encoded) };
+
+        const tx = await kernel.getTransaction(TX_ID);
+        expect(tx.requester.toLowerCase()).toBe(REQUESTER.toLowerCase());
+        expect(tx.provider.toLowerCase()).toBe(PROVIDER.toLowerCase());
+        expect(tx.amount).toBe(2000000n);
+        expect(tx.state).toBe(5); // SETTLED
+        expect(tx.requesterAgentId).toBeUndefined(); // absent in legacy shape
+      });
+
+      it('preserves "Tx missing" semantics on legacy fallback path too', async () => {
+        mockContract.getTransaction.mockRejectedValue({
+          code: 'BAD_DATA',
+          message: 'could not decode result data',
+        });
+        mockContract.runner = {
+          provider: {
+            call: jest.fn().mockRejectedValue({ reason: 'Tx missing' }),
+          },
+        };
+        await expect(kernel.getTransaction(TX_ID)).rejects.toThrow(TransactionNotFoundError);
+      });
+
+      it('throws a clear error when BAD_DATA but no read provider is available', async () => {
+        mockContract.getTransaction.mockRejectedValue({
+          code: 'BAD_DATA',
+          message: 'could not decode result data',
+        });
+        mockContract.runner = undefined;
+        await expect(kernel.getTransaction(TX_ID)).rejects.toThrow(/no read provider|contract decode/i);
+      });
+
+      it('propagates non-decode errors without invoking the legacy fallback', async () => {
+        mockContract.getTransaction.mockRejectedValue({
+          code: 'NETWORK_ERROR',
+          message: 'Connection refused',
+        });
+        await expect(kernel.getTransaction(TX_ID)).rejects.toThrow(/Connection refused/);
+      });
+    });
+
     it('should convert BigInt values to numbers', async () => {
       mockContract.getTransaction.mockResolvedValue({
         transactionId: TX_ID,

@@ -13,7 +13,13 @@ import { ethers } from 'ethers';
 // ============================================================================
 
 const BASE_SEPOLIA_RPC_URL = process.env.BASE_SEPOLIA_RPC || 'https://sepolia.base.org';
-const BASE_MAINNET_RPC_URL = process.env.BASE_MAINNET_RPC || 'https://mainnet.base.org';
+// Default Base mainnet RPC: publicnode. `mainnet.base.org` is known to
+// return response shapes that ethers v6.15.0 misinterprets as reverts
+// with no data (specifically on ERC-4337 EntryPoint.getNonce during
+// userOp preparation), breaking every new integrator's first mainnet
+// settle. publicnode handles the same read with the same ethers version
+// cleanly. (Damir review report 2026-04-18, Issue B.)
+const BASE_MAINNET_RPC_URL = process.env.BASE_MAINNET_RPC || 'https://base-rpc.publicnode.com';
 
 // Shared AA keys for out-of-the-box UX. These are PUBLIC keys — equivalent
 // to Firebase web apiKey or a Stripe publishable key. The actual security

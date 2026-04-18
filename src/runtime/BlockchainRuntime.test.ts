@@ -377,6 +377,35 @@ describe('BlockchainRuntime', () => {
         expect(state).toBe(stateMap[parseInt(num)]);
       }
     });
+
+    // Companion fix for Damir review Issue A: BlockchainRuntime.getTransaction
+    // used to swallow ALL errors and return null. That hid decode / RPC /
+    // network errors as "not found", making Issue A surface as TX_NOT_FOUND
+    // for real on-chain transactions. Now: null ONLY for confirmed-missing.
+    describe('error propagation (Damir review companion fix)', () => {
+      // Import inside the describe to avoid polluting the outer scope.
+      const { TransactionNotFoundError } = jest.requireActual('../errors');
+
+      it('returns null for TransactionNotFoundError from kernel', async () => {
+        jest.spyOn((runtime as any).kernel, 'getTransaction')
+          .mockRejectedValue(new TransactionNotFoundError(TX_ID));
+        const result = await runtime.getTransaction(TX_ID);
+        expect(result).toBeNull();
+      });
+
+      it('propagates decode / network / generic errors (was swallowed pre-fix)', async () => {
+        jest.spyOn((runtime as any).kernel, 'getTransaction')
+          .mockRejectedValue(new Error('Failed to fetch transaction: could not decode result data'));
+        await expect(runtime.getTransaction(TX_ID)).rejects.toThrow(/decode/);
+      });
+
+      it('propagates BAD_DATA errors from the kernel as-is', async () => {
+        const err: any = new Error('could not decode result data');
+        err.code = 'BAD_DATA';
+        jest.spyOn((runtime as any).kernel, 'getTransaction').mockRejectedValue(err);
+        await expect(runtime.getTransaction(TX_ID)).rejects.toThrow(/BAD_DATA|decode/);
+      });
+    });
   });
 
   describe('releaseEscrow()', () => {

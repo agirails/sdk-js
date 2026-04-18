@@ -24,7 +24,7 @@ import { EASHelper, EASConfig } from '../protocol/EASHelper';
 import { NetworkConfig, getNetwork } from '../config/networks';
 import { IACTPRuntime, CreateTransactionParams } from './IACTPRuntime';
 import { MockTransaction, TransactionState } from './types/MockState';
-import { ValidationError } from '../errors';
+import { ValidationError, TransactionNotFoundError } from '../errors';
 import { QuoteBuilder, QuoteMessage } from '../builders/QuoteBuilder';
 import { Wallet as EthersWallet } from 'ethers';
 import { InMemoryNonceManager } from '../utils/NonceManager';
@@ -610,8 +610,15 @@ export class BlockchainRuntime implements IACTPRuntime {
         platformFeeBpsLocked: tx.platformFeeBpsLocked !== undefined ? Number(tx.platformFeeBpsLocked) : undefined,
       };
     } catch (error) {
-      // If contract call fails, return null
-      return null;
+      // Return null ONLY for confirmed-missing transactions. Anything
+      // else (decode failure, RPC timeout, network error, contract
+      // version mismatch) gets propagated so callers can distinguish
+      // "not found" from "couldn't read". Pre-fix: every error was
+      // swallowed as null, which made the CLI report TX_NOT_FOUND for
+      // a real on-chain tx whose ABI didn't match — see Damir review
+      // 2026-04-18, Issue A + companion.
+      if (error instanceof TransactionNotFoundError) return null;
+      throw error;
     }
   }
 
