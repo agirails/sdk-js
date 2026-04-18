@@ -162,7 +162,7 @@ export class RelayChannel implements NegotiationChannel {
     const pollOnce = async (): Promise<void> => {
       if (state.cancelled) return;
       try {
-        const url = new URL(`${this.baseUrl}/api/v1/agents/${encodeURIComponent(agentDid)}/negotiations/inbox`);
+        const url = new URL(`${this.baseUrl}/api/v1/negotiations/inbox/${encodeURIComponent(agentDid)}`);
         if (state.cursor) url.searchParams.set('after', state.cursor);
         const res = await this.fetchImpl(url.toString());
         if (res.ok) {

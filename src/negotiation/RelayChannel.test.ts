@@ -44,7 +44,7 @@ function makeFetchFake(state: RelayState): typeof fetch {
       return new Response(JSON.stringify({ messages: filtered.map((m) => ({ cursor: m.cursor, envelope: m.envelope, receivedAt: m.receivedAt })) }), { status: 200 });
     }
 
-    if (method === 'GET' && /^\/api\/v1\/agents\/[^/]+\/negotiations\/inbox$/.test(path)) {
+    if (method === 'GET' && /^\/api\/v1\/negotiations\/inbox\/[^/]+$/.test(path)) {
       const after = url.searchParams.get('after');
       const filtered = state.agentInbox.filter((m) => !after || Number(m.cursor) > Number(after));
       return new Response(JSON.stringify({ messages: filtered }), { status: 200 });
@@ -156,7 +156,7 @@ describe('RelayChannel', () => {
     expect(received).toHaveLength(0);
   });
 
-  it('subscribeAgent polls /api/v1/agents/:did/negotiations/inbox and delivers', async () => {
+  it('subscribeAgent polls /api/v1/negotiations/inbox/:did and delivers', async () => {
     const providerDID = `did:ethr:${CHAIN_ID}:${provider.address}`;
     const collected: Array<{ txId: string; type: string }> = [];
     channel.subscribeAgent(providerDID, (txId, d) => { collected.push({ txId, type: d.envelope.type }); });
