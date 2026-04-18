@@ -187,9 +187,12 @@ export class MockChannel implements NegotiationChannel {
   }
 
   private async deliverToSub(sub: Subscriber, stored: StoredMessage): Promise<void> {
+    // Same dedup-after-verify ordering as RelayChannel — see security
+    // comment there. Without it, a tampered message with reused
+    // signature would poison the dedup-set and silently drop the
+    // subsequent legitimate message.
     const sig = stored.envelope.message.signature;
     if (sub.delivered.has(sig)) return;
-    sub.delivered.add(sig);
 
     if (!this.skipVerify) {
       const chainId = stored.envelope.message.chainId;
@@ -207,6 +210,9 @@ export class MockChannel implements NegotiationChannel {
         return; // verify failure → drop, mirror RelayChannel
       }
     }
+
+    // Verify passed (or was skipped) → safe to dedup.
+    sub.delivered.add(sig);
 
     const delivered: DeliveredMessage = {
       cursor: stored.cursor,

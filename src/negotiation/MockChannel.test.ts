@@ -134,6 +134,36 @@ describe('MockChannel', () => {
     expect(received).toHaveLength(0);
   });
 
+  // P0 audit fix B: dedup-set must NOT remember signatures that failed
+  // verify, otherwise an attacker who reuses a real signature in a
+  // tampered envelope can poison the dedup-set and block the legitimate
+  // message that arrives later.
+  it('does NOT poison dedup-set on verify failure (legitimate message still delivers later)', async () => {
+    const received: DeliveredMessage[] = [];
+    channel.subscribeTxId(TX_ID, (d) => { received.push(d); });
+
+    // Step 1: build a legitimate quote, capture its signature.
+    const legit = await buildQuote(provider, consumer);
+    const realSig = (legit.message as QuoteMessage).signature;
+
+    // Step 2: attacker reuses the real signature in a tampered envelope
+    // (different quotedAmount → EIP-712 verify will fail).
+    const tampered: NegotiationMessage = {
+      type: 'agirails.quote.v1',
+      message: { ...(legit.message as QuoteMessage), quotedAmount: '99999999', signature: realSig },
+    };
+    await channel.post(TX_ID, tampered);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(received).toHaveLength(0); // tampered dropped (verify fail)
+
+    // Step 3: legit message arrives. Pre-fix bug: it would be dropped
+    // because realSig is now in the dedup-set. Post-fix: delivered.
+    await channel.post(TX_ID, legit);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(received).toHaveLength(1);
+    expect(received[0].envelope.message.signature).toBe(realSig);
+  });
+
   it('drops messages for unknown chainId (kernel address not configured)', async () => {
     const otherChannel = new MockChannel({ kernelAddressByChainId: {} }); // no chains configured
     const received: DeliveredMessage[] = [];

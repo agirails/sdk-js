@@ -89,13 +89,21 @@ describe('BuyerOrchestrator — channel-driven (3.5.0)', () => {
    * Provider posts a quote. On the FIRST call for a txId, also anchors
    * on-chain via runtime.submitQuote (matches AIP-2 sequence). Subsequent
    * re-quotes are off-chain only — kernel forbids QUOTED → QUOTED on-chain.
+   *
+   * `maxPrice` defaults to `10000000` for back-compat with existing tests;
+   * pass an override to simulate a poisoned re-quote that inflates the
+   * ceiling (used by maxPrice-substitution security test).
    */
   const firstQuoteByTx = new Set<string>();
-  async function postProviderQuote(txId: string, quotedAmount: string): Promise<QuoteMessage> {
+  async function postProviderQuote(
+    txId: string,
+    quotedAmount: string,
+    opts: { maxPrice?: string } = {},
+  ): Promise<QuoteMessage> {
     const builder = new QuoteBuilder(providerWallet, providerNm);
     const quote = await builder.build({
       txId, provider: providerDID, consumer: consumerDID,
-      quotedAmount, originalAmount: '5000000', maxPrice: '10000000',
+      quotedAmount, originalAmount: '5000000', maxPrice: opts.maxPrice ?? '10000000',
       chainId: CHAIN_ID, kernelAddress: KERNEL,
     });
     if (!firstQuoteByTx.has(txId)) {
@@ -345,6 +353,41 @@ describe('BuyerOrchestrator — channel-driven (3.5.0)', () => {
     expect(lastRound.action).toBe('error');
     expect(lastRound.reason).toMatch(/hash mismatch/i);
   }, 10_000);
+
+  // ==========================================================================
+  // P0 audit fix A: re-quote maxPrice substitution attack
+  // ==========================================================================
+
+  it('rejects a re-quote whose maxPrice is higher than the original (substitution attack)', async () => {
+    // Provider's first quote anchors maxPrice = $10 (matches buyer's policy).
+    // On round 2 the provider tries to "raise the ceiling" with a re-quote
+    // claiming maxPrice = $50 — without the guard the buyer would treat
+    // $50 as the new ceiling and could commit above policy on the
+    // accept-if-affordable last round.
+    const orch = makeBuyerOrch({
+      rounds_per_provider: 3, counter_strategy: 'midpoint',
+      target_unit_price: { amount: 5, currency: 'USDC', unit: 'job' },
+      counter_response_ttl_seconds: 5,
+    });
+    const negPromise = orch.negotiate({ pollIntervalMs: 50 });
+    const txId = await awaitTxId();
+
+    await postProviderQuote(txId, '9000000'); // first quote, maxPrice $10
+    await waitForChannelMessage(channel, txId, 'agirails.counteroffer.v1', 3000);
+
+    // Poisoned re-quote: same provider DID, same chain, same txId — but
+    // maxPrice raised from $10 to $50. Channel-level EIP-712 verify
+    // would still pass (same signer, valid sig). Buyer must reject.
+    await postProviderQuote(txId, '8000000', { maxPrice: '50000000' });
+
+    const result = await negPromise;
+    expect(result.success).toBe(false);
+    const lastRound = result.rounds[result.rounds.length - 1];
+    expect(lastRound.action).toBe('error');
+    expect(lastRound.reason).toMatch(/maxPrice/);
+    const tx = await runtime.getTransaction(txId);
+    expect(tx!.state).toBe('CANCELLED');
+  }, 15_000);
 });
 
 /**

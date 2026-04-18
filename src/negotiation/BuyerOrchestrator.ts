@@ -735,10 +735,22 @@ export class BuyerOrchestrator {
         }
         hashSource = verify.source!;
       } else {
-        // Subsequent re-quotes: verify provider DID is unchanged from
-        // the original (same address recovered from sig is the channel's
-        // job; here we just guard that the stated provider didn't switch).
+        // Subsequent re-quotes: guard against two attacker-controlled
+        // mutations the channel-level EIP-712 verify cannot catch on
+        // its own (same provider can sign anything, including poisoned
+        // re-quotes):
+        //
+        //   (a) provider DID switched mid-negotiation
+        //   (b) maxPrice inflated mid-negotiation — without this
+        //       guard, the buyer's `evaluateQuote` accept-if-affordable
+        //       branch on the last round would compare against the
+        //       attacker's inflated max, committing the buyer above
+        //       its own policy ceiling. (P0 audit finding.)
+        //
+        // We anchor BOTH provider and maxPrice to the FIRST quote
+        // (which already cross-checked on-chain hash on round 0).
         if (currentQuote.provider !== firstQuoteEnv.message.provider) {
+          try { await this.runtime.transitionState(txId, 'CANCELLED'); } catch { /* best-effort */ }
           rounds.push({
             round: round + 1,
             provider_slug: candidateSlug,
@@ -749,6 +761,19 @@ export class BuyerOrchestrator {
           });
           emit({ type: 'round_end', round: round + 1, action: 'error', reason: 'provider mismatch on re-quote' });
           return terminate({ done: true, success: false, reason: 'provider mismatch' });
+        }
+        if (currentQuote.maxPrice !== firstQuoteEnv.message.maxPrice) {
+          try { await this.runtime.transitionState(txId, 'CANCELLED'); } catch { /* best-effort */ }
+          rounds.push({
+            round: round + 1,
+            provider_slug: candidateSlug,
+            provider_address: providerAddress,
+            action: 'error',
+            reason: `Re-quote maxPrice mismatch: ${currentQuote.maxPrice} vs original ${firstQuoteEnv.message.maxPrice} — provider may not raise the ceiling mid-negotiation`,
+            tx_id: txId,
+          });
+          emit({ type: 'round_end', round: round + 1, action: 'error', reason: 'maxPrice substitution attempt on re-quote' });
+          return terminate({ done: true, success: false, reason: 'maxPrice substitution' });
         }
         hashSource = 'aip2';
       }

@@ -218,9 +218,14 @@ export class RelayChannel implements NegotiationChannel {
     invoke: (d: DeliveredMessage) => void | Promise<void>,
   ): Promise<void> {
     // Dedup by signature (every signed message has a unique sig per nonce).
+    // CRITICAL: dedup-check BEFORE verify, but only ADD to dedup-set AFTER
+    // verify SUCCEEDS. Otherwise an attacker who can POST to the relay
+    // (it's permissionless) can craft a tampered envelope carrying a
+    // valid signature — verify fails, message is dropped, but the sig
+    // is now in the dedup-set; when the legitimate message later
+    // arrives it gets silently dropped as "duplicate". (P0 audit finding.)
     const sig = item.envelope.message.signature;
     if (state.delivered.has(sig)) return;
-    state.delivered.add(sig);
 
     // Verify EIP-712 against the kernel address for this chainId.
     const chainId = item.envelope.message.chainId;
@@ -241,6 +246,10 @@ export class RelayChannel implements NegotiationChannel {
       this.log('warn', `Dropping message that failed verify`, err);
       return;
     }
+
+    // Verify passed → safe to dedup. From here on the same sig will not
+    // re-deliver even on poll-loop overlap.
+    state.delivered.add(sig);
 
     const delivered: DeliveredMessage = {
       cursor: item.cursor,
