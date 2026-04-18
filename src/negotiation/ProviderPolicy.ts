@@ -48,6 +48,40 @@ export interface ProviderPolicy {
    * Defaults to 60s if omitted.
    */
   min_deadline_seconds?: number;
+
+  /**
+   * Multi-round counter strategy (3.5.0). Controls what the orchestrator
+   * does when a buyer's counter is below our floor:
+   *
+   *   'walk'     — reject and log; buyer's TTL expires → CANCELLED. Default.
+   *   'concede'  — re-quote at a price between our previous quote and
+   *                our floor (governed by `concede_pct`), up to
+   *                `max_requotes` times before walking.
+   *
+   * The buyer side enforces its own `rounds_per_provider` cap; provider
+   * `max_requotes` is independent and provides defense-in-depth — if a
+   * misbehaving buyer keeps countering low, we stop responding after N
+   * concessions.
+   */
+  counter_strategy?: 'walk' | 'concede';
+
+  /**
+   * Concede strategy: when re-quoting, our new amount =
+   *   last_quote - (last_quote - floor) * concede_pct / 100
+   *
+   * Default 30 (we move 30% of the way from last quote toward floor
+   * each round). Bounded [1, 99]; 100 would give the buyer everything
+   * (just accept), 0 would be a no-op.
+   */
+  concede_pct?: number;
+
+  /**
+   * Hard cap on re-quotes per (provider, txId). Default 2 — combined
+   * with the buyer's typical rounds_per_provider=3 this gives 1 initial
+   * quote + 2 re-quotes = 3 quote messages total per tx, matching the
+   * buyer's expected exchange depth.
+   */
+  max_requotes?: number;
 }
 
 export type ProviderPolicyViolation =
@@ -250,28 +284,84 @@ export class ProviderPolicyEngine {
   }
 
   /**
-   * Decide whether to accept a buyer's counter-offer.
+   * Decide what to do with a buyer's counter-offer (3.5.0 multi-round).
    *
-   * Simple rule: accept if counter ≥ min_acceptable; reject otherwise.
-   * All arithmetic is BigInt on base units — no float drift.
-   * Phase 3 will extend this with `counter-counter` strategies.
+   *   accept  — counter ≥ floor: take the deal
+   *   requote — counter < floor AND counter_strategy === 'concede' AND
+   *             requotesUsed < max_requotes: send a new quote at the
+   *             concession price (between last quote and floor)
+   *   reject  — anything else (walk strategy, or requote budget spent)
+   *
+   * `lastQuoteAmountBaseUnits` is the amount we most recently quoted to
+   * this txId — the concession baseline. On the FIRST counter it equals
+   * the counter's `quoteAmount` field (provider's original quote);
+   * on subsequent rounds it equals the orchestrator's most recent
+   * re-quote.
+   *
+   * `requotesUsed` is how many re-quotes we've already sent for this
+   * txId. Pass 0 on first call.
+   *
+   * All arithmetic uses BigInt on base units — no float drift.
    */
-  evaluateCounter(counterAmountBaseUnits: string): { decision: 'accept' | 'reject'; reason: string } {
+  evaluateCounter(
+    counterAmountBaseUnits: string,
+    lastQuoteAmountBaseUnits: string,
+    requotesUsed: number,
+  ): { decision: 'accept' | 'reject' | 'requote'; reason: string; amountBaseUnits?: string } {
     let counter: bigint;
     try {
       counter = BigInt(counterAmountBaseUnits);
     } catch {
       return { decision: 'reject', reason: `Invalid counter amount: ${counterAmountBaseUnits}` };
     }
-    if (counter < this.floorBaseUnits) {
+    if (counter >= this.floorBaseUnits) {
       return {
-        decision: 'reject',
-        reason: `Counter ${formatFromBaseUnits(counter, this.currency)} below our floor ${formatFromBaseUnits(this.floorBaseUnits, this.currency)}`,
+        decision: 'accept',
+        reason: `Counter ${formatFromBaseUnits(counter, this.currency)} meets our floor`,
       };
     }
+
+    // Below floor — consider concession.
+    const strategy = this.policy.counter_strategy ?? 'walk';
+    if (strategy === 'walk') {
+      return {
+        decision: 'reject',
+        reason: `Counter ${formatFromBaseUnits(counter, this.currency)} below floor; counter_strategy=walk`,
+      };
+    }
+    const maxRequotes = this.policy.max_requotes ?? 2;
+    if (requotesUsed >= maxRequotes) {
+      return {
+        decision: 'reject',
+        reason: `Counter below floor and requote budget exhausted (${requotesUsed}/${maxRequotes})`,
+      };
+    }
+
+    // Concede: new quote = last - (last - floor) * pct / 100.
+    let lastQuote: bigint;
+    try {
+      lastQuote = BigInt(lastQuoteAmountBaseUnits);
+    } catch {
+      return { decision: 'reject', reason: `Invalid lastQuoteAmount: ${lastQuoteAmountBaseUnits}` };
+    }
+    if (lastQuote <= this.floorBaseUnits) {
+      // Already at floor — nothing to concede.
+      return {
+        decision: 'reject',
+        reason: `Cannot concede: last quote ${formatFromBaseUnits(lastQuote, this.currency)} already at/below floor`,
+      };
+    }
+    const pct = this.policy.concede_pct ?? 30;
+    const safePct = pct < 1 ? 1 : pct > 99 ? 99 : pct;
+    const gap = lastQuote - this.floorBaseUnits;
+    const concession = (gap * BigInt(safePct)) / 100n;
+    let newQuote = lastQuote - concession;
+    // Defensive: never go below floor regardless of math.
+    if (newQuote < this.floorBaseUnits) newQuote = this.floorBaseUnits;
     return {
-      decision: 'accept',
-      reason: `Counter ${formatFromBaseUnits(counter, this.currency)} meets our floor`,
+      decision: 'requote',
+      amountBaseUnits: newQuote.toString(),
+      reason: `Conceding ${safePct}% from ${formatFromBaseUnits(lastQuote, this.currency)} toward floor → ${formatFromBaseUnits(newQuote, this.currency)} (round ${requotesUsed + 1}/${maxRequotes})`,
     };
   }
 

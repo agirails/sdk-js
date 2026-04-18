@@ -152,14 +152,65 @@ describe('ProviderPolicyEngine', () => {
   describe('evaluateCounter()', () => {
     it('accepts a counter ≥ floor', () => {
       const engine = new ProviderPolicyEngine(basePolicy());
-      const verdict = engine.evaluateCounter('5000000'); // $5 exactly floor
+      const verdict = engine.evaluateCounter('5000000', '7000000', 0); // $5 exactly floor
       expect(verdict.decision).toBe('accept');
     });
 
-    it('rejects a counter below floor', () => {
+    it('rejects a counter below floor with default walk strategy', () => {
       const engine = new ProviderPolicyEngine(basePolicy());
-      const verdict = engine.evaluateCounter('4000000'); // $4 < floor
+      const verdict = engine.evaluateCounter('4000000', '7000000', 0);
       expect(verdict.decision).toBe('reject');
+      expect(verdict.reason).toMatch(/walk/);
+    });
+
+    it('requotes (concedes) below floor when counter_strategy=concede', () => {
+      const engine = new ProviderPolicyEngine(
+        basePolicy({ counter_strategy: 'concede', concede_pct: 50, max_requotes: 3 }),
+      );
+      // Counter $3 below floor $5; last quote $7. Concede 50% of (7-5)=$1 → re-quote $6.
+      const verdict = engine.evaluateCounter('3000000', '7000000', 0);
+      expect(verdict.decision).toBe('requote');
+      expect(verdict.amountBaseUnits).toBe('6000000');
+    });
+
+    it('rejects on concede strategy when requote budget exhausted', () => {
+      const engine = new ProviderPolicyEngine(
+        basePolicy({ counter_strategy: 'concede', max_requotes: 1 }),
+      );
+      const verdict = engine.evaluateCounter('3000000', '7000000', 1); // already used 1
+      expect(verdict.decision).toBe('reject');
+      expect(verdict.reason).toMatch(/budget exhausted/);
+    });
+
+    it('rejects on concede when last quote already at floor (nothing to concede)', () => {
+      const engine = new ProviderPolicyEngine(
+        basePolicy({ counter_strategy: 'concede' }),
+      );
+      const verdict = engine.evaluateCounter('3000000', '5000000', 0); // last == floor
+      expect(verdict.decision).toBe('reject');
+      expect(verdict.reason).toMatch(/already at\/below floor/);
+    });
+
+    it('clamps concede_pct to [1, 99]', () => {
+      const engine = new ProviderPolicyEngine(
+        basePolicy({ counter_strategy: 'concede', concede_pct: 200 }),
+      );
+      // 200 clamps to 99 → re-quote = 7 - (7-5)*99/100 = 7 - 1.98 ≈ 5.02
+      const verdict = engine.evaluateCounter('3000000', '7000000', 0);
+      expect(verdict.decision).toBe('requote');
+      // 7000000 - (2000000 * 99 / 100) = 7000000 - 1980000 = 5020000
+      expect(verdict.amountBaseUnits).toBe('5020000');
+    });
+
+    it('never re-quotes below floor regardless of math', () => {
+      const engine = new ProviderPolicyEngine(
+        basePolicy({ counter_strategy: 'concede', concede_pct: 99 }),
+      );
+      // Edge case: tiny gap, large pct → ensure we don't go below floor.
+      // last $5.10, floor $5. Concede 99% of $0.10 = $0.099 → re-quote $5.001
+      const verdict = engine.evaluateCounter('3000000', '5100000', 0);
+      expect(verdict.decision).toBe('requote');
+      expect(BigInt(verdict.amountBaseUnits!)).toBeGreaterThanOrEqual(5_000_000n);
     });
   });
 

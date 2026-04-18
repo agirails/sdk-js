@@ -1104,7 +1104,6 @@ export class Agent extends EventEmitter {
                   unit: 'job',
                 },
                 `did:ethr:${chainId}:${this.address}`,
-                undefined, // off-chain delivery handled by caller's quote-channel handler
               );
               this.logger.info('AIP-2.1 quote submitted via ProviderOrchestrator', {
                 txId: tx.id,
