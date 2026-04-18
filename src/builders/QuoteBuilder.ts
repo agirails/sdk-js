@@ -95,9 +95,15 @@ export const AIP2QuoteTypes = {
  * Reference: AIP-2 §6.1
  */
 export class QuoteBuilder {
+  /**
+   * `signer` and `nonceManager` are only required for `build()`.
+   * `verify()` and `computeHash()` are signer-independent — pass
+   * `undefined` to construct a verify-only instance (used by relay
+   * channel + handler dispatch on the receive side).
+   */
   constructor(
-    private signer: Signer,
-    private nonceManager: NonceManager,
+    private signer?: Signer,
+    private nonceManager?: NonceManager,
     private ipfs?: IPFSClient
   ) {}
 
@@ -109,6 +115,9 @@ export class QuoteBuilder {
    * @returns Signed quote message
    */
   async build(params: QuoteParams): Promise<QuoteMessage> {
+    if (!this.signer || !this.nonceManager) {
+      throw new Error('QuoteBuilder.build requires signer + nonceManager');
+    }
     // Validate parameters
     this.validateParams(params);
 
@@ -140,7 +149,7 @@ export class QuoteBuilder {
       expiresAt,
       justification: params.justification,
       chainId: params.chainId,
-      nonce: this.nonceManager.getNextNonce('agirails.quote.v1'),
+      nonce: this.nonceManager!.getNextNonce('agirails.quote.v1'),
       signature: '' // Filled in next step
     };
 
@@ -149,7 +158,7 @@ export class QuoteBuilder {
     quote.signature = signature;
 
     // Record nonce usage
-    this.nonceManager.recordNonce('agirails.quote.v1', quote.nonce);
+    this.nonceManager!.recordNonce('agirails.quote.v1', quote.nonce);
 
     return quote;
   }
@@ -277,9 +286,11 @@ export class QuoteBuilder {
       nonce: quote.nonce
     };
 
-    // Sign using ethers.js signTypedData (v6 API)
-    if ('signTypedData' in this.signer && typeof (this.signer as any).signTypedData === 'function') {
-      const signature = await (this.signer as any).signTypedData(domain, AIP2QuoteTypes, message);
+    // Sign using ethers.js signTypedData (v6 API). signMessage is only
+    // reachable from build() which already guards on signer presence.
+    const signer = this.signer!;
+    if ('signTypedData' in signer && typeof (signer as any).signTypedData === 'function') {
+      const signature = await (signer as any).signTypedData(domain, AIP2QuoteTypes, message);
       return signature;
     }
 
