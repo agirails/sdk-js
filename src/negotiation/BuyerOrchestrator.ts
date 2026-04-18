@@ -152,6 +152,25 @@ export class BuyerOrchestrator {
     actpDir?: string,
     negotiation: BuyerNegotiationContext = {},
   ) {
+    // Fail-fast on partial negotiation context. Pre-fix bug: a developer
+    // who set `negotiationChannel: new RelayChannel(...)` but forgot
+    // `signer` or `chainId` got NO error — every tx silently fell
+    // through to fixed-price flow with the channel subscription
+    // opened-and-immediately-closed for nothing. (P1 audit finding: G.)
+    if (negotiation.negotiationChannel) {
+      const missing: string[] = [];
+      if (!negotiation.signer) missing.push('signer');
+      if (!negotiation.kernelAddress) missing.push('kernelAddress');
+      if (!negotiation.chainId) missing.push('chainId');
+      if (missing.length > 0) {
+        throw new Error(
+          `BuyerNegotiationContext: negotiationChannel was provided but the following required field(s) are missing: ${missing.join(', ')}. ` +
+            `Multi-round negotiation needs all of: signer, kernelAddress, chainId, negotiationChannel. ` +
+            `Omit negotiationChannel for fixed-price-only flow.`,
+        );
+      }
+    }
+
     this.policy = policy;
     this.runtime = runtime;
     this.requesterAddress = requesterAddress;
@@ -226,11 +245,26 @@ export class BuyerOrchestrator {
           clearTimeout(timer);
           resolve(msg);
         } else {
-          // Wrong type — push back to queue and keep waiting.
+          // Wrong type — push back to queue, then re-drain queue
+          // BEFORE re-registering as resolver. Pre-fix race (P1
+          // audit finding: H): another correct-type message could
+          // arrive in the same microtask between the resolver being
+          // detached at _onChannelMessage and re-registered here,
+          // landing in the queue and never waking us — we'd time out
+          // with a correct-type message sitting unread.
           const q = this.inboundQueues.get(txId) ?? [];
           q.push(msg);
-          this.inboundQueues.set(txId, q);
-          this.inboundResolvers.set(txId, filteredResolver);
+          const correctIdx = q.findIndex((m) => acceptedTypes.includes(m.type));
+          if (correctIdx >= 0) {
+            const [found] = q.splice(correctIdx, 1);
+            if (q.length === 0) this.inboundQueues.delete(txId);
+            else this.inboundQueues.set(txId, q);
+            clearTimeout(timer);
+            resolve(found);
+          } else {
+            this.inboundQueues.set(txId, q);
+            this.inboundResolvers.set(txId, filteredResolver);
+          }
         }
       };
       this.inboundResolvers.set(txId, filteredResolver);

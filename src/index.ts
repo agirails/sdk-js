@@ -226,6 +226,28 @@ export type {
 } from './negotiation/verifyQuoteOnChain';
 export { SessionStore } from './negotiation/SessionStore';
 export type { SessionMapping } from './negotiation/SessionStore';
+
+// AIP-2.1 §6 NegotiationChannel — transport abstraction + impls.
+// Without these exports developers can't wire up BuyerOrchestrator
+// or ProviderOrchestrator with a custom transport, can't implement
+// MockChannel-style tests, and can't use the type guards.
+export type {
+  NegotiationChannel,
+  NegotiationMessage,
+  Subscription,
+  DeliveredMessage,
+} from './negotiation/NegotiationChannel';
+export {
+  isQuoteEnvelope,
+  isCounterOfferEnvelope,
+  isCounterAcceptEnvelope,
+  envelopeTxId,
+  envelopeChainId,
+} from './negotiation/NegotiationChannel';
+export { RelayChannel } from './negotiation/RelayChannel';
+export type { RelayChannelConfig } from './negotiation/RelayChannel';
+export { MockChannel } from './negotiation/MockChannel';
+export type { MockChannelConfig } from './negotiation/MockChannel';
 export type {
   ChannelPayload,
   DedupStore,

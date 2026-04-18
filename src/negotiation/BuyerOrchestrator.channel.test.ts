@@ -355,6 +355,43 @@ describe('BuyerOrchestrator — channel-driven (3.5.0)', () => {
   }, 10_000);
 
   // ==========================================================================
+  // P1 audit fix G: constructor validates partial negotiation context
+  // ==========================================================================
+
+  it('throws if negotiationChannel is provided without signer/kernelAddress/chainId', () => {
+    const baseArgs = [
+      makePolicy(), runtime, buyerWallet.address, testDir,
+    ] as const;
+    // Missing signer
+    expect(() => new BuyerOrchestrator(...baseArgs, {
+      negotiationChannel: channel,
+      kernelAddress: KERNEL,
+      chainId: CHAIN_ID,
+    })).toThrow(/signer/);
+    // Missing kernelAddress
+    expect(() => new BuyerOrchestrator(...baseArgs, {
+      negotiationChannel: channel,
+      signer: buyerWallet,
+      chainId: CHAIN_ID,
+    })).toThrow(/kernelAddress/);
+    // Missing chainId
+    expect(() => new BuyerOrchestrator(...baseArgs, {
+      negotiationChannel: channel,
+      signer: buyerWallet,
+      kernelAddress: KERNEL,
+    })).toThrow(/chainId/);
+    // No channel at all → no throw (fixed-price flow allowed)
+    expect(() => new BuyerOrchestrator(...baseArgs, {})).not.toThrow();
+    // Full context → no throw
+    expect(() => new BuyerOrchestrator(...baseArgs, {
+      negotiationChannel: channel,
+      signer: buyerWallet,
+      kernelAddress: KERNEL,
+      chainId: CHAIN_ID,
+    })).not.toThrow();
+  });
+
+  // ==========================================================================
   // P0 audit fix A: re-quote maxPrice substitution attack
   // ==========================================================================
 
