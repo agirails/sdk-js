@@ -170,6 +170,15 @@ async function runServe(options: ServeOptions, output: Output): Promise<void> {
     }
   });
 
+  // Slow-loris hardening: bound the time a client can hold a socket open
+  // dribbling out a request body. Without this, `readBody` will sit in
+  // its `data` listener until the OS-level keepalive ages out.
+  // 10s for headers, 15s for the full request — generous for normal
+  // peers (a counter-offer body is well under 4 KiB), tight enough to
+  // shed slow-trickle attackers in seconds.
+  server.headersTimeout = 10_000;
+  server.requestTimeout = 15_000;
+
   server.listen(port, () => {
     output.success(`actp serve listening on http://0.0.0.0:${port}`);
     output.print(`  Network:        ${options.network}${options.mock ? ' (mock)' : ''}`);
@@ -277,21 +286,49 @@ async function routeRequest(
   res.end(JSON.stringify({ error: 'Not found' }));
 }
 
-function readBody(req: IncomingMessage): Promise<string> {
+/**
+ * Read a request body with two hard limits — defense in depth alongside
+ * the server-level `headersTimeout` / `requestTimeout`:
+ *   - byte cap  (64 KiB) to bound memory
+ *   - wall-clock deadline (10s) to bound time
+ *
+ * Both must be enforced here too because a caller could construct the
+ * server without our timeouts (e.g. testing with a raw http.Server) and
+ * the body cap alone won't shed a peer that sends 1 byte/sec forever.
+ */
+export function readBody(req: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let total = 0;
-    const MAX = 64 * 1024;
+    let settled = false;
+    const MAX_BYTES = 64 * 1024;
+    const MAX_MS = 10_000;
+
+    const finish = (err: Error | null, body?: string) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(deadline);
+      if (err) {
+        try { req.destroy(); } catch { /* */ }
+        reject(err);
+      } else {
+        resolve(body ?? '');
+      }
+    };
+
+    const deadline = setTimeout(() => {
+      finish(new Error('Body read timeout'));
+    }, MAX_MS);
+
     req.on('data', (chunk: Buffer) => {
       total += chunk.length;
-      if (total > MAX) {
-        reject(new Error('Body too large'));
-        req.destroy();
+      if (total > MAX_BYTES) {
+        finish(new Error('Body too large'));
         return;
       }
       chunks.push(chunk);
     });
-    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf-8')));
-    req.on('error', reject);
+    req.on('end', () => finish(null, Buffer.concat(chunks).toString('utf-8')));
+    req.on('error', (err) => finish(err));
   });
 }

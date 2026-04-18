@@ -103,6 +103,33 @@ describe('assertSafePeerUrl', () => {
   it('rejects subdomain of localhost (e.g. foo.localhost)', () => {
     expect(() => assertSafePeerUrl('https://attacker.localhost:8080', false)).toThrow(/localhost/);
   });
+
+  // IPv4-mapped IPv6 (::ffff:a.b.c.d) — OS resolves to the IPv4 address.
+  // Pre-fix: only `[::1]`, fe80, fc/fd were checked; mapped IPv4 fell through.
+  it('rejects IPv4-mapped IPv6 loopback ([::ffff:127.0.0.1])', () => {
+    expect(() => assertSafePeerUrl('https://[::ffff:127.0.0.1]:8080', false))
+      .toThrow(/loopback/);
+  });
+
+  it('rejects IPv4-mapped IPv6 link-local / cloud-metadata ([::ffff:169.254.169.254])', () => {
+    expect(() => assertSafePeerUrl('https://[::ffff:169.254.169.254]:80', false))
+      .toThrow(/link-local|cloud-metadata/);
+  });
+
+  it('rejects IPv4-mapped IPv6 RFC1918 10.x ([::ffff:10.0.0.1])', () => {
+    expect(() => assertSafePeerUrl('https://[::ffff:10.0.0.1]:8080', false))
+      .toThrow(/RFC1918/);
+  });
+
+  it('rejects IPv4-mapped IPv6 RFC1918 192.168.x ([::ffff:192.168.1.1])', () => {
+    expect(() => assertSafePeerUrl('https://[::ffff:192.168.1.1]:8080', false))
+      .toThrow(/RFC1918/);
+  });
+
+  it('rejects IPv4-mapped IPv6 RFC1918 172.16-31.x ([::ffff:172.16.0.1])', () => {
+    expect(() => assertSafePeerUrl('https://[::ffff:172.16.0.1]:8080', false))
+      .toThrow(/RFC1918/);
+  });
 });
 
 // ============================================================================

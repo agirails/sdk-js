@@ -23,7 +23,8 @@ import { DecisionEngine, CandidateStats } from './DecisionEngine';
 import { SessionStore } from './SessionStore';
 import { IACTPRuntime, CreateTransactionParams } from '../runtime/IACTPRuntime';
 import { QuoteMessage } from '../builders/QuoteBuilder';
-import { CounterOfferBuilder } from '../builders/CounterOfferBuilder';
+import { CounterOfferBuilder, CounterOfferMessage } from '../builders/CounterOfferBuilder';
+import { CounterAcceptBuilder, CounterAcceptMessage } from '../builders/CounterAcceptBuilder';
 import { QuoteChannelClient } from '../transport/QuoteChannel';
 import { NonceManager, InMemoryNonceManager } from '../utils/NonceManager';
 import { verifyQuoteHashOnChain, VerifySource } from './verifyQuoteOnChain';
@@ -131,6 +132,13 @@ export class BuyerOrchestrator {
   private counterAccepted = new Map<string, { amountBaseUnits: string }>();
   /** Resolvers waiting on counter acceptance — woken by setCounterAccepted. */
   private counterWaiters = new Map<string, () => void>();
+  /**
+   * Counters this orchestrator sent (one per round, last write wins),
+   * keyed by txId. Stored so `setCounterAccepted` can cryptographically
+   * bind a provider's acceptance message to the exact counter we sent
+   * (acceptedAmount === counter.counterAmount, inReplyTo === counterHash).
+   */
+  private sentCounters = new Map<string, CounterOfferMessage>();
 
   constructor(
     policy: BuyerPolicy,
@@ -181,11 +189,51 @@ export class BuyerOrchestrator {
   /**
    * Signal that the provider has accepted our counter-offer off-chain.
    * Callers wire this from their quote-channel handler when an
-   * "accepted" notification arrives. Wakes any negotiation round
-   * waiting on counter acceptance for this txId.
+   * `agirails.counteraccept.v1` notification arrives.
+   *
+   * Verifies the acceptance is cryptographically bound to the counter
+   * THIS orchestrator sent for THIS txId:
+   *   1. EIP-712 signature recovers to provider DID
+   *   2. `acceptMessage.txId === txId`
+   *   3. `acceptMessage.inReplyTo === keccak(stored counter)`
+   *   4. `acceptMessage.acceptedAmount === storedCounter.counterAmount`
+   *
+   * Throws on any mismatch. Without these checks a malicious peer could
+   * pose as the provider and trick the buyer into committing at any
+   * price, since the previous (string-only) API trusted the caller.
+   *
+   * Wakes any negotiation round waiting on counter acceptance for this txId.
    */
-  setCounterAccepted(txId: string, finalAmountBaseUnits: string): void {
-    this.counterAccepted.set(txId, { amountBaseUnits: finalAmountBaseUnits });
+  async setCounterAccepted(txId: string, acceptMessage: CounterAcceptMessage): Promise<void> {
+    if (!this.negotiation.kernelAddress) {
+      throw new Error('setCounterAccepted requires negotiation.kernelAddress in BuyerNegotiationContext');
+    }
+    const sentCounter = this.sentCounters.get(txId);
+    if (!sentCounter) {
+      throw new Error(
+        `No counter-offer sent for txId ${txId} — cannot verify provider acceptance`,
+      );
+    }
+    if (acceptMessage.txId !== txId) {
+      throw new Error(
+        `CounterAccept.txId mismatch: expected ${txId}, got ${acceptMessage.txId}`,
+      );
+    }
+    const counterHash = new CounterOfferBuilder().computeHash(sentCounter);
+    if (acceptMessage.inReplyTo !== counterHash) {
+      throw new Error(
+        `CounterAccept.inReplyTo (${acceptMessage.inReplyTo}) does not match sent counter hash (${counterHash})`,
+      );
+    }
+    if (acceptMessage.acceptedAmount !== sentCounter.counterAmount) {
+      throw new Error(
+        `CounterAccept.acceptedAmount (${acceptMessage.acceptedAmount}) does not match counter.counterAmount (${sentCounter.counterAmount})`,
+      );
+    }
+    const verifier = new CounterAcceptBuilder();
+    await verifier.verify(acceptMessage, this.negotiation.kernelAddress);
+
+    this.counterAccepted.set(txId, { amountBaseUnits: acceptMessage.acceptedAmount });
     const waiter = this.counterWaiters.get(txId);
     if (waiter) {
       waiter();
@@ -372,6 +420,10 @@ export class BuyerOrchestrator {
           tx_id: txId,
         });
         emit({ type: 'round_end', round: round + 1, action: 'timeout', reason: 'Quote TTL expired' });
+        // External caller may have pushed a quote between createTransaction
+        // and timeout — clear so a long-running daemon doesn't accumulate
+        // entries in receivedQuotes / sentCounters.
+        this._cleanupTxState(txId);
         continue;
       }
 
@@ -475,6 +527,11 @@ export class BuyerOrchestrator {
         emit({ type: 'round_end', round: round + 1, action: 'accepted', reason });
         emit({ type: 'complete', success: true, reason: 'Negotiation complete' });
 
+        // COMMITTED fast-path bypassed _runNegotiationRound (which is
+        // the usual cleanup site) — drop any stashed quote/counter
+        // state so daemon callers don't leak across negotiations.
+        this._cleanupTxState(txId);
+
         return {
           success: true,
           commerce_session_id: session.commerce_session_id,
@@ -510,6 +567,10 @@ export class BuyerOrchestrator {
         emit({ type: 'round_end', round: round + 1, action: 'accepted', reason });
         emit({ type: 'complete', success: true, reason: 'Negotiation complete' });
 
+        // Symmetric to the COMMITTED fast-path above — this success exit
+        // also bypassed _runNegotiationRound's cleanup site.
+        this._cleanupTxState(txId);
+
         return {
           success: true,
           commerce_session_id: session.commerce_session_id,
@@ -534,6 +595,8 @@ export class BuyerOrchestrator {
           quoted_price: quotedPrice,
         });
         emit({ type: 'round_end', round: round + 1, action: 'error', reason });
+        // Same daemon-leak rationale as the timeout `continue` above.
+        this._cleanupTxState(txId);
         continue;
       }
     }
@@ -630,6 +693,15 @@ export class BuyerOrchestrator {
     const hashSource: VerifySource = verify.source!;
 
     // 2. Decide accept / counter / reject.
+    //
+    // We pass `roundsUsedSoFar = 0` (the default) deliberately:
+    // _runNegotiationRound runs at most ONCE per provider in the outer
+    // `_negotiate` loop (one call site at line ~459, one quote per
+    // candidate). Multi-round counter-counter exchange against the same
+    // provider is a future feature (tracked in PRD as 3.4.1) — when it
+    // lands the caller MUST start passing the actual count of prior
+    // evaluations for this txId so the budget guard
+    // (`roundsUsedSoFar + 1 >= rounds_per_provider`) advances correctly.
     const evaluation = this.decisionEngine.evaluateQuote(received.quote, this.policy);
 
     if (evaluation.action === 'reject') {
@@ -654,14 +726,31 @@ export class BuyerOrchestrator {
 
     if (evaluation.action === 'accept') {
       // Commit at provider's quoted amount. AIP-2 sequence:
-      //   acceptQuote(txId, quotedAmount) → updates tx.amount,
+      //   acceptQuote(txId, quotedAmount) → updates tx.amount (still QUOTED),
       //   linkEscrow(txId, quotedAmount) → COMMITTED.
+      // The two calls are NOT atomic on-chain. If linkEscrow fails after
+      // acceptQuote succeeded, the tx is stuck in QUOTED with a finalized
+      // amount but no escrow lock — best-effort CANCELLED keeps state
+      // machine consistent rather than leaving a zombie row.
       const amountBaseUnits = received.quote.quotedAmount;
+      let acceptQuoteSucceeded = false;
       try {
         await this.runtime.acceptQuote(txId, amountBaseUnits);
+        acceptQuoteSucceeded = true;
         await this.runtime.linkEscrow(txId, amountBaseUnits);
       } catch (err) {
         const reason = err instanceof Error ? err.message : String(err);
+        if (acceptQuoteSucceeded) {
+          // linkEscrow failed after accept — roll back to CANCELLED so
+          // the tx doesn't sit in QUOTED with a price set but no commit.
+          try {
+            await this.runtime.transitionState(txId, 'CANCELLED');
+          } catch {
+            // Best-effort: if the chain itself is unreachable or the
+            // tx already moved (stale read race), the operator gets
+            // the original failure reason in the round log.
+          }
+        }
         rounds.push({
           round: round + 1,
           provider_slug: candidateSlug,
@@ -740,6 +829,10 @@ export class BuyerOrchestrator {
         kernelAddress: this.negotiation.kernelAddress,
         expiresAt: now + counterTtlSec,
       });
+      // Stash the counter we just built so setCounterAccepted can
+      // cryptographically bind the provider's acceptance message to
+      // the exact counter we sent (acceptedAmount + inReplyTo checks).
+      this.sentCounters.set(txId, counter);
     } catch (err) {
       const reason = `Counter build failed: ${err instanceof Error ? err.message : String(err)}`;
       rounds.push({
@@ -814,11 +907,22 @@ export class BuyerOrchestrator {
     }
 
     const finalAmount = accepted.amountBaseUnits;
+    let acceptQuoteSucceeded = false;
     try {
       await this.runtime.acceptQuote(txId, finalAmount);
+      acceptQuoteSucceeded = true;
       await this.runtime.linkEscrow(txId, finalAmount);
     } catch (err) {
       const reason = `Accept-counter flow failed: ${err instanceof Error ? err.message : String(err)}`;
+      if (acceptQuoteSucceeded) {
+        // Mirror the symmetric path above: roll back to CANCELLED so
+        // the tx doesn't sit QUOTED with a finalized counter price.
+        try {
+          await this.runtime.transitionState(txId, 'CANCELLED');
+        } catch {
+          /* best-effort */
+        }
+      }
       rounds.push({
         round: round + 1,
         provider_slug: candidateSlug,
@@ -876,6 +980,7 @@ export class BuyerOrchestrator {
     this.receivedQuotes.delete(txId);
     this.counterAccepted.delete(txId);
     this.counterWaiters.delete(txId);
+    this.sentCounters.delete(txId);
   }
 
   /**

@@ -136,9 +136,14 @@ const VALID_CHAIN_IDS = new Set([84_532, 8_453]);
 // ============================================================================
 
 export class CounterOfferBuilder {
+  /**
+   * `signer` and `nonceManager` are only required for `build()`.
+   * `verify()` and `computeHash()` are signer-independent — pass
+   * `undefined` to construct a verify-only instance.
+   */
   constructor(
-    private readonly signer: Signer,
-    private readonly nonceManager: NonceManager,
+    private readonly signer?: Signer,
+    private readonly nonceManager?: NonceManager,
   ) {}
 
   /**
@@ -146,6 +151,9 @@ export class CounterOfferBuilder {
    * @throws Error on validation failure (amount bands, formats, expiry).
    */
   async build(params: CounterOfferParams): Promise<CounterOfferMessage> {
+    if (!this.signer || !this.nonceManager) {
+      throw new Error('CounterOfferBuilder.build requires signer + nonceManager');
+    }
     this.validateParams(params);
 
     const counteredAt = Math.floor(Date.now() / 1000);
@@ -174,12 +182,12 @@ export class CounterOfferBuilder {
       expiresAt,
       justification: params.justification,
       chainId: params.chainId,
-      nonce: this.nonceManager.getNextNonce(MESSAGE_TYPE),
+      nonce: this.nonceManager!.getNextNonce(MESSAGE_TYPE),
       signature: '',
     };
 
     message.signature = await this.signMessage(message, params.kernelAddress);
-    this.nonceManager.recordNonce(MESSAGE_TYPE, message.nonce);
+    this.nonceManager!.recordNonce(MESSAGE_TYPE, message.nonce);
 
     return message;
   }

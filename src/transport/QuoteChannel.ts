@@ -402,9 +402,28 @@ export function assertSafePeerUrl(url: string, allowInsecureTargets: boolean): v
   // Node's URL() keeps brackets around IPv6 hosts. Strip them so the
   // downstream string checks work uniformly for IPv4 and IPv6 literals.
   const rawHost = parsed.hostname.toLowerCase();
-  const host = rawHost.startsWith('[') && rawHost.endsWith(']')
+  const stripped = rawHost.startsWith('[') && rawHost.endsWith(']')
     ? rawHost.slice(1, -1)
     : rawHost;
+
+  // IPv4-mapped IPv6 — the OS resolves this to the corresponding IPv4
+  // address, so the same loopback / RFC1918 / link-local rules MUST apply.
+  // Two normalized shapes can come out of Node's URL():
+  //   1. dotted-quad: `::ffff:127.0.0.1`            (rare, some Node versions)
+  //   2. hex pair:    `::ffff:7f00:1`               (Node default — folds the v4 octets)
+  // Without this re-extraction, an attacker crafts `[::ffff:127.0.0.1]`
+  // or `[::ffff:169.254.169.254]` and bypasses the IPv4 checks below
+  // (which only match dotted-quad).
+  let host = stripped;
+  const mappedDotted = stripped.match(/^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
+  const mappedHex = stripped.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+  if (mappedDotted) {
+    host = mappedDotted[1];
+  } else if (mappedHex) {
+    const hi = parseInt(mappedHex[1], 16);
+    const lo = parseInt(mappedHex[2], 16);
+    host = `${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`;
+  }
 
   if (host === 'localhost' || host.endsWith('.localhost')) {
     throw new Error(`Peer URL points at localhost (${host}) — refusing (SSRF guard)`);

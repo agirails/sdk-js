@@ -15,6 +15,8 @@ import { MockStateManager } from '../runtime/MockStateManager';
 import { BuyerOrchestrator } from './BuyerOrchestrator';
 import { BuyerPolicy } from './PolicyEngine';
 import { QuoteBuilder, QuoteMessage } from '../builders/QuoteBuilder';
+import { CounterAcceptBuilder } from '../builders/CounterAcceptBuilder';
+import { CounterOfferBuilder } from '../builders/CounterOfferBuilder';
 import { InMemoryNonceManager } from '../utils/NonceManager';
 import { QuoteChannelClient } from '../transport/QuoteChannel';
 import * as agirailsApp from '../api/agirailsApp';
@@ -196,9 +198,22 @@ describe('BuyerOrchestrator — AIP-2.1 negotiation', () => {
 
   it('counters and commits at counter amount when provider accepts in-window', async () => {
     await runtime.mintTokens(buyerWallet.address, '100000000');
+
+    // Capture the counter the buyer POSTs so the simulated provider
+    // can sign a real CounterAcceptMessage that binds to it.
+    let postedCounter: import('../builders/CounterOfferBuilder').CounterOfferMessage | undefined;
     const channel = new QuoteChannelClient({
-      // Stub fetch — counter POST is "delivered" immediately.
-      fetchImpl: (async () => new Response('{}', { status: 201 })) as unknown as typeof fetch,
+      fetchImpl: (async (_url: string, init: { body?: string } = {}) => {
+        if (init.body) {
+          try {
+            const parsed = JSON.parse(init.body);
+            if (parsed?.type === 'agirails.counteroffer.v1' && parsed.message) {
+              postedCounter = parsed.message;
+            }
+          } catch { /* not JSON, ignore */ }
+        }
+        return new Response('{}', { status: 201 });
+      }) as unknown as typeof fetch,
       allowInsecureTargets: true,
     });
 
@@ -241,8 +256,25 @@ describe('BuyerOrchestrator — AIP-2.1 negotiation', () => {
       actualEscrow: '5000000',
     });
 
-    // Simulate provider accepting the counter shortly after we send it.
-    setTimeout(() => orch.setCounterAccepted(txId!, '6000000'), 200);
+    // Wait until buyer POSTs the counter, then provider signs an
+    // acceptance bound to it (real EIP-712 verify path).
+    (async () => {
+      for (let i = 0; i < 100 && !postedCounter; i++) {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      if (!postedCounter) return;
+      const counterHash = new CounterOfferBuilder().computeHash(postedCounter);
+      const accept = await new CounterAcceptBuilder(providerWallet, new InMemoryNonceManager()).build({
+        txId: txId!,
+        provider: providerDID,
+        consumer: consumerDID,
+        acceptedAmount: postedCounter.counterAmount,
+        inReplyTo: counterHash,
+        chainId: 84532,
+        kernelAddress: KERNEL,
+      });
+      await orch.setCounterAccepted(txId!, accept);
+    })();
 
     const result = await negPromise;
     expect(result.success).toBe(true);
@@ -400,6 +432,7 @@ describe('BuyerOrchestrator — AIP-2.1 negotiation', () => {
     expect(internal.receivedQuotes.has(txId!)).toBe(false);
     expect(internal.counterAccepted.has(txId!)).toBe(false);
     expect(internal.counterWaiters.has(txId!)).toBe(false);
+    expect((internal as unknown as { sentCounters: Map<string, unknown> }).sentCounters.has(txId!)).toBe(false);
   }, 10_000);
 
   // ==========================================================================
@@ -521,4 +554,317 @@ describe('BuyerOrchestrator — AIP-2.1 negotiation', () => {
     expect(lastRound.action).toBe('error');
     expect(lastRound.reason).toMatch(/hash mismatch/i);
   }, 10_000);
+
+  // ==========================================================================
+  // setCounterAccepted security — verify EIP-712 + binding to sent counter
+  // ==========================================================================
+
+  describe('setCounterAccepted security', () => {
+    /**
+     * All five tests share the same shape: spin a real negotiation
+     * round so a counter exists in `sentCounters`, then attempt
+     * `setCounterAccepted` with a malicious or malformed message.
+     * The orchestrator must reject every variant.
+     */
+    async function setupRoundWithSentCounter(): Promise<{
+      orch: BuyerOrchestrator;
+      txId: string;
+      postedCounter: import('../builders/CounterOfferBuilder').CounterOfferMessage;
+      counterHash: string;
+    }> {
+      await runtime.mintTokens(buyerWallet.address, '100000000');
+      let postedCounter: import('../builders/CounterOfferBuilder').CounterOfferMessage | undefined;
+      const channel = new QuoteChannelClient({
+        fetchImpl: (async (_url: string, init: { body?: string } = {}) => {
+          if (init.body) {
+            try {
+              const parsed = JSON.parse(init.body);
+              if (parsed?.type === 'agirails.counteroffer.v1' && parsed.message) postedCounter = parsed.message;
+            } catch { /* */ }
+          }
+          return new Response('{}', { status: 201 });
+        }) as unknown as typeof fetch,
+        allowInsecureTargets: true,
+      });
+      const orch = new BuyerOrchestrator(
+        makePolicy({
+          rounds_per_provider: 3,
+          counter_strategy: 'midpoint',
+          target_unit_price: { amount: 5, currency: 'USDC', unit: 'job' },
+          counter_response_ttl_seconds: 5,
+        }),
+        runtime,
+        buyerWallet.address,
+        testDir,
+        { signer: buyerWallet, kernelAddress: KERNEL, chainId: 84532, channel },
+      );
+      const negPromise = orch.negotiate({ pollIntervalMs: 50 });
+      let txId: string | undefined;
+      for (let i = 0; i < 40; i++) {
+        const all = await runtime.getAllTransactions();
+        if (all.length > 0) { txId = all[0].id; break; }
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      const quote = await preparePushedQuote(txId!, '7000000');
+      orch.setReceivedQuote(txId!, quote, {
+        providerEndpoint: 'https://provider.test',
+        providerAddress: providerWallet.address,
+        actualEscrow: '5000000',
+      });
+      // Wait for buyer to POST the counter.
+      for (let i = 0; i < 100 && !postedCounter; i++) {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      // Stash a reference to the negotiation promise so each test can
+      // resolve it cleanly (otherwise jest reports an unhandled exit).
+      // We attach a rescue: if any test ends without resolving, the
+      // counter timeout will eventually fire and resolve to CANCELLED.
+      void negPromise.catch(() => undefined);
+      const counterHash = new CounterOfferBuilder().computeHash(postedCounter!);
+      return { orch, txId: txId!, postedCounter: postedCounter!, counterHash };
+    }
+
+    it('rejects acceptance with mismatched acceptedAmount', async () => {
+      const { orch, txId, counterHash } = await setupRoundWithSentCounter();
+      const accept = await new CounterAcceptBuilder(providerWallet, new InMemoryNonceManager()).build({
+        txId,
+        provider: providerDID,
+        consumer: consumerDID,
+        acceptedAmount: '5500000', // counter was at $6 (6_000_000) — mismatch
+        inReplyTo: counterHash,
+        chainId: 84532,
+        kernelAddress: KERNEL,
+      });
+      await expect(orch.setCounterAccepted(txId, accept)).rejects.toThrow(/acceptedAmount/i);
+    }, 15_000);
+
+    it('rejects acceptance with mismatched inReplyTo (different counter hash)', async () => {
+      const { orch, txId, postedCounter } = await setupRoundWithSentCounter();
+      const wrongHash = '0x' + 'a'.repeat(64);
+      const accept = await new CounterAcceptBuilder(providerWallet, new InMemoryNonceManager()).build({
+        txId,
+        provider: providerDID,
+        consumer: consumerDID,
+        acceptedAmount: postedCounter.counterAmount,
+        inReplyTo: wrongHash,
+        chainId: 84532,
+        kernelAddress: KERNEL,
+      });
+      await expect(orch.setCounterAccepted(txId, accept)).rejects.toThrow(/inReplyTo/i);
+    }, 15_000);
+
+    it('rejects acceptance with mismatched txId', async () => {
+      const { orch, txId, postedCounter, counterHash } = await setupRoundWithSentCounter();
+      const otherTxId = '0x' + 'b'.repeat(64);
+      const accept = await new CounterAcceptBuilder(providerWallet, new InMemoryNonceManager()).build({
+        txId: otherTxId,
+        provider: providerDID,
+        consumer: consumerDID,
+        acceptedAmount: postedCounter.counterAmount,
+        inReplyTo: counterHash,
+        chainId: 84532,
+        kernelAddress: KERNEL,
+      });
+      // Caller passes correct txId but message claims otherTxId.
+      await expect(orch.setCounterAccepted(txId, accept)).rejects.toThrow(/txId mismatch/);
+    }, 15_000);
+
+    it('rejects acceptance signed by an attacker, not the provider', async () => {
+      const { orch, txId, postedCounter, counterHash } = await setupRoundWithSentCounter();
+      const attackerWallet = Wallet.createRandom();
+      const accept = await new CounterAcceptBuilder(attackerWallet, new InMemoryNonceManager()).build({
+        txId,
+        provider: providerDID, // claims to be provider
+        consumer: consumerDID,
+        acceptedAmount: postedCounter.counterAmount,
+        inReplyTo: counterHash,
+        chainId: 84532,
+        kernelAddress: KERNEL,
+      });
+      // Signature recovers to attacker, not providerDID's address.
+      await expect(orch.setCounterAccepted(txId, accept)).rejects.toThrow();
+    }, 15_000);
+
+    it('rejects acceptance for a txId with no sent counter', async () => {
+      const orch = new BuyerOrchestrator(
+        makePolicy(),
+        runtime,
+        buyerWallet.address,
+        testDir,
+        { signer: buyerWallet, kernelAddress: KERNEL, chainId: 84532 },
+      );
+      const orphanTxId = '0x' + 'c'.repeat(64);
+      const accept = await new CounterAcceptBuilder(providerWallet, new InMemoryNonceManager()).build({
+        txId: orphanTxId,
+        provider: providerDID,
+        consumer: consumerDID,
+        acceptedAmount: '6000000',
+        inReplyTo: '0x' + 'd'.repeat(64),
+        chainId: 84532,
+        kernelAddress: KERNEL,
+      });
+      await expect(orch.setCounterAccepted(orphanTxId, accept)).rejects.toThrow(/No counter-offer sent/);
+    });
+  });
+
+  // ==========================================================================
+  // Atomic accept+linkEscrow rollback on partial failure (P1 #4)
+  // ==========================================================================
+
+  describe('accept+linkEscrow rollback', () => {
+    it('rolls back to CANCELLED when linkEscrow fails after acceptQuote succeeded (accept path)', async () => {
+      await runtime.mintTokens(buyerWallet.address, '100000000');
+      const orch = new BuyerOrchestrator(
+        makePolicy({ target_unit_price: { amount: 8, currency: 'USDC', unit: 'job' } }),
+        runtime,
+        buyerWallet.address,
+        testDir,
+      );
+
+      const negPromise = orch.negotiate({ pollIntervalMs: 50 });
+      let txId: string | undefined;
+      for (let i = 0; i < 40; i++) {
+        const all = await runtime.getAllTransactions();
+        if (all.length > 0) { txId = all[0].id; break; }
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      expect(txId).toBeDefined();
+
+      // Stub linkEscrow to fail AFTER acceptQuote already succeeded.
+      const origLink = runtime.linkEscrow.bind(runtime);
+      jest.spyOn(runtime, 'linkEscrow').mockImplementationOnce(async () => {
+        throw new Error('simulated escrow failure');
+      });
+
+      const quote = await preparePushedQuote(txId!, '7000000');
+      orch.setReceivedQuote(txId!, quote, {
+        providerAddress: providerWallet.address,
+        actualEscrow: '5000000',
+      });
+
+      const result = await negPromise;
+      expect(result.success).toBe(false);
+      const tx = await runtime.getTransaction(txId!);
+      expect(tx!.state).toBe('CANCELLED');
+      // Sanity: the original linkEscrow is still in place for any future call.
+      expect(typeof origLink).toBe('function');
+    }, 10_000);
+
+    it('frees per-tx state on the COMMITTED fast-path return (outer-loop cleanup)', async () => {
+      // Scenario: external caller pushed a quote BEFORE the provider
+      // jumped straight to COMMITTED (skipping QUOTED). Pre-fix bug:
+      // the outer-loop COMMITTED branch returned without ever calling
+      // _runNegotiationRound, so receivedQuotes accumulated forever.
+      await runtime.mintTokens(buyerWallet.address, '100000000');
+      const orch = new BuyerOrchestrator(
+        makePolicy({ target_unit_price: { amount: 8, currency: 'USDC', unit: 'job' } }),
+        runtime,
+        buyerWallet.address,
+        testDir,
+      );
+
+      const negPromise = orch.negotiate({ pollIntervalMs: 50 });
+      let txId: string | undefined;
+      for (let i = 0; i < 40; i++) {
+        const all = await runtime.getAllTransactions();
+        if (all.length > 0) { txId = all[0].id; break; }
+        await new Promise((r) => setTimeout(r, 50));
+      }
+
+      // Push an unrelated/orphan quote so receivedQuotes has an entry,
+      // then directly transition the tx to COMMITTED via the runtime
+      // (simulating provider's INITIATED → COMMITTED fast path).
+      const quote = await preparePushedQuote(txId!, '7000000');
+      orch.setReceivedQuote(txId!, quote, {
+        providerAddress: providerWallet.address,
+        actualEscrow: '5000000',
+      });
+      // Confirm the entry is live before transition.
+      const internalBefore = orch as unknown as { receivedQuotes: Map<string, unknown> };
+      expect(internalBefore.receivedQuotes.has(txId!)).toBe(true);
+
+      // Drive INITIATED → COMMITTED bypassing QUOTED — uses linkEscrow
+      // directly, mirroring the on-chain fast path.
+      await runtime.linkEscrow(txId!, '5000000');
+
+      const result = await negPromise;
+      expect(result.success).toBe(true);
+      const internal = orch as unknown as {
+        receivedQuotes: Map<string, unknown>;
+        sentCounters: Map<string, unknown>;
+      };
+      expect(internal.receivedQuotes.has(txId!)).toBe(false);
+      expect(internal.sentCounters.has(txId!)).toBe(false);
+    }, 10_000);
+
+    it('rolls back to CANCELLED when linkEscrow fails after acceptQuote succeeded (counter-accept path)', async () => {
+      await runtime.mintTokens(buyerWallet.address, '100000000');
+      let postedCounter: import('../builders/CounterOfferBuilder').CounterOfferMessage | undefined;
+      const channel = new QuoteChannelClient({
+        fetchImpl: (async (_url: string, init: { body?: string } = {}) => {
+          if (init.body) {
+            try {
+              const parsed = JSON.parse(init.body);
+              if (parsed?.type === 'agirails.counteroffer.v1' && parsed.message) postedCounter = parsed.message;
+            } catch { /* */ }
+          }
+          return new Response('{}', { status: 201 });
+        }) as unknown as typeof fetch,
+        allowInsecureTargets: true,
+      });
+      const orch = new BuyerOrchestrator(
+        makePolicy({
+          rounds_per_provider: 3,
+          counter_strategy: 'midpoint',
+          target_unit_price: { amount: 5, currency: 'USDC', unit: 'job' },
+          counter_response_ttl_seconds: 5,
+        }),
+        runtime,
+        buyerWallet.address,
+        testDir,
+        { signer: buyerWallet, kernelAddress: KERNEL, chainId: 84532, channel },
+      );
+
+      const negPromise = orch.negotiate({ pollIntervalMs: 50 });
+      let txId: string | undefined;
+      for (let i = 0; i < 40; i++) {
+        const all = await runtime.getAllTransactions();
+        if (all.length > 0) { txId = all[0].id; break; }
+        await new Promise((r) => setTimeout(r, 50));
+      }
+
+      const quote = await preparePushedQuote(txId!, '7000000');
+      orch.setReceivedQuote(txId!, quote, {
+        providerEndpoint: 'https://provider.test',
+        providerAddress: providerWallet.address,
+        actualEscrow: '5000000',
+      });
+      for (let i = 0; i < 100 && !postedCounter; i++) {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      expect(postedCounter).toBeDefined();
+
+      // Stub linkEscrow to fail BEFORE provider sends acceptance.
+      jest.spyOn(runtime, 'linkEscrow').mockImplementationOnce(async () => {
+        throw new Error('simulated escrow failure');
+      });
+
+      const counterHash = new CounterOfferBuilder().computeHash(postedCounter!);
+      const accept = await new CounterAcceptBuilder(providerWallet, new InMemoryNonceManager()).build({
+        txId: txId!,
+        provider: providerDID,
+        consumer: consumerDID,
+        acceptedAmount: postedCounter!.counterAmount,
+        inReplyTo: counterHash,
+        chainId: 84532,
+        kernelAddress: KERNEL,
+      });
+      await orch.setCounterAccepted(txId!, accept);
+
+      const result = await negPromise;
+      expect(result.success).toBe(false);
+      const tx = await runtime.getTransaction(txId!);
+      expect(tx!.state).toBe('CANCELLED');
+    }, 15_000);
+  });
 });
