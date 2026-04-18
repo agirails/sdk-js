@@ -64,6 +64,7 @@ import { createAutopublishCommand } from './commands/autopublish';
 import { createHealthCommand } from './commands/health';
 import { createRepairCommand } from './commands/repair';
 import { createServeCommand } from './commands/serve';
+import { createAgentCommand } from './commands/agent';
 
 // ============================================================================
 // Program Setup
@@ -144,7 +145,11 @@ program.addCommand(createHealthCommand());
 // On-chain shape repair (drop phantom services, update endpoint, toggle flags)
 program.addCommand(createRepairCommand());
 
-// AIP-2.1 provider daemon (long-running quote-channel server)
+// AIP-2.1 provider daemon — channel-driven, no HTTP listener (3.5.0)
+program.addCommand(createAgentCommand());
+
+// Legacy AIP-2.1 HTTP-listener daemon (3.4.x). Deprecated; new
+// deployments should use `actp agent`. Will be removed in 3.6.0.
 program.addCommand(createServeCommand());
 
 // ============================================================================
