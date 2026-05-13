@@ -2,6 +2,21 @@ import { Contract, EventLog } from 'ethers';
 import { State, Transaction } from '../types';
 
 /**
+ * Widened transaction returned by getTransactionHistory.
+ *
+ * `blockNumber` and `logIndex` are sourced from the on-chain event log,
+ * not from ACTPKernel state — they exist so consumers (catch-up sweeps)
+ * can select the newest `limit` events deterministically and then process
+ * the selected batch oldest-first.
+ *
+ * PRD-event-driven-provider-listening §5.5.
+ */
+export type TransactionWithLogMeta = Transaction & {
+  blockNumber?: number;
+  logIndex?: number;
+};
+
+/**
  * EventMonitor - Listen to blockchain events
  *
  * ## Confirmation Policy
@@ -86,11 +101,20 @@ export class EventMonitor {
    *
    *Security: Use getTransaction() instead of transactions()
    * The kernel contract exposes getTransaction(bytes32) not transactions(bytes32).
+   *
+   * PRD §5.5: optional `range` lets callers bound the queryFilter scan to a
+   * recent block window (e.g., the catch-up sweep in BlockchainRuntime).
+   * Returned items are widened with `blockNumber` + `logIndex` from the source
+   * event log so consumers can select the newest `limit` deterministically.
+   * Backward compatible: `range === undefined` keeps prior genesis→latest scan
+   * behavior; existing callers that only read canonical `Transaction` fields
+   * compile unchanged.
    */
   async getTransactionHistory(
     address: string,
-    role: 'requester' | 'provider' = 'requester'
-  ): Promise<Transaction[]> {
+    role: 'requester' | 'provider' = 'requester',
+    range?: { fromBlock?: number; toBlock?: number | 'latest' }
+  ): Promise<TransactionWithLogMeta[]> {
     // TransactionCreated event signature per ABI:
     // (bytes32 indexed transactionId, address indexed requester, address indexed provider, uint256 amount, bytes32 serviceHash)
     // Filter format: TransactionCreated(txId, requester, provider)
@@ -99,7 +123,9 @@ export class EventMonitor {
         ? this.kernelContract.filters.TransactionCreated(null, address, null) // Match requester (2nd indexed param)
         : this.kernelContract.filters.TransactionCreated(null, null, address); // Match provider (3rd indexed param)
 
-    const events = await this.kernelContract.queryFilter(filter);
+    const events = range
+      ? await this.kernelContract.queryFilter(filter, range.fromBlock, range.toBlock)
+      : await this.kernelContract.queryFilter(filter);
 
     return Promise.all(
       events.map(async (event) => {
@@ -107,7 +133,8 @@ export class EventMonitor {
         if (!('args' in event)) {
           throw new Error('Event does not contain args (not an EventLog)');
         }
-        const txId = (event as EventLog).args?.transactionId;
+        const eventLog = event as EventLog;
+        const txId = eventLog.args?.transactionId;
 
         // Security: Use getTransaction() - the actual ABI function
         // Previous code called transactions(txId) which doesn't exist in ABI
@@ -129,7 +156,10 @@ export class EventMonitor {
           attestationUID: txData.attestationUID,
           // Use metadata field (quote hash for QUOTED state) if available, fallback to serviceHash
           metadata: txData.metadata || txData.serviceHash,
-          platformFeeBpsLocked: Number(txData.platformFeeBpsLocked)
+          platformFeeBpsLocked: Number(txData.platformFeeBpsLocked),
+          // PRD §5.5: surface source-log ordering metadata for deterministic newest-first selection
+          blockNumber: eventLog.blockNumber,
+          logIndex: eventLog.index,
         };
       })
     );

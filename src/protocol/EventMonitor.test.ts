@@ -330,6 +330,86 @@ describe('EventMonitor', () => {
       expect(result[0].requester).toBe(address);
       expect(result[0].state).toBe(2);
     });
+
+    // PRD-event-driven-provider-listening §5.5: bounded scan + ordering metadata.
+    describe('range parameter (§5.5)', () => {
+      it('should pass fromBlock/toBlock through to queryFilter when range provided', async () => {
+        const mockKernel = createMockContract();
+        const mockEscrow = createMockContract();
+        const monitor = new EventMonitor(mockKernel as any, mockEscrow as any);
+
+        const address = '0x' + '1'.repeat(40);
+        mockKernel.queryFilter.mockResolvedValue([]);
+
+        await monitor.getTransactionHistory(address, 'provider', {
+          fromBlock: 1000,
+          toBlock: 'latest',
+        });
+
+        // queryFilter(filter, fromBlock, toBlock)
+        expect(mockKernel.queryFilter).toHaveBeenCalledWith(
+          expect.anything(),
+          1000,
+          'latest'
+        );
+      });
+
+      it('should call queryFilter without range args when range is omitted (backward compat)', async () => {
+        const mockKernel = createMockContract();
+        const mockEscrow = createMockContract();
+        const monitor = new EventMonitor(mockKernel as any, mockEscrow as any);
+
+        const address = '0x' + '1'.repeat(40);
+        mockKernel.queryFilter.mockResolvedValue([]);
+
+        await monitor.getTransactionHistory(address, 'provider');
+
+        // Single-arg call — pre-§5.5 behavior preserved
+        expect(mockKernel.queryFilter).toHaveBeenCalledWith(expect.anything());
+        expect(mockKernel.queryFilter.mock.calls[0]).toHaveLength(1);
+      });
+
+      it('should attach blockNumber and logIndex from the source EventLog', async () => {
+        const mockKernel = createMockContract();
+        const mockEscrow = createMockContract();
+        const monitor = new EventMonitor(mockKernel as any, mockEscrow as any);
+
+        const txId = '0x' + '1'.repeat(64);
+        const address = '0x' + 'a'.repeat(40);
+
+        const mockEvent = {
+          args: { transactionId: txId },
+          blockNumber: 42_000,
+          index: 3,
+        };
+        const mockTxData = {
+          transactionId: txId,
+          requester: address,
+          provider: '0x' + 'b'.repeat(40),
+          amount: BigInt(1000000),
+          state: 0,
+          createdAt: BigInt(1700000000),
+          updatedAt: BigInt(1700000100),
+          deadline: BigInt(1700086400),
+          disputeWindow: BigInt(172800),
+          escrowContract: '0x' + 'c'.repeat(40),
+          escrowId: '0x' + '2'.repeat(64),
+          serviceHash: '0x' + '3'.repeat(64),
+          attestationUID: '0x' + '4'.repeat(64),
+          metadata: null,
+          platformFeeBpsLocked: BigInt(100),
+        };
+
+        mockKernel.queryFilter.mockResolvedValue([mockEvent]);
+        mockKernel.getTransaction.mockResolvedValue(mockTxData);
+
+        const result = await monitor.getTransactionHistory(address, 'provider');
+
+        expect(result).toHaveLength(1);
+        expect(result[0].blockNumber).toBe(42_000);
+        expect(result[0].logIndex).toBe(3);
+      });
+    });
   });
 
   // ============================================================================
