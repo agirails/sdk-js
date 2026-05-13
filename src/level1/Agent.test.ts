@@ -19,6 +19,7 @@ import * as os from 'os';
 import { Agent, AgentConfig } from './Agent';
 import { Job, JobHandler } from './types/Job';
 import { ServiceConfigError, AgentLifecycleError } from '../errors';
+import { ZeroHash, keccak256, toUtf8Bytes } from 'ethers';
 
 describe('Agent', () => {
   // State directory must be inside ~/.agirails due to security validation
@@ -252,6 +253,99 @@ describe('Agent', () => {
       );
 
       expect(agent.serviceNames).toContain('budgetFilteredService');
+    });
+  });
+
+  // ============================================================================
+  // Hash Routing (PRD §5.4)
+  // ============================================================================
+
+  describe('findServiceHandler — hash routing (PRD §5.4)', () => {
+    let agent: Agent;
+    let translate: JobHandler;
+    let echo: JobHandler;
+
+    beforeEach(() => {
+      agent = new Agent({ name: 'RouterAgent' });
+      translate = async (job) => job.input;
+      echo = async (job) => job.input;
+      agent.provide('translate', translate);
+      agent.provide('echo', echo);
+    });
+
+    it('routes on-chain TX by matching serviceHash to a registered handler', () => {
+      const tx = {
+        serviceHash: keccak256(toUtf8Bytes('translate')),
+        serviceDescription: '', // BlockchainRuntime-sourced — no string
+      };
+
+      const result = (agent as any).findServiceHandler(tx);
+
+      expect(result).toBeDefined();
+      expect(result.config.name).toBe('translate');
+      expect(result.handler).toBe(translate);
+    });
+
+    it('matches hash case-insensitively (uppercase serviceHash still routes)', () => {
+      const tx = {
+        serviceHash: keccak256(toUtf8Bytes('echo')).toUpperCase().replace('0X', '0x'),
+        serviceDescription: '',
+      };
+
+      const result = (agent as any).findServiceHandler(tx);
+      expect(result.config.name).toBe('echo');
+    });
+
+    it('skips hash branch for ZeroHash (Level 0 pay semantics)', () => {
+      // ZeroHash means a `pay` call — no INITIATED job, no handler dispatch.
+      // With an empty serviceDescription the string fallback also misses.
+      const tx = {
+        serviceHash: ZeroHash,
+        serviceDescription: '',
+      };
+
+      const result = (agent as any).findServiceHandler(tx);
+      expect(result).toBeUndefined();
+    });
+
+    it('returns undefined when no handler is registered for the hash', () => {
+      const tx = {
+        serviceHash: keccak256(toUtf8Bytes('unregistered-service')),
+        serviceDescription: '',
+      };
+
+      const result = (agent as any).findServiceHandler(tx);
+      expect(result).toBeUndefined();
+    });
+
+    it('falls back to string dispatch when hash is missing (MockRuntime test fixtures)', () => {
+      // Mock-style transactions may carry serviceDescription only.
+      const tx = {
+        serviceDescription: 'translate',
+      };
+
+      const result = (agent as any).findServiceHandler(tx);
+      expect(result).toBeDefined();
+      expect(result.config.name).toBe('translate');
+    });
+
+    it('falls back to string dispatch when hash misses but description matches', () => {
+      // Cross-runtime safety: an unknown hash should not block a legitimate
+      // string-based match for legacy/mock fixtures.
+      const tx = {
+        serviceHash: keccak256(toUtf8Bytes('nonexistent')),
+        serviceDescription: 'echo',
+      };
+
+      const result = (agent as any).findServiceHandler(tx);
+      expect(result?.config.name).toBe('echo');
+    });
+
+    it('keeps hash map and string map in sync on provide()', () => {
+      // Internal consistency: every name we register must also be reachable by hash.
+      const expectedHash = keccak256(toUtf8Bytes('translate')).toLowerCase();
+      expect((agent as any).handlersByHash.has(expectedHash)).toBe(true);
+      expect((agent as any).services.has('translate')).toBe(true);
     });
   });
 

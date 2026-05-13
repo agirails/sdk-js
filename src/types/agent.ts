@@ -8,7 +8,12 @@
  * Service descriptor metadata for an agent
  */
 export interface ServiceDescriptor {
-  /** keccak256(lowercase(serviceType)) */
+  /**
+   * `keccak256(toUtf8Bytes(serviceType))` — case-sensitive, no normalization.
+   * Same formula across `AgentRegistry.computeServiceTypeHash`, the
+   * `actp request --service <name>` CLI path, and `Agent.provide(name)`.
+   * PRD-event-driven-provider-listening §A.1, §5.11.
+   */
   serviceTypeHash: string;
   /** Human-readable service type (lowercase, alphanumeric + hyphens) */
   serviceType: string;

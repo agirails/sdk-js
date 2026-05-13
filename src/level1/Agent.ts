@@ -252,6 +252,13 @@ export class Agent extends EventEmitter {
    * Registered services
    */
   private services = new Map<string, { config: ServiceConfig; handler: JobHandler }>();
+  /**
+   * Hash-keyed mirror of `services`, populated alongside it in `provide()`.
+   * Key: `keccak256(toUtf8Bytes(name)).toLowerCase()`. Lookups match
+   * on-chain `tx.serviceHash` directly so BlockchainRuntime-sourced jobs
+   * route without depending on string `serviceDescription`. PRD §5.4.
+   */
+  private handlersByHash = new Map<string, { config: ServiceConfig; handler: JobHandler }>();
 
   /**
    * Active jobs
@@ -542,7 +549,13 @@ export class Agent extends EventEmitter {
       throw new ServiceConfigError('name', `Service "${config.name}" already registered`);
     }
 
+    // PRD §5.4: derive the on-chain routing key alongside the string key.
+    // Same formula used by `actp request --service <name>` (see PRD §A.1 +
+    // AgentRegistry.computeServiceTypeHash), so BlockchainRuntime jobs match
+    // the same handler that MockRuntime tests register.
+    const hashKey = ethers.keccak256(ethers.toUtf8Bytes(config.name)).toLowerCase();
     this.services.set(config.name, { config, handler });
+    this.handlersByHash.set(hashKey, { config, handler });
     this.emit('service:registered', config.name);
     this.logger.info('Service registered', { service: config.name });
 
@@ -899,13 +912,37 @@ export class Agent extends EventEmitter {
    *Security: Use exact field matching instead of substring search
    * to prevent service routing spoofing attacks.
    *
-   * Supports multiple formats (in priority order):
-   * 1. JSON: {"service":"name","input":...} - new structured format
-   * 2. Legacy: "service:name;input:..." - backward compatibility
-   * 3. Plain string exact match - simple service name
-   * 4. bytes32 hash - on-chain only (requires off-chain lookup)
+   * Dispatch order:
+   *   PRIMARY (PRD §5.4 — on-chain Layer B):
+   *     Match by `tx.serviceHash` against the `handlersByHash` map.
+   *     Skips ZeroHash (Level 0 `pay` semantics — no handler routing).
+   *   FALLBACK (preserves MockRuntime test fixtures + legacy clients):
+   *     5-step `serviceDescription` dispatch — JSON / legacy /
+   *     hash-only / string exact match.
    */
   private findServiceHandler(
+    tx: any
+  ): { config: ServiceConfig; handler: JobHandler } | undefined {
+    // PRIMARY: on-chain hash routing (PRD §5.4).
+    const hash =
+      typeof tx?.serviceHash === 'string' ? tx.serviceHash.toLowerCase() : undefined;
+    if (hash && hash !== ethers.ZeroHash.toLowerCase()) {
+      const byHash = this.handlersByHash.get(hash);
+      if (byHash) return byHash;
+    }
+
+    // FALLBACK: existing 5-step string dispatch.
+    return this.findServiceHandlerByString(tx);
+  }
+
+  /**
+   * Legacy string-based service dispatch — kept as a fallback for
+   * MockRuntime-style transactions where `serviceDescription` still carries
+   * the JSON / legacy / plain-name shape. PRD §5.4 routes by hash first;
+   * this method is only reached when the hash branch misses or the TX has
+   * `serviceHash === ZeroHash`.
+   */
+  private findServiceHandlerByString(
     tx: any
   ): { config: ServiceConfig; handler: JobHandler } | undefined {
     const serviceDesc = tx.serviceDescription;
