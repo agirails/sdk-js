@@ -16,6 +16,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { ZeroHash } from 'ethers';
 import {
   MockStateManager,
   MockStateCorruptedError,
@@ -117,6 +118,7 @@ describe('MockStateManager', () => {
             completedAt: null,
             escrowId: null,
             serviceDescription: 'Test service',
+            serviceHash: ZeroHash,
             deliveryProof: null,
             events: [],
           },
@@ -225,6 +227,7 @@ describe('MockStateManager', () => {
         completedAt: null,
         escrowId: 'escrow-001',
         serviceDescription: 'Test',
+        serviceHash: ZeroHash,
         deliveryProof: null,
         events: [
           {
@@ -420,6 +423,7 @@ describe('MockStateManager', () => {
         completedAt: null,
         escrowId: null,
         serviceDescription: '',
+        serviceHash: ZeroHash,
         deliveryProof: null,
         events: [],
       };
@@ -621,6 +625,7 @@ describe('MockStateManager', () => {
           completedAt: null,
           escrowId: null,
           serviceDescription: '',
+          serviceHash: ZeroHash,
           deliveryProof: null,
           events: [],
         };
@@ -662,6 +667,7 @@ describe('MockStateManager', () => {
           completedAt: null,
           escrowId: null,
           serviceDescription: unicodeDesc,
+          serviceHash: ZeroHash,
           deliveryProof: null,
           events: [],
         };
@@ -696,6 +702,7 @@ describe('MockStateManager', () => {
           completedAt: null,
           escrowId: null,
           serviceDescription: '',
+          serviceHash: ZeroHash,
           deliveryProof: null,
           events: [
             {

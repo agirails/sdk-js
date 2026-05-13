@@ -73,6 +73,29 @@ export interface BlockchainRuntimeConfig {
    * Default: 2 (Base L2 reorg safety). Set to 1 on testnet for speed.
    */
   confirmations?: number;
+  /**
+   * Block window for getTransactionsByProvider catch-up sweep.
+   * Default: 7200 (~4 h on Base L2 at 2 s/block).
+   * PRD-event-driven-provider-listening §5.2.
+   */
+  sweepBlockWindow?: number;
+  /**
+   * ethers JsonRpcProvider polling interval, in milliseconds.
+   * Default: 1000 (1 s) — overrides ethers' 4 s default for sub-2 s
+   * `job:received` latency on Sentinel-style onboarding.
+   * Multi-agent operators sharing one RPC endpoint should set 2000+.
+   * Public RPCs (Infura free, Cloudflare) enforce floors of 2–3 s.
+   * PRD-event-driven-provider-listening §5.2.
+   */
+  pollingInterval?: number;
+  /**
+   * Subscription transport. Default `'http'` (uses the JsonRpcProvider polling
+   * path). Set to `'wss'` and provide `wssUrl` for sub-second event latency.
+   * 4.0.0 ships HTTP as the default; WSS is opt-in.
+   */
+  transport?: 'http' | 'wss';
+  /** Required when `transport === 'wss'`. */
+  wssUrl?: string;
 }
 
 /**
@@ -125,6 +148,9 @@ export class BlockchainRuntime implements IACTPRuntime {
   private lastConnectionCheck = 0;
   private readonly connectionCheckInterval = 30000; // 30 seconds
 
+  /** Bounded fromBlock window for getTransactionsByProvider catch-up sweep. PRD §5.2. */
+  private readonly sweepBlockWindow: number;
+
   /**
    * Create new BlockchainRuntime instance
    *
@@ -133,6 +159,22 @@ export class BlockchainRuntime implements IACTPRuntime {
   constructor(config: BlockchainRuntimeConfig) {
     this.provider = config.provider;
     this.signer = config.signer;
+
+    // PRD §5.2: sub-2-s subscription latency. Multi-agent / public-RPC operators
+    // should pass a higher value (see MIGRATION-4.0 bullets 5+6).
+    this.provider.pollingInterval = config.pollingInterval ?? 1000;
+
+    // PRD §5.2: bounded catch-up sweep. Default ~4 h on Base L2.
+    this.sweepBlockWindow = config.sweepBlockWindow ?? 7200;
+
+    // PRD §5.2 transport opt-in is reserved for a follow-up commit on this
+    // branch. For now we validate the surface so misuse is caught early.
+    if (config.transport === 'wss' && !config.wssUrl) {
+      throw new ValidationError(
+        "BlockchainRuntimeConfig: transport='wss' requires wssUrl",
+        'wssUrl'
+      );
+    }
 
     // Get network configuration
     this.networkConfig = getNetwork(config.network);
@@ -603,7 +645,12 @@ export class BlockchainRuntime implements IACTPRuntime {
         // On-chain contract still enforces dispute window correctly via _validateSettlementConditions().
         // V2 will implement EventMonitor to track this properly.
         completedAt: 0,
-        serviceDescription: '', // V2: Decode from on-chain serviceHash
+        serviceDescription: '', // Routing keys on serviceHash; no off-chain name resolution in 4.0.0.
+        // PRD §5.2 Layer B: surface the on-chain bytes32 service key so
+        // Agent.findServiceHandler can route via Map<bytes32, handler>.
+        // Fall back to ZeroHash if the kernel return is missing the field
+        // (legacy ABI / pre-redeploy) — routing simply finds no handler.
+        serviceHash: tx.serviceHash ?? ethers.ZeroHash,
         deliveryProof: '', // V2: Fetch from EAS attestation
         events: [], // V2: Populate via EventMonitor.getTransactionEvents()
         ethTxHash: this.ethTxHashes.get(txId),
@@ -637,29 +684,118 @@ export class BlockchainRuntime implements IACTPRuntime {
   /**
    * Gets transactions filtered by provider address.
    *
-   * **Placeholder** (PRD-event-driven-provider-listening §5.1). Returns an
-   * empty array with a debug log. The real implementation — bounded
-   * EventMonitor sweep + per-tx hydration + log-ordered selection — lands
-   * with §5.2 in a follow-up commit on this branch.
+   * PRD-event-driven-provider-listening §5.2. Bounded catch-up sweep over a
+   * recent block window:
+   *   1. queryFilter(TransactionCreated, fromBlock=current-sweepBlockWindow)
+   *   2. Sort newest-first by (blockNumber, logIndex) so a busy window doesn't
+   *      truncate the freshest jobs at `limit`.
+   *   3. Hydrate each candidate via getTransaction() and apply state + provider
+   *      filters (provider re-check defends against false-positive matches if
+   *      the topic filter is misconfigured upstream).
+   *   4. Reverse before returning so consumers (Agent.pollForJobs) process the
+   *      selected batch oldest-first — matches Mock semantics.
    *
-   * Returning an empty array (rather than throwing) is intentional: the
-   * existing `Agent.pollForJobs` flow tolerates empty results, so live
-   * Sentinel does not regress between §5.1 and §5.2.
+   * Provider comparison is case-insensitive.
    *
-   * @param _provider - Provider Ethereum address (case-insensitive; unused in placeholder)
-   * @param _state - Optional state filter (unused in placeholder)
-   * @param _limit - Maximum results (unused in placeholder)
-   * @returns Promise resolving to an empty array
+   * @param provider - Provider Ethereum address (any case)
+   * @param state - Optional state filter (e.g., 'INITIATED')
+   * @param limit - Max results (default 100, 0 = unlimited)
    */
   async getTransactionsByProvider(
-    _provider: string,
-    _state?: TransactionState,
-    _limit: number = 100
+    provider: string,
+    state?: TransactionState,
+    limit: number = 100
   ): Promise<MockTransaction[]> {
-    sdkLogger.debug(
-      'getTransactionsByProvider() placeholder — full impl lands in PRD §5.2'
+    const currentBlock = await this.provider.getBlockNumber();
+    const fromBlock = Math.max(0, currentBlock - this.sweepBlockWindow);
+
+    const history = await this.events.getTransactionHistory(
+      provider,
+      'provider',
+      { fromBlock, toBlock: 'latest' }
     );
-    return [];
+
+    const recentFirst = [...history].sort((a, b) => {
+      const blockDiff = (b.blockNumber ?? 0) - (a.blockNumber ?? 0);
+      if (blockDiff !== 0) return blockDiff;
+      return (b.logIndex ?? 0) - (a.logIndex ?? 0);
+    });
+
+    const stateMap: Record<number, TransactionState> = {
+      0: 'INITIATED', 1: 'QUOTED', 2: 'COMMITTED', 3: 'IN_PROGRESS',
+      4: 'DELIVERED', 5: 'SETTLED', 6: 'DISPUTED', 7: 'CANCELLED',
+    };
+
+    const target = provider.toLowerCase();
+    const results: MockTransaction[] = [];
+
+    for (const h of recentFirst) {
+      const mapped = stateMap[h.state as number];
+      if (state !== undefined && mapped !== state) continue;
+
+      const hydrated = await this.getTransaction(h.txId);
+      if (!hydrated) continue;
+      if (hydrated.provider.toLowerCase() !== target) continue;
+
+      results.push(hydrated);
+      if (limit > 0 && results.length >= limit) break;
+    }
+
+    // Oldest-first matches Mock semantics so downstream Agent.pollForJobs
+    // sees the same ordering on both runtimes.
+    return results.reverse();
+  }
+
+  /**
+   * Subscribe to live TransactionCreated events for a given provider.
+   *
+   * Public on the class (NOT on `IACTPRuntime`). Public visibility is
+   * intentional so `Agent.subscribeIfBlockchain()` can detect support with a
+   * structural `'subscribeProviderJobs' in runtime` check — keeping the
+   * runtime contract narrow. `MockRuntime` deliberately does not implement
+   * this; mock providers receive jobs through polling against in-memory state.
+   *
+   * Hydration is best-effort:
+   *   - tx not yet visible after the event fires (RPC eventual consistency)
+   *     → log a warning and let the catch-up sweep pick it up next poll.
+   *   - tx hydrated but no longer in `INITIATED` (cancelled/quoted between
+   *     event emission and our read) → drop silently. We don't double-process.
+   *
+   * PRD-event-driven-provider-listening §5.2.
+   *
+   * @param provider - Provider Ethereum address
+   * @param onJob - Callback invoked with the hydrated INITIATED MockTransaction
+   * @returns Cleanup function that unsubscribes from the underlying filter
+   */
+  subscribeProviderJobs(
+    provider: string,
+    onJob: (tx: MockTransaction) => void
+  ): () => void {
+    return this.events.onTransactionCreated(
+      { provider },
+      async ({ txId }) => {
+        try {
+          const tx = await this.getTransaction(txId);
+          if (!tx) {
+            sdkLogger.warn(
+              'subscribeProviderJobs: tx not yet visible, sweep will retry',
+              { txId }
+            );
+            return;
+          }
+          if (tx.state !== 'INITIATED') {
+            sdkLogger.debug(
+              'subscribeProviderJobs: tx no longer INITIATED, skipping',
+              { txId, state: tx.state }
+            );
+            return;
+          }
+          onJob(tx);
+        } catch (err) {
+          sdkLogger.warn('subscribeProviderJobs: hydration error', { txId, err });
+        }
+      }
+    );
   }
 
   /**

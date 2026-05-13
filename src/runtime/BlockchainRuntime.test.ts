@@ -6,7 +6,7 @@
  */
 
 import { BlockchainRuntime, BlockchainRuntimeConfig } from './BlockchainRuntime';
-import { JsonRpcProvider, Wallet, Network } from 'ethers';
+import { JsonRpcProvider, Wallet, Network, ZeroHash } from 'ethers';
 import { TransactionState } from './types/MockState';
 
 // Mock ethers modules
@@ -281,6 +281,7 @@ describe('BlockchainRuntime', () => {
         updatedAt: 0,
         completedAt: 0,
         serviceDescription: '',
+        serviceHash: ZeroHash,
         deliveryProof: '',
         events: []
       });
@@ -304,6 +305,7 @@ describe('BlockchainRuntime', () => {
         updatedAt: 0,
         completedAt: 0,
         serviceDescription: '',
+        serviceHash: ZeroHash,
         deliveryProof: '',
         events: []
       });
@@ -408,28 +410,228 @@ describe('BlockchainRuntime', () => {
     });
   });
 
-  // PRD-event-driven-provider-listening §5.1: getTransactionsByProvider is now a
-  // required IACTPRuntime method. BlockchainRuntime ships an empty-array
-  // placeholder in this commit; §5.2 lands the full EventMonitor-backed impl.
-  describe('getTransactionsByProvider() — §5.1 placeholder', () => {
+  // PRD-event-driven-provider-listening §5.2: bounded EventMonitor sweep,
+  // newest-first selection, case-insensitive provider match, return
+  // oldest-first to match MockRuntime semantics.
+  describe('getTransactionsByProvider() — §5.2 impl', () => {
+    const PROVIDER = '0x1111111111111111111111111111111111111111';
+
+    beforeEach(async () => {
+      await runtime.initialize();
+      // sweepBlockWindow defaults to 7200; pin currentBlock so we can assert
+      // the fromBlock the impl passes to EventMonitor.
+      jest.spyOn((runtime as any).provider, 'getBlockNumber').mockResolvedValue(10_000);
+    });
+
+    it('returns empty array when EventMonitor yields no events', async () => {
+      jest.spyOn((runtime as any).events, 'getTransactionHistory').mockResolvedValue([]);
+      const result = await runtime.getTransactionsByProvider(PROVIDER);
+      expect(result).toEqual([]);
+    });
+
+    it('passes bounded fromBlock = currentBlock − sweepBlockWindow to EventMonitor', async () => {
+      const historySpy = jest
+        .spyOn((runtime as any).events, 'getTransactionHistory')
+        .mockResolvedValue([]);
+      await runtime.getTransactionsByProvider(PROVIDER);
+      expect(historySpy).toHaveBeenCalledWith(
+        PROVIDER,
+        'provider',
+        { fromBlock: 10_000 - 7200, toBlock: 'latest' }
+      );
+    });
+
+    it('hydrates each candidate, applies state filter, and returns oldest-first', async () => {
+      jest.spyOn((runtime as any).events, 'getTransactionHistory').mockResolvedValue([
+        { txId: '0xaaa', state: 0, blockNumber: 9_990, logIndex: 0 }, // oldest INITIATED
+        { txId: '0xbbb', state: 0, blockNumber: 9_995, logIndex: 0 }, // newer INITIATED
+        { txId: '0xccc', state: 2, blockNumber: 9_998, logIndex: 0 }, // newest, COMMITTED — filtered out
+      ] as any);
+      const baseTx = {
+        provider: PROVIDER,
+        requester: REQUESTER,
+        amount: '100000000',
+        deadline: 0,
+        disputeWindow: 172800,
+        escrowId: '',
+        createdAt: 0,
+        updatedAt: 0,
+        completedAt: 0,
+        serviceDescription: '',
+        serviceHash: ZeroHash,
+        deliveryProof: '',
+        events: [],
+      };
+      jest.spyOn(runtime, 'getTransaction').mockImplementation(async (txId) => {
+        if (txId === '0xaaa') return { ...baseTx, id: txId, state: 'INITIATED' };
+        if (txId === '0xbbb') return { ...baseTx, id: txId, state: 'INITIATED' };
+        if (txId === '0xccc') return { ...baseTx, id: txId, state: 'COMMITTED' };
+        return null;
+      });
+
+      const result = await runtime.getTransactionsByProvider(PROVIDER, 'INITIATED');
+
+      // 0xccc filtered out by state; remaining returned oldest-first.
+      expect(result.map((t) => t.id)).toEqual(['0xaaa', '0xbbb']);
+    });
+
+    it('matches provider case-insensitively (PRD §5.2)', async () => {
+      jest.spyOn((runtime as any).events, 'getTransactionHistory').mockResolvedValue([
+        { txId: '0xaaa', state: 0, blockNumber: 9_990, logIndex: 0 },
+      ] as any);
+      jest.spyOn(runtime, 'getTransaction').mockResolvedValue({
+        id: '0xaaa',
+        provider: PROVIDER.toUpperCase().replace('0X', '0x'), // mixed case stored
+        requester: REQUESTER,
+        amount: '100000000',
+        state: 'INITIATED',
+        deadline: 0,
+        disputeWindow: 172800,
+        escrowId: '',
+        createdAt: 0,
+        updatedAt: 0,
+        completedAt: 0,
+        serviceDescription: '',
+        serviceHash: ZeroHash,
+        deliveryProof: '',
+        events: [],
+      });
+
+      // Query with lowercase address — must still match the mixed-case stored value
+      const result = await runtime.getTransactionsByProvider(PROVIDER.toLowerCase());
+      expect(result).toHaveLength(1);
+    });
+
+    it('honors limit by truncating after newest-first selection', async () => {
+      // Three INITIATED events at descending block numbers; limit=2 must keep the
+      // two newest (which become positions [1, 0] after the reverse-to-oldest-first).
+      jest.spyOn((runtime as any).events, 'getTransactionHistory').mockResolvedValue([
+        { txId: '0xaaa', state: 0, blockNumber: 9_990, logIndex: 0 },
+        { txId: '0xbbb', state: 0, blockNumber: 9_995, logIndex: 0 },
+        { txId: '0xccc', state: 0, blockNumber: 9_999, logIndex: 0 },
+      ] as any);
+      const baseTx = {
+        provider: PROVIDER,
+        requester: REQUESTER,
+        amount: '100000000',
+        state: 'INITIATED' as const,
+        deadline: 0,
+        disputeWindow: 172800,
+        escrowId: '',
+        createdAt: 0,
+        updatedAt: 0,
+        completedAt: 0,
+        serviceDescription: '',
+        serviceHash: ZeroHash,
+        deliveryProof: '',
+        events: [],
+      };
+      jest.spyOn(runtime, 'getTransaction').mockImplementation(async (txId) => ({
+        ...baseTx,
+        id: txId,
+      }));
+
+      const result = await runtime.getTransactionsByProvider(PROVIDER, 'INITIATED', 2);
+
+      // Newest two selected (bbb, ccc), then reversed → [bbb, ccc]
+      expect(result.map((t) => t.id)).toEqual(['0xbbb', '0xccc']);
+    });
+
+    it('skips null hydrations and mismatched providers', async () => {
+      jest.spyOn((runtime as any).events, 'getTransactionHistory').mockResolvedValue([
+        { txId: '0xaaa', state: 0, blockNumber: 9_990, logIndex: 0 },
+        { txId: '0xbbb', state: 0, blockNumber: 9_991, logIndex: 0 },
+      ] as any);
+      const baseTx = {
+        requester: REQUESTER,
+        amount: '100000000',
+        state: 'INITIATED' as const,
+        deadline: 0,
+        disputeWindow: 172800,
+        escrowId: '',
+        createdAt: 0,
+        updatedAt: 0,
+        completedAt: 0,
+        serviceDescription: '',
+        serviceHash: ZeroHash,
+        deliveryProof: '',
+        events: [],
+      };
+      jest.spyOn(runtime, 'getTransaction').mockImplementation(async (txId) => {
+        if (txId === '0xaaa') return null;
+        if (txId === '0xbbb') {
+          return { ...baseTx, id: txId, provider: '0x9999999999999999999999999999999999999999' };
+        }
+        return null;
+      });
+
+      const result = await runtime.getTransactionsByProvider(PROVIDER);
+      expect(result).toEqual([]);
+    });
+  });
+
+  // PRD-event-driven-provider-listening §5.2: live subscription wiring.
+  describe('subscribeProviderJobs() — §5.2', () => {
+    const PROVIDER = '0x1111111111111111111111111111111111111111';
+
     beforeEach(async () => {
       await runtime.initialize();
     });
 
-    it('returns an empty array without throwing', async () => {
-      const result = await runtime.getTransactionsByProvider(
-        '0x1111111111111111111111111111111111111111'
-      );
-      expect(result).toEqual([]);
+    it('returns a cleanup function and registers a TransactionCreated listener', () => {
+      const onTxSpy = jest
+        .spyOn((runtime as any).events, 'onTransactionCreated')
+        .mockReturnValue(() => undefined);
+
+      const cleanup = runtime.subscribeProviderJobs(PROVIDER, jest.fn());
+
+      expect(onTxSpy).toHaveBeenCalledWith({ provider: PROVIDER }, expect.any(Function));
+      expect(typeof cleanup).toBe('function');
     });
 
-    it('returns an empty array regardless of state/limit args', async () => {
-      const filtered = await runtime.getTransactionsByProvider(
-        '0x1111111111111111111111111111111111111111',
-        'INITIATED',
-        50
-      );
-      expect(filtered).toEqual([]);
+    it('invokes onJob only when hydrated tx is INITIATED', async () => {
+      let capturedListener: any;
+      jest
+        .spyOn((runtime as any).events, 'onTransactionCreated')
+        .mockImplementation((_filter: any, listener: any) => {
+          capturedListener = listener;
+          return () => undefined;
+        });
+
+      const baseTx = {
+        id: '0xaaa',
+        provider: PROVIDER,
+        requester: REQUESTER,
+        amount: '100000000',
+        deadline: 0,
+        disputeWindow: 172800,
+        escrowId: '',
+        createdAt: 0,
+        updatedAt: 0,
+        completedAt: 0,
+        serviceDescription: '',
+        serviceHash: ZeroHash,
+        deliveryProof: '',
+        events: [],
+      };
+
+      const onJob = jest.fn();
+      runtime.subscribeProviderJobs(PROVIDER, onJob);
+
+      // Case 1: INITIATED → fired
+      jest.spyOn(runtime, 'getTransaction').mockResolvedValueOnce({ ...baseTx, state: 'INITIATED' });
+      await capturedListener({ txId: '0xaaa' });
+      expect(onJob).toHaveBeenCalledTimes(1);
+
+      // Case 2: post-INITIATED (cancelled between event and read) → not fired
+      jest.spyOn(runtime, 'getTransaction').mockResolvedValueOnce({ ...baseTx, state: 'CANCELLED' });
+      await capturedListener({ txId: '0xbbb' });
+      expect(onJob).toHaveBeenCalledTimes(1); // still 1
+
+      // Case 3: hydration null (RPC eventual consistency) → not fired, no throw
+      jest.spyOn(runtime, 'getTransaction').mockResolvedValueOnce(null);
+      await capturedListener({ txId: '0xccc' });
+      expect(onJob).toHaveBeenCalledTimes(1); // still 1
     });
   });
 
@@ -462,6 +664,7 @@ describe('BlockchainRuntime', () => {
         updatedAt: 0,
         completedAt: 0,
         serviceDescription: '',
+        serviceHash: ZeroHash,
         deliveryProof: '',
         events: []
       });
@@ -488,6 +691,7 @@ describe('BlockchainRuntime', () => {
         updatedAt: 0,
         completedAt: Math.floor(Date.now() / 1000) - 30, // dispute window active
         serviceDescription: '',
+        serviceHash: ZeroHash,
         deliveryProof: '',
         events: []
       });
@@ -511,6 +715,7 @@ describe('BlockchainRuntime', () => {
         updatedAt: 0,
         completedAt: Math.floor(Date.now() / 1000) - 30, // dispute window active
         serviceDescription: '',
+        serviceHash: ZeroHash,
         deliveryProof: '',
         events: []
       });
@@ -543,6 +748,7 @@ describe('BlockchainRuntime', () => {
         updatedAt: 0,
         completedAt: Math.floor(Date.now() / 1000) - 200000, // Dispute window passed
         serviceDescription: '',
+        serviceHash: ZeroHash,
         deliveryProof: '',
         events: []
       });
@@ -568,6 +774,7 @@ describe('BlockchainRuntime', () => {
         updatedAt: 0,
         completedAt: Math.floor(Date.now() / 1000) - 200000,
         serviceDescription: '',
+        serviceHash: ZeroHash,
         deliveryProof: '',
         events: []
       });
@@ -618,6 +825,7 @@ describe('BlockchainRuntime', () => {
         updatedAt: 0,
         completedAt: 0,
         serviceDescription: '',
+        serviceHash: ZeroHash,
         deliveryProof: '',
         events: []
       });
@@ -640,6 +848,7 @@ describe('BlockchainRuntime', () => {
         updatedAt: 0,
         completedAt: 0,
         serviceDescription: '',
+        serviceHash: ZeroHash,
         deliveryProof: '',
         events: []
       });

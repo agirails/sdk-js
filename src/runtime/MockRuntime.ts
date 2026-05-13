@@ -18,6 +18,7 @@
  */
 
 import * as crypto from 'crypto';
+import { ZeroHash, keccak256, toUtf8Bytes } from 'ethers';
 import { ACTPError } from '../errors/ACTPError';
 import { MockStateManager } from './MockStateManager';
 import {
@@ -442,6 +443,19 @@ export class MockRuntime implements IACTPRuntime {
       // Security: Generate transaction ID with collision check
       const txId = this.generateTransactionIdWithCollisionCheck(state);
 
+      // PRD §5.2 Layer B: derive bytes32 serviceHash for on-chain-compatible
+      // routing. Three input shapes are handled:
+      //   - already a bytes32 hex (0x + 64 chars) → pass through unchanged
+      //   - any other non-empty string → keccak256(toUtf8Bytes(...))
+      //   - omitted / empty → ZeroHash (Level 0 pay semantics)
+      const desc = params.serviceDescription ?? '';
+      const serviceHash =
+        desc === ''
+          ? ZeroHash
+          : /^0x[0-9a-fA-F]{64}$/.test(desc)
+            ? desc
+            : keccak256(toUtf8Bytes(desc));
+
       // Create transaction
       const transaction: MockTransaction = {
         id: txId,
@@ -455,7 +469,8 @@ export class MockRuntime implements IACTPRuntime {
         disputeWindow: params.disputeWindow ?? 172800, // Default 2 days
         completedAt: null,
         escrowId: null,
-        serviceDescription: params.serviceDescription ?? '',
+        serviceDescription: desc,
+        serviceHash,
         deliveryProof: null,
         events: [],
         agentId: params.agentId,

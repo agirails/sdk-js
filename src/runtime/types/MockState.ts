@@ -109,6 +109,19 @@ export interface MockTransaction {
   /** Service description or metadata hash */
   serviceDescription: string;
 
+  /**
+   * On-chain service routing key (bytes32, hex with 0x prefix).
+   *
+   * For BlockchainRuntime: populated from the kernel's `serviceHash` field
+   * on every transaction read. For MockRuntime: derived from
+   * `CreateTransactionParams.serviceDescription` (already a hash → pass through;
+   * raw string → `keccak256(toUtf8Bytes(...))`; omitted → ZeroHash).
+   *
+   * PRD-event-driven-provider-listening §5.2 Layer B. Agent.findServiceHandler
+   * keys on this for on-chain provider routing.
+   */
+  serviceHash: string;
+
   /** Delivery proof hash (null if not delivered) */
   deliveryProof: string | null;
 
