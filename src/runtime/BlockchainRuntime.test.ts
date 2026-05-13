@@ -134,6 +134,19 @@ describe('BlockchainRuntime', () => {
       const secureRuntime = new BlockchainRuntime(config);
       expect(secureRuntime.isAttestationRequired()).toBe(true);
     });
+
+    it("rejects transport='wss' with a clear not-yet-implemented error (§5.2.1)", () => {
+      expect(
+        () =>
+          new BlockchainRuntime({
+            network: 'base-sepolia',
+            signer: mockSigner,
+            provider: mockProvider,
+            transport: 'wss',
+            wssUrl: 'wss://example.com',
+          })
+      ).toThrow(/not yet implemented/i);
+    });
   });
 
   describe('initialize()', () => {
@@ -535,6 +548,35 @@ describe('BlockchainRuntime', () => {
 
       // Newest two selected (bbb, ccc), then reversed → [bbb, ccc]
       expect(result.map((t) => t.id)).toEqual(['0xbbb', '0xccc']);
+    });
+
+    it('drops candidates that change state between event filter and hydration (§5.2.1)', async () => {
+      // History claims one INITIATED event, but by the time we hydrate the TX
+      // is QUOTED. Without the post-hydration re-check, we would hand a stale
+      // job back to Agent.pollForJobs and the next linkEscrow would revert.
+      jest.spyOn((runtime as any).events, 'getTransactionHistory').mockResolvedValue([
+        { txId: '0xaaa', state: 0, blockNumber: 9_990, logIndex: 0 },
+      ] as any);
+      jest.spyOn(runtime, 'getTransaction').mockResolvedValue({
+        id: '0xaaa',
+        provider: PROVIDER,
+        requester: REQUESTER,
+        amount: '100000000',
+        state: 'QUOTED', // moved on between event and hydration
+        deadline: 0,
+        disputeWindow: 172800,
+        escrowId: '',
+        createdAt: 0,
+        updatedAt: 0,
+        completedAt: 0,
+        serviceDescription: '',
+        serviceHash: ZeroHash,
+        deliveryProof: '',
+        events: [],
+      });
+
+      const result = await runtime.getTransactionsByProvider(PROVIDER, 'INITIATED');
+      expect(result).toEqual([]);
     });
 
     it('skips null hydrations and mismatched providers', async () => {

@@ -18,6 +18,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import lockfile from 'proper-lockfile';
+import { ZeroHash, keccak256, toUtf8Bytes } from 'ethers';
 import { MockState, MOCK_STATE_DEFAULTS } from './types/MockState';
 import { assertSafeFileForRead, ensureSafeDir } from '../utils/fsSafe';
 
@@ -307,6 +308,23 @@ export class MockStateManager {
       typeof state.accounts !== 'object'
     ) {
       throw new MockStateCorruptedError(sanitizePath(this.statePath));
+    }
+
+    // PRD §5.2 migration: transactions persisted by SDK ≤ 3.5.3 lack the
+    // `serviceHash` field. Backfill in-place using the same rule as
+    // MockRuntime.createTransaction (bytes32 passthrough → keccak256(name)
+    // → ZeroHash). Operators don't have to delete .actp/mock-state.json
+    // when upgrading.
+    for (const txId of Object.keys(state.transactions ?? {})) {
+      const tx = state.transactions[txId] as unknown as Record<string, unknown>;
+      if (typeof tx.serviceHash === 'string' && tx.serviceHash.length > 0) continue;
+      const desc = typeof tx.serviceDescription === 'string' ? tx.serviceDescription : '';
+      tx.serviceHash =
+        desc === ''
+          ? ZeroHash
+          : /^0x[0-9a-fA-F]{64}$/.test(desc)
+            ? desc
+            : keccak256(toUtf8Bytes(desc));
     }
 
     return state;

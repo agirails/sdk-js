@@ -16,7 +16,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { ZeroHash } from 'ethers';
+import { ZeroHash, keccak256, toUtf8Bytes } from 'ethers';
 import {
   MockStateManager,
   MockStateCorruptedError,
@@ -176,6 +176,104 @@ describe('MockStateManager', () => {
       fs.writeFileSync(statePath, largeContent, 'utf-8');
 
       expect(() => manager.loadState()).toThrow(/exceeds.*MB limit/);
+    });
+
+    // PRD §5.2.1: state files persisted by SDK ≤ 3.5.3 lack `serviceHash`.
+    // Backfill on load so existing .actp/mock-state.json files keep working
+    // without operator intervention.
+    it('backfills serviceHash on legacy transactions (no serviceHash field)', () => {
+      const statePath = manager.getStatePath();
+      const legacyState = {
+        version: MOCK_STATE_DEFAULTS.VERSION,
+        mode: 'mock',
+        blockchain: {
+          currentTime: 1733990400,
+          blockNumber: 2000,
+          chainId: 84532,
+          blockTime: 2,
+        },
+        transactions: {
+          '0xempty': {
+            id: '0xempty',
+            requester: '0xAAA',
+            provider: '0xBBB',
+            amount: '1000000',
+            state: 'INITIATED',
+            createdAt: 0,
+            updatedAt: 0,
+            deadline: 1,
+            disputeWindow: 0,
+            completedAt: null,
+            escrowId: null,
+            serviceDescription: '',
+            // serviceHash intentionally absent — pre-4.0.0 shape
+            deliveryProof: null,
+            events: [],
+          },
+          '0xnamed': {
+            id: '0xnamed',
+            requester: '0xAAA',
+            provider: '0xBBB',
+            amount: '1000000',
+            state: 'INITIATED',
+            createdAt: 0,
+            updatedAt: 0,
+            deadline: 1,
+            disputeWindow: 0,
+            completedAt: null,
+            escrowId: null,
+            serviceDescription: 'onboarding',
+            deliveryProof: null,
+            events: [],
+          },
+        },
+        escrows: {},
+        accounts: {},
+        events: [],
+      };
+      fs.writeFileSync(statePath, JSON.stringify(legacyState), 'utf-8');
+
+      const loaded = manager.loadState();
+      expect(loaded.transactions['0xempty'].serviceHash).toBe(ZeroHash);
+      expect(loaded.transactions['0xnamed'].serviceHash).toBe(
+        keccak256(toUtf8Bytes('onboarding'))
+      );
+    });
+
+    it('leaves already-present serviceHash untouched on load', () => {
+      const statePath = manager.getStatePath();
+      const existingHash = '0x' + '7'.repeat(64);
+      const upToDateState = {
+        version: MOCK_STATE_DEFAULTS.VERSION,
+        mode: 'mock',
+        blockchain: { currentTime: 0, blockNumber: 0, chainId: 84532, blockTime: 2 },
+        transactions: {
+          '0xkeep': {
+            id: '0xkeep',
+            requester: '0xAAA',
+            provider: '0xBBB',
+            amount: '1000000',
+            state: 'INITIATED',
+            createdAt: 0,
+            updatedAt: 0,
+            deadline: 1,
+            disputeWindow: 0,
+            completedAt: null,
+            escrowId: null,
+            serviceDescription: 'whatever',
+            serviceHash: existingHash,
+            deliveryProof: null,
+            events: [],
+          },
+        },
+        escrows: {},
+        accounts: {},
+        events: [],
+      };
+      fs.writeFileSync(statePath, JSON.stringify(upToDateState), 'utf-8');
+
+      const loaded = manager.loadState();
+      expect(loaded.transactions['0xkeep'].serviceHash).toBe(existingHash);
     });
   });
 

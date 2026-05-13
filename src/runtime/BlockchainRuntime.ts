@@ -89,12 +89,17 @@ export interface BlockchainRuntimeConfig {
    */
   pollingInterval?: number;
   /**
-   * Subscription transport. Default `'http'` (uses the JsonRpcProvider polling
-   * path). Set to `'wss'` and provide `wssUrl` for sub-second event latency.
-   * 4.0.0 ships HTTP as the default; WSS is opt-in.
+   * Subscription transport.
+   *
+   * 4.0.0 ships only `'http'` — the JsonRpcProvider polling path. The `'wss'`
+   * surface is declared so the config shape is locked, but the underlying
+   * WebsocketProvider integration is not implemented yet; setting
+   * `transport: 'wss'` will throw at construction time. Real WSS support
+   * lands in a follow-up release; until then, low-latency operators should
+   * lower `pollingInterval` or wait for the WSS feature flag.
    */
   transport?: 'http' | 'wss';
-  /** Required when `transport === 'wss'`. */
+  /** Reserved for the forthcoming WSS implementation. Ignored when `transport !== 'wss'`. */
   wssUrl?: string;
 }
 
@@ -167,12 +172,17 @@ export class BlockchainRuntime implements IACTPRuntime {
     // PRD §5.2: bounded catch-up sweep. Default ~4 h on Base L2.
     this.sweepBlockWindow = config.sweepBlockWindow ?? 7200;
 
-    // PRD §5.2 transport opt-in is reserved for a follow-up commit on this
-    // branch. For now we validate the surface so misuse is caught early.
-    if (config.transport === 'wss' && !config.wssUrl) {
+    // PRD §5.2: WSS transport is declared in the config shape but not yet
+    // implemented. Fail loud at construction time rather than silently
+    // ignoring the request and using HTTP polling anyway. When the real
+    // WebsocketProvider integration lands, replace this throw with the
+    // actual swap and keep the wssUrl validation.
+    if (config.transport === 'wss') {
       throw new ValidationError(
-        "BlockchainRuntimeConfig: transport='wss' requires wssUrl",
-        'wssUrl'
+        "BlockchainRuntimeConfig: transport='wss' is reserved for a future " +
+          'release and not yet implemented. Lower `pollingInterval` for ' +
+          'tighter HTTP polling, or pin to the 4.x version that ships WSS.',
+        'transport'
       );
     }
 
@@ -735,6 +745,12 @@ export class BlockchainRuntime implements IACTPRuntime {
 
       const hydrated = await this.getTransaction(h.txId);
       if (!hydrated) continue;
+      // Re-check post-hydration: between the event filter (above) and the
+      // contract read (just now), the TX may have moved (e.g.
+      // INITIATED → CANCELLED / QUOTED). Returning a stale-state job to
+      // Agent.pollForJobs would cause a wrong-state transition on the next
+      // linkEscrow. Mirror the guard in subscribeProviderJobs.
+      if (state !== undefined && hydrated.state !== state) continue;
       if (hydrated.provider.toLowerCase() !== target) continue;
 
       results.push(hydrated);
