@@ -779,24 +779,14 @@ export class Agent extends EventEmitter {
 
     try {
       // Security: Use filtered query instead of getAllTransactions
-      // This prevents DoS via memory exhaustion by only fetching relevant transactions
-      let pendingJobs: any[] = [];
-
-      // Check if runtime has the filtered query method
-      if ('getTransactionsByProvider' in this._client.runtime) {
-        // Use optimized filtered query (max 100 jobs per poll)
-        pendingJobs = await (this._client.runtime as any).getTransactionsByProvider(
-          this.address,
-          'INITIATED',
-          100
-        );
-      } else {
-        // Fallback to getAllTransactions (for older runtime versions)
-        const allTransactions = await this._client.runtime.getAllTransactions();
-        pendingJobs = allTransactions.filter(
-          (tx) => tx.provider === this.address && tx.state === 'INITIATED'
-        );
-      }
+      // This prevents DoS via memory exhaustion by only fetching relevant transactions.
+      // PRD §5.1: getTransactionsByProvider is now required on IACTPRuntime —
+      // the prior duck-type fallback to getAllTransactions is gone.
+      const pendingJobs = await this._client.runtime.getTransactionsByProvider(
+        this.address,
+        'INITIATED',
+        100
+      );
 
       this.logger.debug('Polling for jobs', {
         pendingJobs: pendingJobs.length,

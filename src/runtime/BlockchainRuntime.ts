@@ -635,6 +635,34 @@ export class BlockchainRuntime implements IACTPRuntime {
   }
 
   /**
+   * Gets transactions filtered by provider address.
+   *
+   * **Placeholder** (PRD-event-driven-provider-listening §5.1). Returns an
+   * empty array with a debug log. The real implementation — bounded
+   * EventMonitor sweep + per-tx hydration + log-ordered selection — lands
+   * with §5.2 in a follow-up commit on this branch.
+   *
+   * Returning an empty array (rather than throwing) is intentional: the
+   * existing `Agent.pollForJobs` flow tolerates empty results, so live
+   * Sentinel does not regress between §5.1 and §5.2.
+   *
+   * @param _provider - Provider Ethereum address (case-insensitive; unused in placeholder)
+   * @param _state - Optional state filter (unused in placeholder)
+   * @param _limit - Maximum results (unused in placeholder)
+   * @returns Promise resolving to an empty array
+   */
+  async getTransactionsByProvider(
+    _provider: string,
+    _state?: TransactionState,
+    _limit: number = 100
+  ): Promise<MockTransaction[]> {
+    sdkLogger.debug(
+      'getTransactionsByProvider() placeholder — full impl lands in PRD §5.2'
+    );
+    return [];
+  }
+
+  /**
    * Returns DELIVERED transactions for a provider whose dispute window has expired.
    * Used by SettleOnInteract for background settlement sweeps.
    *

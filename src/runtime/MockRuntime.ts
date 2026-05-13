@@ -578,9 +578,13 @@ export class MockRuntime implements IACTPRuntime {
     state?: TransactionState,
     limit: number = 100
   ): Promise<MockTransaction[]> {
+    // Case-insensitive comparison: stored and queried addresses may use either
+    // checksummed or lowercase form. Matches BlockchainRuntime semantics
+    // (PRD §5.1 — IACTPRuntime contract).
+    const target = provider.toLowerCase();
     return this.stateManager.withLock(async (s) => {
       let txs = Object.values(s.transactions).filter(
-        (tx) => tx.provider === provider
+        (tx) => tx.provider.toLowerCase() === target
       );
 
       if (state) {

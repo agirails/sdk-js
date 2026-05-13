@@ -408,6 +408,31 @@ describe('BlockchainRuntime', () => {
     });
   });
 
+  // PRD-event-driven-provider-listening §5.1: getTransactionsByProvider is now a
+  // required IACTPRuntime method. BlockchainRuntime ships an empty-array
+  // placeholder in this commit; §5.2 lands the full EventMonitor-backed impl.
+  describe('getTransactionsByProvider() — §5.1 placeholder', () => {
+    beforeEach(async () => {
+      await runtime.initialize();
+    });
+
+    it('returns an empty array without throwing', async () => {
+      const result = await runtime.getTransactionsByProvider(
+        '0x1111111111111111111111111111111111111111'
+      );
+      expect(result).toEqual([]);
+    });
+
+    it('returns an empty array regardless of state/limit args', async () => {
+      const filtered = await runtime.getTransactionsByProvider(
+        '0x1111111111111111111111111111111111111111',
+        'INITIATED',
+        50
+      );
+      expect(filtered).toEqual([]);
+    });
+  });
+
   describe('releaseEscrow()', () => {
     const TX_ID = '0xabcd1234567890abcd1234567890abcd1234567890abcd1234567890abcd1234';
 

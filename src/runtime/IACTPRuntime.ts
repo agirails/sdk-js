@@ -208,6 +208,40 @@ export interface IACTPRuntime {
   getAllTransactions(): Promise<MockTransaction[]>;
 
   /**
+   * Gets transactions filtered by provider address and optional state.
+   *
+   * Provider comparison is case-insensitive — implementations normalize both
+   * the stored and queried addresses to lowercase before comparing, so callers
+   * may pass either checksummed or lowercase forms.
+   *
+   * Implementations:
+   * - MockRuntime: queries in-memory state.
+   * - BlockchainRuntime: composes EventMonitor.getTransactionHistory over a
+   *   bounded fromBlock window + hydrates each result via getTransaction()
+   *   (full implementation lands with §5.2 of PRD-event-driven-provider-listening).
+   *
+   * @param provider - Provider Ethereum address (any case)
+   * @param state - Optional state filter (e.g., 'INITIATED'); omit for all states
+   * @param limit - Maximum results (default 100, 0 = unlimited)
+   * @returns Promise resolving to filtered transactions
+   *
+   * @example
+   * ```typescript
+   * // Get up to 100 INITIATED transactions for this provider
+   * const pending = await runtime.getTransactionsByProvider(
+   *   providerAddress,
+   *   'INITIATED',
+   *   100
+   * );
+   * ```
+   */
+  getTransactionsByProvider(
+    provider: string,
+    state?: TransactionState,
+    limit?: number
+  ): Promise<MockTransaction[]>;
+
+  /**
    * Releases escrow funds to the provider and settles the transaction.
    *
    * Can only be called when transaction is in DELIVERED state

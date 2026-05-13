@@ -332,6 +332,55 @@ describe('MockRuntime', () => {
         expect(transactions).toHaveLength(3);
       });
     });
+
+    describe('getTransactionsByProvider()', () => {
+      it('should return empty array when no transactions match', async () => {
+        const txs = await runtime.getTransactionsByProvider('0xOther');
+        expect(txs).toHaveLength(0);
+      });
+
+      it('should filter by provider', async () => {
+        await runtime.createTransaction(createTxParams({ provider: '0xProviderA' }));
+        await runtime.createTransaction(createTxParams({ provider: '0xProviderA' }));
+        await runtime.createTransaction(createTxParams({ provider: '0xProviderB' }));
+
+        const aTxs = await runtime.getTransactionsByProvider('0xProviderA');
+        expect(aTxs).toHaveLength(2);
+        expect(aTxs.every((tx) => tx.provider === '0xProviderA')).toBe(true);
+      });
+
+      it('should match provider case-insensitively (PRD §5.1)', async () => {
+        // Mixed-case stored, lowercase queried — must still match.
+        await runtime.createTransaction(createTxParams({ provider: '0xAbCdEf' }));
+
+        const lower = await runtime.getTransactionsByProvider('0xabcdef');
+        const upper = await runtime.getTransactionsByProvider('0XABCDEF');
+
+        expect(lower).toHaveLength(1);
+        expect(upper).toHaveLength(1);
+      });
+
+      it('should filter by state when provided', async () => {
+        const txId1 = await runtime.createTransaction(createTxParams({ provider: '0xP' }));
+        await runtime.createTransaction(createTxParams({ provider: '0xP' }));
+        await runtime.transitionState(txId1, 'CANCELLED');
+
+        const initiated = await runtime.getTransactionsByProvider('0xP', 'INITIATED');
+        const cancelled = await runtime.getTransactionsByProvider('0xP', 'CANCELLED');
+
+        expect(initiated).toHaveLength(1);
+        expect(cancelled).toHaveLength(1);
+      });
+
+      it('should honor limit', async () => {
+        for (let i = 0; i < 5; i++) {
+          await runtime.createTransaction(createTxParams({ provider: '0xP' }));
+        }
+
+        const limited = await runtime.getTransactionsByProvider('0xP', undefined, 2);
+        expect(limited).toHaveLength(2);
+      });
+    });
   });
 
   // ============================================================================
