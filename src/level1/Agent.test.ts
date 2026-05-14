@@ -350,6 +350,103 @@ describe('Agent', () => {
   });
 
   // ============================================================================
+  // Job construction with hash routing (PRD §5.4.1)
+  // ============================================================================
+
+  describe('createJobFromTransaction — hash routing carries service name (PRD §5.4.1)', () => {
+    let agent: Agent;
+
+    beforeEach(() => {
+      agent = new Agent({ name: 'JobShapeAgent' });
+      agent.provide('onboarding', async (job) => job.input);
+    });
+
+    it("uses matched handler's config.name when tx.serviceDescription is empty (hash-only TX)", () => {
+      // BlockchainRuntime-sourced TX: only the bytes32 routing key is present.
+      // Without the §5.4.1 fix, extractServiceName(tx) would return 'unknown'.
+      const tx = {
+        id: '0xtx',
+        amount: '50000',
+        deadline: Math.floor(Date.now() / 1000) + 3600,
+        requester: '0x' + 'a'.repeat(40),
+        serviceHash: keccak256(toUtf8Bytes('onboarding')),
+        serviceDescription: '',
+      };
+      const matched = (agent as any).findServiceHandler(tx);
+      const job = (agent as any).createJobFromTransaction(tx, matched);
+
+      expect(job.service).toBe('onboarding');
+    });
+
+    it("uses matched handler's name even when tx.serviceDescription is a bytes32 hash", () => {
+      // MockRuntime passthrough mode: createTransaction stores the bytes32
+      // hash in serviceDescription as well. extractServiceName(tx) would
+      // hit the bytes32-detect branch and return 'unknown'. The matched
+      // handler must override.
+      const hash = keccak256(toUtf8Bytes('onboarding'));
+      const tx = {
+        id: '0xtx',
+        amount: '50000',
+        deadline: Math.floor(Date.now() / 1000) + 3600,
+        requester: '0x' + 'a'.repeat(40),
+        serviceHash: hash,
+        serviceDescription: hash,
+      };
+      const matched = (agent as any).findServiceHandler(tx);
+      const job = (agent as any).createJobFromTransaction(tx, matched);
+
+      expect(job.service).toBe('onboarding');
+    });
+
+    it('falls back to extractServiceName when caller omits matched (back-compat)', () => {
+      // No matched supplied → legacy behavior. Plain-string description that
+      // matches a registered name still resolves correctly through
+      // extractServiceName.
+      const tx = {
+        id: '0xtx',
+        amount: '50000',
+        deadline: Math.floor(Date.now() / 1000) + 3600,
+        requester: '0x' + 'a'.repeat(40),
+        serviceHash: ZeroHash,
+        serviceDescription: 'onboarding',
+      };
+      const job = (agent as any).createJobFromTransaction(tx);
+      expect(job.service).toBe('onboarding');
+    });
+
+    it("shouldAutoAccept's autoAccept callback sees the resolved service name", async () => {
+      // Threading proof: shouldAutoAccept's function-form autoAccept must
+      // receive a job whose `service` is the registered name, not 'unknown',
+      // even on hash-only TXs.
+      let seenServiceInCallback: string | undefined;
+      const recordingAgent = new Agent({
+        name: 'CallbackAgent',
+        behavior: {
+          autoAccept: async (job) => {
+            seenServiceInCallback = job.service;
+            return true;
+          },
+        },
+      });
+      recordingAgent.provide('onboarding', async (job) => job.input);
+
+      const tx = {
+        id: '0xtx',
+        amount: '50000',
+        deadline: Math.floor(Date.now() / 1000) + 3600,
+        requester: '0x' + 'a'.repeat(40),
+        serviceHash: keccak256(toUtf8Bytes('onboarding')),
+        serviceDescription: '',
+      };
+      const matched = (recordingAgent as any).findServiceHandler(tx);
+      const decision = await (recordingAgent as any).shouldAutoAccept(tx, matched);
+
+      expect(decision).toBe(true);
+      expect(seenServiceInCallback).toBe('onboarding');
+    });
+  });
+
+  // ============================================================================
   // Properties Tests
   // ============================================================================
 

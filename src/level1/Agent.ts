@@ -845,16 +845,21 @@ export class Agent extends EventEmitter {
             continue;
           }
 
-          // Check auto-accept behavior
-          const shouldAccept = await this.shouldAutoAccept(tx);
+          // Check auto-accept behavior. Pass the already-matched handler so
+          // shouldAutoAccept doesn't re-derive it and so every Job built
+          // inside its filter/pricing/autoAccept paths carries the correct
+          // service name. PRD §5.4.1.
+          const shouldAccept = await this.shouldAutoAccept(tx, serviceHandler);
           if (!shouldAccept) {
             this.logger.debug('Auto-accept declined', { txId: tx.id });
             this.processingLocks.delete(tx.id);
             continue;
           }
 
-          // Create Job object from transaction
-          const job = this.createJobFromTransaction(tx);
+          // Create Job object from transaction. `serviceHandler` is the
+          // entry returned by findServiceHandler above; for hash-only TXs
+          // this is the only source of the original registered service name.
+          const job = this.createJobFromTransaction(tx, serviceHandler);
 
           // Security: Add to active jobs (LRUCache prevents unbounded growth)
           this.activeJobs.set(job.id, job);
@@ -1009,9 +1014,14 @@ export class Agent extends EventEmitter {
    * - Evaluates pricing strategy if configured
    * - Only accepts jobs that meet pricing requirements
    */
-  private async shouldAutoAccept(tx: any): Promise<boolean> {
-    // Get the service config for this transaction
-    const serviceHandler = this.findServiceHandler(tx);
+  private async shouldAutoAccept(
+    tx: any,
+    matched?: { config: ServiceConfig; handler: JobHandler }
+  ): Promise<boolean> {
+    // PRD §5.4.1: prefer the matched handler supplied by the caller so the
+    // hash-routed `config.name` flows into every internal Job object built
+    // below. Re-derive only when caller didn't pass it.
+    const serviceHandler = matched ?? this.findServiceHandler(tx);
 
     // Check service-level filters first (budget constraints)
     if (serviceHandler?.config.filter) {
@@ -1042,7 +1052,7 @@ export class Agent extends EventEmitter {
 
         // Check custom filter function
         if (filter.custom && typeof filter.custom === 'function') {
-          const job = this.createJobFromTransaction(tx);
+          const job = this.createJobFromTransaction(tx, serviceHandler);
           const customResult = await filter.custom(job);
           if (!customResult) {
             this.logger.debug('Job rejected: custom filter declined', { txId: tx.id });
@@ -1052,7 +1062,7 @@ export class Agent extends EventEmitter {
       }
       // If filter is a function (legacy support)
       else if (typeof filter === 'function') {
-        const job = this.createJobFromTransaction(tx);
+        const job = this.createJobFromTransaction(tx, serviceHandler);
         const filterResult = filter(job);
         if (!filterResult) {
           this.logger.debug('Job rejected: filter function declined', { txId: tx.id });
@@ -1064,7 +1074,7 @@ export class Agent extends EventEmitter {
     // MVP: Check pricing strategy if configured
     if (serviceHandler?.config.pricing) {
       const { calculatePrice } = await import('./pricing/PriceCalculator');
-      const job = this.createJobFromTransaction(tx);
+      const job = this.createJobFromTransaction(tx, serviceHandler);
 
       try {
         const calculation = calculatePrice(serviceHandler.config.pricing, job);
@@ -1183,7 +1193,7 @@ export class Agent extends EventEmitter {
 
     // It's a function - evaluate it
     if (typeof autoAccept === 'function') {
-      const job = this.createJobFromTransaction(tx);
+      const job = this.createJobFromTransaction(tx, serviceHandler);
       return await autoAccept(job);
     }
 
@@ -1191,12 +1201,25 @@ export class Agent extends EventEmitter {
   }
 
   /**
-   * Create Job object from MockTransaction
+   * Create Job object from MockTransaction.
+   *
+   * `matched` is the handler entry returned by `findServiceHandler(tx)`.
+   * When supplied, `job.service` is taken from `matched.config.name` —
+   * this is the only correct source for hash-only TXs (BlockchainRuntime),
+   * where `serviceDescription` is empty and `extractServiceName(tx)` would
+   * return `'unknown'`. PRD §5.4.1.
+   *
+   * When `matched` is not supplied (e.g. shouldAutoAccept's autoAccept
+   * callback path before this commit, MockRuntime-only test fixtures),
+   * fall back to the legacy `extractServiceName` so behavior is unchanged.
    */
-  private createJobFromTransaction(tx: any): Job {
+  private createJobFromTransaction(
+    tx: any,
+    matched?: { config: ServiceConfig; handler: JobHandler }
+  ): Job {
     return {
       id: tx.id,
-      service: this.extractServiceName(tx),
+      service: matched?.config.name ?? this.extractServiceName(tx),
       input: this.extractJobInput(tx),
       budget: this.convertAmountToNumber(tx.amount),
       deadline: new Date(tx.deadline * 1000), // Convert unix timestamp to Date
