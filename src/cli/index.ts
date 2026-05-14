@@ -40,6 +40,7 @@ function getVersion(): string {
 // Import commands
 import { createInitCommand } from './commands/init';
 import { createPayCommand } from './commands/pay';
+import { createRequestCommand } from './commands/request';
 import { createTxCommand } from './commands/tx';
 import { createBalanceCommand } from './commands/balance';
 import { createMintCommand } from './commands/mint';
@@ -99,6 +100,7 @@ program
 // Core commands (most used)
 program.addCommand(createInitCommand());
 program.addCommand(createPayCommand());
+program.addCommand(createRequestCommand());
 program.addCommand(createTxCommand());
 program.addCommand(createBalanceCommand());
 program.addCommand(createMintCommand());

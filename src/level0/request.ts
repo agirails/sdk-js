@@ -124,11 +124,25 @@ export async function request(
       }
     }
 
-    const serviceMetadata = JSON.stringify({
-      service: validatedService,
-      input: options.input,
-      timestamp: Date.now(),
-    });
+    // PRD §5.6: put the bytes32 routing key on-chain, not JSON metadata.
+    //
+    // Pre-4.0.0 this site passed JSON.stringify({ service, input, timestamp }).
+    // BlockchainRuntime.validateServiceHash then hashed the whole JSON string,
+    // so the on-chain serviceHash was keccak256(JSON) — which never matched
+    // `agent.provide(serviceName)` and routing failed silently on real chains.
+    //
+    // Also: `options.input` is dropped for 4.0.0. The handler will see
+    // `job.input = {}`. The forthcoming `agirails.request.v1` envelope on
+    // NegotiationChannel is the future path for requester→provider payloads
+    // (PRD §11). Until then, callers needing input transport must use the
+    // legacy SDK ≤ 3.5.3 directly or wait for the envelope release.
+    if (options.input !== undefined && options.input !== null) {
+      logger.warn(
+        'options.input is not transported in 4.0.0 — handler will receive job.input = {}. ' +
+        'A future agirails.request.v1 envelope will restore this path. See PRD §11.'
+      );
+    }
+    const serviceHash = ethers.keccak256(ethers.toUtf8Bytes(validatedService));
 
     const txId = await client.runtime.createTransaction({
       provider,
@@ -136,7 +150,7 @@ export async function request(
       amount: amountWei,
       deadline,
       disputeWindow: options.disputeWindow ?? 172800,
-      serviceDescription: serviceMetadata,
+      serviceDescription: serviceHash,
     });
 
     // Call onProgress if provided

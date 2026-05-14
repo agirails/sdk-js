@@ -16,7 +16,7 @@
  * Accepts ACTPClient for on-chain operations. Caller manages lifecycle.
  */
 
-import type { Signer } from 'ethers';
+import { keccak256, toUtf8Bytes, type Signer } from 'ethers';
 import { discoverAgents, DiscoverAgent, DiscoverParams } from '../api/agirailsApp';
 import { PolicyEngine, BuyerPolicy, QuoteOffer } from './PolicyEngine';
 import { DecisionEngine, CandidateStats } from './DecisionEngine';
@@ -409,12 +409,20 @@ export class BuyerOrchestrator {
       let txId: string;
       try {
         const amount = this.toBaseUnits(offer.unit_price);
+        // PRD §5.6: put the bytes32 routing key on-chain (matches what
+        // Agent.provide(name) registers in handlersByHash). Pre-4.0.0 this
+        // site passed JSON.stringify({ service, session }), which
+        // BlockchainRuntime.validateServiceHash then hashed wholesale — the
+        // resulting on-chain serviceHash could never match
+        // keccak256(toUtf8Bytes(taskName)) so provider routing silently
+        // missed. The session_id is no longer carried on-chain; subscription
+        // tracking still uses txId as the correlation key.
         txId = await this.runtime.createTransaction({
           provider: providerAddress,
           requester: this.requesterAddress,
           amount,
           deadline: Math.floor(Date.now() / 1000) + quoteTtlSeconds + 3600, // quote TTL + 1h buffer
-          serviceDescription: JSON.stringify({ service: this.policy.task, session: session.commerce_session_id }),
+          serviceDescription: keccak256(toUtf8Bytes(this.policy.task)),
         });
       } catch (err) {
         const reason = err instanceof Error ? err.message : String(err);
