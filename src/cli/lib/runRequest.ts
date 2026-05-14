@@ -1,5 +1,5 @@
 /**
- * runRequest — Level 1 negotiated requester flow (PRD §5.6).
+ * runRequest — Level 1 requester flow (PRD §5.6).
  *
  * Shared helper for `actp request` and (via §5.7) `actp test`. Distinct from
  * `src/level0/request.ts`: that function is the Level 0 simple API with one
@@ -8,16 +8,34 @@
  * phase** (capped by `deliveryTimeoutMs`, default 5min), and reports each
  * state transition so the CLI can show progress.
  *
- * PRD §5.6 invariants:
- *  - On-chain serviceDescription is the bytes32 routing key
- *    `keccak256(toUtf8Bytes(serviceName))`. Never JSON.
+ * ## Scope (4.0.0): poll-only, autoAccept-friendly path
+ *
+ * `runRequest` polls `runtime.getTransaction(txId)` to observe state
+ * transitions and relies on a provider whose `shouldAutoAccept` returns
+ * `true` to drive INITIATED → COMMITTED on its own side (provider calls
+ * `linkEscrow` from `Agent.handleIncomingTransaction`). This is the
+ * Sentinel onboarding path the PRD targets.
+ *
+ * It does **not** implement PRD §5.6 step 6's `counteraccept.v1` envelope
+ * over `NegotiationChannel`. Multi-round counter-offer negotiation (which
+ * BuyerOrchestrator uses) is out of scope here. A future commit on the
+ * 4.x track will wire `subscribeTxId` + send the envelope when:
+ *   - the provider returns a quote that differs from the requester's offer, or
+ *   - the requester wants explicit accept-with-different-amount control.
+ *
+ * For Sentinel + autoAccept, the polling path is functionally equivalent
+ * to the negotiated path and ~80 LOC simpler.
+ *
+ * ## PRD §5.6 invariants enforced here
+ *  - On-chain `serviceDescription` is the bytes32 routing key
+ *    `keccak256(toUtf8Bytes(serviceName.trim()))`. Never JSON.
  *  - Requester immediately settles after DELIVERED (kernel allows this
- *    without waiting for dispute window; ACTPKernel.sol:700-704).
+ *    without waiting for the dispute window; ACTPKernel.sol:700-704).
  *  - Quote-timeout exit is non-zero (code 2 at the CLI layer). The TX
  *    remains on-chain INITIATED for the caller to cancel manually.
  *  - `--input` / `--metadata` are out of scope for 4.0.0; provider sees
- *    job.input = {}. Future `agirails.request.v1` envelope on
- *    NegotiationChannel will restore that path (PRD §11).
+ *    `job.input = {}`. Future `agirails.request.v1` envelope on
+ *    `NegotiationChannel` will restore that path (PRD §11).
  *
  * @module cli/lib/runRequest
  */
@@ -155,7 +173,15 @@ export async function runRequest(opts: RunRequestOptions): Promise<RunRequestRes
   });
 
   // 5. Compute on-chain inputs.
-  const serviceHash = keccak256(toUtf8Bytes(opts.service));
+  //    Service-name normalization: trim incidental whitespace before hashing
+  //    so callers passing " onboarding " from a YAML config or shell paste
+  //    get the same routing key as `Agent.provide('onboarding')`. Matches
+  //    the trimming `level0/request.ts` performs via `validateServiceName`.
+  const normalizedService = opts.service.trim();
+  if (normalizedService.length === 0) {
+    throw new Error('runRequest: `service` must be a non-empty name.');
+  }
+  const serviceHash = keccak256(toUtf8Bytes(normalizedService));
   const amountWei = humanAmountToUSDCWei(opts.amount);
   const deadlineUnix = resolveDeadline(opts.deadline);
 
@@ -288,7 +314,21 @@ function resolveDeadline(deadline?: string | number): number {
   if (deadline === undefined) {
     return Math.floor(Date.now() / 1000) + 3600;
   }
-  if (typeof deadline === 'number') return deadline;
+  if (typeof deadline === 'number') {
+    // Sanity check: any value past year-3000 in seconds is implausible and
+    // probably a JS millisecond timestamp passed by accident
+    // (`Date.now()` instead of `Math.floor(Date.now()/1000)`). Reject loudly
+    // — the kernel would otherwise accept an immortal-deadline TX.
+    // 32_503_680_000 ≈ 3000-01-01T00:00:00Z. JS ms timestamps clear this
+    // bound from year 2001 onward (1e12 ≈ 2001-09-09).
+    if (deadline > 32_503_680_000) {
+      throw new Error(
+        `Invalid deadline: ${deadline} appears to be a millisecond timestamp. ` +
+        `runRequest expects unix seconds — pass Math.floor(Date.now() / 1000) instead.`
+      );
+    }
+    return deadline;
+  }
   const parsed = Date.parse(deadline);
   if (Number.isNaN(parsed)) {
     throw new Error(`Invalid deadline: "${deadline}" — expected ISO 8601 or unix seconds.`);

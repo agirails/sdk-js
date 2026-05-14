@@ -19,6 +19,7 @@ import * as os from 'os';
 import { keccak256, toUtf8Bytes } from 'ethers';
 import { runRequest, QuoteTimeoutError } from './runRequest';
 import { Agent } from '../../level1/Agent';
+import { ACTPClient } from '../../ACTPClient';
 
 describe('runRequest (PRD §5.6)', () => {
   let testDir: string;
@@ -94,6 +95,79 @@ describe('runRequest (PRD §5.6)', () => {
       expect(qte.timeoutMs).toBe(200);
       expect(qte.message).toMatch(/cancel.*actp tx cancel/);
     }
+  });
+
+  // ============================================================================
+  // §5.6.1 hardening — bugs surfaced during audit
+  // ============================================================================
+
+  describe('§5.6.1 — service name normalization', () => {
+    it('trims incidental whitespace before hashing so routing matches `Agent.provide(name)`', async () => {
+      // Spy on a real Agent provider that registered 'onboarding'. Without
+      // the .trim() in runRequest, this caller would hash ' onboarding\n'
+      // and the provider's handlersByHash lookup would miss.
+      const provider = new Agent({ name: 'TrimProvider', network: 'mock', stateDirectory: testDir });
+      provider.provide('onboarding', async () => ({ ok: true }));
+      await provider.start();
+      try {
+        const r = await runRequest({
+          provider: provider.address,
+          amount: '0.05',
+          service: '  onboarding\n',
+          network: 'mock',
+          quoteTimeoutMs: 20_000,
+          deliveryTimeoutMs: 20_000,
+          stateDirectory: testDir,
+        });
+        expect(r.finalState === 'DELIVERED' || r.finalState === 'SETTLED').toBe(true);
+      } finally {
+        await provider.stop();
+      }
+    }, 30_000);
+
+    it('rejects an empty / whitespace-only service name', async () => {
+      await expect(
+        runRequest({
+          provider: PROVIDER,
+          amount: '0.05',
+          service: '   ',
+          network: 'mock',
+          stateDirectory: testDir,
+        })
+      ).rejects.toThrow(/non-empty/);
+    });
+  });
+
+  describe('§5.6.1 — deadline ms-vs-s sanity check', () => {
+    it('rejects an obvious millisecond timestamp (Date.now()) as a unix-seconds deadline', async () => {
+      await expect(
+        runRequest({
+          provider: PROVIDER,
+          amount: '0.05',
+          service: 'onboarding',
+          deadline: Date.now(), // wrong unit — should be Math.floor(Date.now()/1000)
+          network: 'mock',
+          quoteTimeoutMs: 200,
+          stateDirectory: testDir,
+        })
+      ).rejects.toThrow(/millisecond timestamp/);
+    });
+
+    it('accepts a plausible unix-seconds deadline', async () => {
+      // Use 200ms quote timeout so the test fails fast with QuoteTimeoutError —
+      // we only care that the deadline validation passed.
+      await expect(
+        runRequest({
+          provider: PROVIDER,
+          amount: '0.05',
+          service: 'onboarding',
+          deadline: Math.floor(Date.now() / 1000) + 3600,
+          network: 'mock',
+          quoteTimeoutMs: 200,
+          stateDirectory: testDir,
+        })
+      ).rejects.toBeInstanceOf(QuoteTimeoutError);
+    });
   });
 
   it('runs end-to-end against a MockRuntime-backed Agent (happy path)', async () => {

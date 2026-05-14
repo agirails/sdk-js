@@ -39,7 +39,10 @@ export function createRequestCommand(): Command {
     .option('--network <network>', 'Target network: mock | testnet | mainnet', 'testnet')
     .option('--quote-timeout <ms>', 'Max wait for INITIATED → QUOTED (or beyond), in ms', '30000')
     .option('--delivery-timeout <ms>', 'Max wait for DELIVERED, in ms', '300000')
-    .option('--auto-accept', 'Auto-accept the first quote without prompting', true)
+    // Commander idiom: declaring `--no-auto-accept` makes options.autoAccept
+    // default to true while still giving callers a working off-switch. The
+    // previous form `--auto-accept ... true` shipped no toggle at all.
+    .option('--no-auto-accept', 'Prompt before accepting the first quote (default: auto-accept)')
     .option('--json', 'Output as JSON')
     .option('-q, --quiet', 'Output only the transaction ID')
     .action(async (provider: string, amount: string, options: RequestOptionsRaw) => {
@@ -176,8 +179,20 @@ function parseNetwork(raw?: string): RequestNetwork {
   throw new Error(`Invalid --network: "${raw}". Expected mock, testnet, or mainnet.`);
 }
 
-function parsePositiveInt(raw: string | undefined, fallback: number, flag: string): number {
+// Exported for unit testing — the CLI surface is a thin commander wrapper,
+// so we cover the parser behavior directly rather than via process spawning.
+export function parsePositiveInt(raw: string | undefined, fallback: number, flag: string): number {
   if (raw === undefined || raw === '') return fallback;
+  // Strict integer parse: parseInt silently truncates "30.5" to 30 and
+  // accepts numeric separators ("30_000", "30,000") in surprising ways.
+  // Demand a clean digits-only string so callers get an error instead of
+  // an off-by-orders-of-magnitude timeout.
+  if (!/^\d+$/.test(raw)) {
+    throw new Error(
+      `Invalid ${flag}: "${raw}". Expected a positive integer in milliseconds — ` +
+      `decimals, separators, and scientific notation are not accepted.`
+    );
+  }
   const n = Number.parseInt(raw, 10);
   if (!Number.isFinite(n) || n <= 0) {
     throw new Error(`Invalid ${flag}: "${raw}". Expected a positive integer (milliseconds).`);

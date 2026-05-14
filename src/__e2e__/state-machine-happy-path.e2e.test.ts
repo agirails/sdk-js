@@ -11,7 +11,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { Wallet } from 'ethers';
+import { Wallet, keccak256, toUtf8Bytes } from 'ethers';
 import { MockRuntime } from '../runtime/MockRuntime';
 import { MockStateManager } from '../runtime/MockStateManager';
 
@@ -43,7 +43,10 @@ describe('E2E: ACTP state machine — full happy path', () => {
       requester: buyerWallet.address,
       amount: '5000000', // $5 USDC base units
       deadline: Math.floor(Date.now() / 1000) + QUOTE_TTL + 3600,
-      serviceDescription: JSON.stringify({ service: 'happy-path-e2e' }),
+      // PRD §5.6: on-chain serviceDescription is the bytes32 routing key,
+      // not JSON. The e2e test never exercises provider routing, but using
+      // the production form keeps the fixture honest.
+      serviceDescription: keccak256(toUtf8Bytes('happy-path-e2e')),
     });
     let tx = await runtime.getTransaction(txId);
     expect(tx!.state).toBe('INITIATED');
@@ -92,7 +95,7 @@ describe('E2E: ACTP state machine — full happy path', () => {
       requester: buyerWallet.address,
       amount: '5000000',
       deadline: Math.floor(Date.now() / 1000) + QUOTE_TTL + 3600,
-      serviceDescription: JSON.stringify({ service: 'dispute-path-e2e' }),
+      serviceDescription: keccak256(toUtf8Bytes('dispute-path-e2e')),
     });
     await runtime.transitionState(txId, 'QUOTED', '0x' + 'c'.repeat(64));
     await runtime.linkEscrow(txId, '5000000');
@@ -116,7 +119,7 @@ describe('E2E: ACTP state machine — full happy path', () => {
       requester: buyerWallet.address,
       amount: '5000000',
       deadline: Math.floor(Date.now() / 1000) + QUOTE_TTL + 3600,
-      serviceDescription: JSON.stringify({ service: 'cancel-path-e2e' }),
+      serviceDescription: keccak256(toUtf8Bytes('cancel-path-e2e')),
     });
     await runtime.transitionState(txId, 'CANCELLED');
     const tx = await runtime.getTransaction(txId);

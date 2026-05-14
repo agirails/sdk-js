@@ -450,6 +450,8 @@ actp request <provider> <amount> --service <name> [--deadline <iso>] [--quote-ti
 
 **Note on handler input.** 4.0.0 does not expose `--input` / `--metadata` flags. Provider-side `job.input` is `{}` for all real-chain requests. This is sufficient for Sentinel (covenant accepts "any JSON or empty"). Arbitrary requester→provider payload requires a new signed envelope type (`agirails.request.v1`) on `NegotiationChannel`, which today carries only `quote.v1` / `counteroffer.v1` / `counteraccept.v1`. That envelope is out of scope here — see §11.
 
+**Note on negotiated multi-round flow.** 4.0.0 implements the **poll-only, autoAccept-friendly path** for `runRequest`: the requester creates the TX, then polls `getTransaction(txId)` to observe state transitions while a provider whose `shouldAutoAccept` returns `true` drives INITIATED → COMMITTED on its own side (via `Agent.handleIncomingTransaction` → `linkEscrow`). This is the Sentinel onboarding path. The `counteraccept.v1` envelope over `NegotiationChannel.subscribeTxId` described in step 6 below is **deferred to a 4.x follow-up** for the cases where the provider quotes a different amount, where the requester wants explicit accept-with-different-amount control, or where multi-round counter-offers are required (currently exercised by `BuyerOrchestrator`). For Sentinel + autoAccept the two paths are functionally equivalent; deferring the channel wiring keeps the 4.0.0 `runRequest` surface ~80 LOC simpler and avoids re-implementing the `BuyerOrchestrator` quote channel in a second site.
+
 Internally:
 1. Resolve `<provider>` (address or known agent slug, e.g. `sentinel` → `resolveAgent` table).
 2. `serviceHash = keccak256(toUtf8Bytes(name))`.
