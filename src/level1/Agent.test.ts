@@ -414,6 +414,149 @@ describe('Agent', () => {
       expect(job.service).toBe('onboarding');
     });
 
+    // PRD §5.3 — Agent lifecycle: subscription wiring, idempotent start,
+    // pause/resume teardown, try/finally on processingLocks, case-insensitive
+    // provider check. These tests live alongside the hash-routing block since
+    // §5.3 + §5.4 jointly produce the end-to-end provider flow.
+    describe('handleIncomingTransaction pipeline (PRD §5.3)', () => {
+      let pipelineAgent: Agent;
+
+      beforeEach(() => {
+        pipelineAgent = new Agent({ name: 'PipelineAgent' });
+        pipelineAgent.provide('onboarding', async (job) => job.input);
+        // Stub address — the per-tx provider check below compares against it.
+        Object.defineProperty(pipelineAgent, 'address', {
+          get: () => '0xAbCdEf0000000000000000000000000000000001',
+          configurable: true,
+        });
+      });
+
+      const baseTx = () => ({
+        id: '0xtx',
+        provider: '0xAbCdEf0000000000000000000000000000000001',
+        requester: '0x' + 'a'.repeat(40),
+        amount: '1000000',
+        state: 'INITIATED' as const,
+        deadline: Math.floor(Date.now() / 1000) + 3600,
+        disputeWindow: 172800,
+        completedAt: 0,
+        escrowId: '',
+        serviceHash: keccak256(toUtf8Bytes('onboarding')),
+        serviceDescription: '',
+        deliveryProof: '',
+        events: [],
+      });
+
+      it('releases processingLocks after successful acceptance', async () => {
+        // Stub linkEscrow so the pipeline reaches the emit step.
+        (pipelineAgent as any)._client = {
+          runtime: { linkEscrow: jest.fn().mockResolvedValue(undefined) },
+        };
+        await (pipelineAgent as any).handleIncomingTransaction(baseTx());
+        expect((pipelineAgent as any).processingLocks.has('0xtx')).toBe(false);
+      });
+
+      it('releases processingLocks when handler resolution fails', async () => {
+        // No `agent.provide('translate', ...)` — handler lookup misses.
+        const tx = { ...baseTx(), serviceHash: keccak256(toUtf8Bytes('translate')) };
+        await (pipelineAgent as any).handleIncomingTransaction(tx);
+        expect((pipelineAgent as any).processingLocks.has(tx.id)).toBe(false);
+      });
+
+      it('releases processingLocks when linkEscrow throws (poison TX recovery)', async () => {
+        (pipelineAgent as any)._client = {
+          runtime: { linkEscrow: jest.fn().mockRejectedValue(new Error('revert')) },
+        };
+        await (pipelineAgent as any).handleIncomingTransaction(baseTx());
+        expect((pipelineAgent as any).processingLocks.has('0xtx')).toBe(false);
+      });
+
+      it('matches provider case-insensitively (§5.3 carry-forward)', async () => {
+        // TX provider stored as uppercase; agent.address is mixed case.
+        // Without case-insensitive comparison, the unauthorized-tx branch
+        // would fire and reject the legitimate job.
+        const tx = { ...baseTx(), provider: '0xABCDEF0000000000000000000000000000000001' };
+        const linkEscrow = jest.fn().mockResolvedValue(undefined);
+        (pipelineAgent as any)._client = { runtime: { linkEscrow } };
+
+        const received = jest.fn();
+        pipelineAgent.on('job:received', received);
+
+        await (pipelineAgent as any).handleIncomingTransaction(tx);
+
+        expect(received).toHaveBeenCalledTimes(1);
+        expect(linkEscrow).toHaveBeenCalledWith(tx.id, tx.amount);
+      });
+
+      it('does not double-process when called twice with the same tx', async () => {
+        const linkEscrow = jest.fn().mockResolvedValue(undefined);
+        (pipelineAgent as any)._client = { runtime: { linkEscrow } };
+
+        await (pipelineAgent as any).handleIncomingTransaction(baseTx());
+        await (pipelineAgent as any).handleIncomingTransaction(baseTx());
+
+        // Second call is short-circuited by processedJobs / activeJobs check.
+        expect(linkEscrow).toHaveBeenCalledTimes(1);
+      });
+    });
+
+    // PRD §5.3 — subscription lifecycle on BlockchainRuntime-like runtimes.
+    describe('subscribeIfBlockchain wiring (PRD §5.3)', () => {
+      let agentSub: Agent;
+      let cleanup: jest.Mock;
+      let subscribeSpy: jest.Mock;
+
+      beforeEach(() => {
+        agentSub = new Agent({ name: 'SubAgent' });
+        cleanup = jest.fn();
+        subscribeSpy = jest.fn().mockReturnValue(cleanup);
+        // Inject a runtime that looks like BlockchainRuntime (has
+        // subscribeProviderJobs). MockRuntime deliberately doesn't, so the
+        // subscription path is gated on this duck-type check.
+        (agentSub as any)._client = {
+          runtime: { subscribeProviderJobs: subscribeSpy },
+        };
+        Object.defineProperty(agentSub, 'address', {
+          get: () => '0x' + '1'.repeat(40),
+          configurable: true,
+        });
+      });
+
+      it('wires subscription and stores cleanup callback', () => {
+        (agentSub as any).subscribeIfBlockchain();
+        expect(subscribeSpy).toHaveBeenCalledWith(
+          '0x' + '1'.repeat(40),
+          expect.any(Function)
+        );
+        expect((agentSub as any).jobSubscriptionCleanup).toBe(cleanup);
+      });
+
+      it('refuses to double-subscribe when one is already active', () => {
+        (agentSub as any).subscribeIfBlockchain();
+        (agentSub as any).subscribeIfBlockchain();
+        expect(subscribeSpy).toHaveBeenCalledTimes(1);
+      });
+
+      it('unsubscribe() invokes and clears the cleanup callback', () => {
+        (agentSub as any).subscribeIfBlockchain();
+        (agentSub as any).unsubscribe();
+        expect(cleanup).toHaveBeenCalledTimes(1);
+        expect((agentSub as any).jobSubscriptionCleanup).toBeUndefined();
+      });
+
+      it('unsubscribe() is idempotent (safe to call when no subscription)', () => {
+        // No prior subscribe — must not throw.
+        expect(() => (agentSub as any).unsubscribe()).not.toThrow();
+        expect(cleanup).not.toHaveBeenCalled();
+      });
+
+      it('skips wiring when runtime does not expose subscribeProviderJobs (MockRuntime)', () => {
+        (agentSub as any)._client = { runtime: {} };
+        (agentSub as any).subscribeIfBlockchain();
+        expect((agentSub as any).jobSubscriptionCleanup).toBeUndefined();
+      });
+    });
+
     it("shouldAutoAccept's autoAccept callback sees the resolved service name", async () => {
       // Threading proof: shouldAutoAccept's function-form autoAccept must
       // receive a job whose `service` is the registered name, not 'unknown',
@@ -590,17 +733,25 @@ describe('Agent', () => {
         expect(agent.client).toBeDefined();
       });
 
-      it('should throw AgentLifecycleError if already running', async () => {
+      it('should be idempotent when already running (PRD §5.3)', async () => {
+        // PRD §5.3 changed start() from throwing AgentLifecycleError to a
+        // logged noop. This is a behavior change from 3.5.3 — see
+        // CHANGELOG / MIGRATION-4.0.
         await agent.start();
+        expect(agent.status).toBe('running');
 
-        await expect(agent.start()).rejects.toThrow(AgentLifecycleError);
+        await expect(agent.start()).resolves.toBeUndefined();
+        expect(agent.status).toBe('running');
       });
 
-      it('should throw AgentLifecycleError if paused', async () => {
+      it('should be idempotent when paused (PRD §5.3)', async () => {
         await agent.start();
         agent.pause();
+        expect(agent.status).toBe('paused');
 
-        await expect(agent.start()).rejects.toThrow(AgentLifecycleError);
+        // start() on a paused agent is a noop — caller must resume() explicitly.
+        await expect(agent.start()).resolves.toBeUndefined();
+        expect(agent.status).toBe('paused');
       });
 
       it('should be able to start after being stopped', async () => {

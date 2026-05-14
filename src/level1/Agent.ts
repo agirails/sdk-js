@@ -327,6 +327,12 @@ export class Agent extends EventEmitter {
    * Polling interval ID (for job polling)
    */
   private pollingIntervalId?: NodeJS.Timeout;
+  /**
+   * Cleanup function returned by `BlockchainRuntime.subscribeProviderJobs`,
+   * set by `subscribeIfBlockchain()` and cleared by `unsubscribe()`. Undefined
+   * means no live subscription. PRD §5.3.
+   */
+  private jobSubscriptionCleanup?: () => void;
 
   /**
    * Logger instance
@@ -395,6 +401,15 @@ export class Agent extends EventEmitter {
    * @throws {AgentLifecycleError} If agent is not in idle or stopped state
    */
   async start(): Promise<void> {
+    // PRD §5.3: idempotent start. Calling start() on a running or paused
+    // agent is a logged noop instead of a thrown AgentLifecycleError. This
+    // is a behavior change from 3.5.3 — see CHANGELOG / MIGRATION-4.0.
+    if (this._status === 'running' || this._status === 'paused') {
+      this.logger.warn('Agent.start() called on already-started agent — noop', {
+        status: this._status,
+      });
+      return;
+    }
     if (this._status !== 'idle' && this._status !== 'stopped') {
       throw new AgentLifecycleError(this._status, 'start');
     }
@@ -421,10 +436,16 @@ export class Agent extends EventEmitter {
       });
 
       this.startPolling();
+      this.subscribeIfBlockchain();
 
       this._status = 'running';
       this.emit('started');
     } catch (error) {
+      // PRD §5.3: a partial start (e.g. polling started, subscription threw,
+      // or ACTPClient.create rejected) must not leak the polling timer or
+      // a live subscription. Clean both before propagating.
+      this.stopPolling();
+      this.unsubscribe();
       this._status = 'stopped';
       this.emit('error', error);
       throw error;
@@ -444,8 +465,9 @@ export class Agent extends EventEmitter {
     this._status = 'stopping';
     this.emit('stopping');
 
-    // Stop polling
+    // Stop polling + tear down subscription. PRD §5.3.
     this.stopPolling();
+    this.unsubscribe();
 
     // Wait for active jobs to complete (with timeout)
     await this.waitForActiveJobs(30000); // 30s timeout
@@ -458,7 +480,11 @@ export class Agent extends EventEmitter {
   /**
    * Pause the agent
    *
-   * Stops accepting new jobs but keeps active jobs running.
+   * Stops accepting new jobs but keeps active jobs running. PRD §5.3:
+   * pause() now tears down the on-chain subscription as well — a paused
+   * agent must not silently keep dispatching jobs via the live event path.
+   * Behavior change from 3.5.3 (was a silent bug); see CHANGELOG /
+   * MIGRATION-4.0 bullet 4 for drain-on-pause migration guidance.
    */
   pause(): void {
     if (this._status !== 'running') {
@@ -466,6 +492,7 @@ export class Agent extends EventEmitter {
     }
 
     this.stopPolling();
+    this.unsubscribe();
     this._status = 'paused';
     this.emit('paused');
   }
@@ -473,7 +500,8 @@ export class Agent extends EventEmitter {
   /**
    * Resume the agent
    *
-   * Resumes accepting new jobs after being paused.
+   * Resumes accepting new jobs after being paused. PRD §5.3: re-establishes
+   * the on-chain subscription that pause() tore down.
    */
   resume(): void {
     if (this._status !== 'paused') {
@@ -481,8 +509,55 @@ export class Agent extends EventEmitter {
     }
 
     this.startPolling();
+    this.subscribeIfBlockchain();
     this._status = 'running';
     this.emit('resumed');
+  }
+
+  /**
+   * Subscribe to live TransactionCreated events when the underlying runtime
+   * supports it (currently `BlockchainRuntime` only — `MockRuntime` providers
+   * receive jobs through polling). Idempotent: if a subscription is already
+   * active, this is a logged noop so a second `start()` on an already-running
+   * agent doesn't leak event listeners. PRD §5.3.
+   */
+  private subscribeIfBlockchain(): void {
+    if (this.jobSubscriptionCleanup) {
+      this.logger.warn('Agent: subscription already active, refusing to double-subscribe');
+      return;
+    }
+    const runtime = this._client?.runtime as
+      | { subscribeProviderJobs?: (
+            provider: string,
+            onJob: (tx: import('../runtime/types/MockState').MockTransaction) => void
+          ) => () => void }
+      | undefined;
+    if (!runtime || typeof runtime.subscribeProviderJobs !== 'function') {
+      return;
+    }
+    this.jobSubscriptionCleanup = runtime.subscribeProviderJobs(
+      this.address,
+      (tx) => {
+        this.handleIncomingTransaction(tx).catch((err) => this.emit('error', err));
+      }
+    );
+    this.logger.info('Subscribed to on-chain TransactionCreated events', {
+      provider: this.address,
+    });
+  }
+
+  /**
+   * Tear down a live subscription if one is active. Idempotent. PRD §5.3.
+   */
+  private unsubscribe(): void {
+    if (this.jobSubscriptionCleanup) {
+      try {
+        this.jobSubscriptionCleanup();
+      } catch (err) {
+        this.logger.warn('Subscription cleanup threw — continuing', { err });
+      }
+      this.jobSubscriptionCleanup = undefined;
+    }
   }
 
   /**
@@ -805,99 +880,11 @@ export class Agent extends EventEmitter {
         pendingJobs: pendingJobs.length,
       });
 
-      // Process each pending job
+      // Process each pending job through the shared acceptance pipeline so
+      // poll and subscription paths converge on identical semantics
+      // (dedup, provider check, routing, auto-accept, linkEscrow, emit).
       for (const tx of pendingJobs) {
-        try {
-          // Security: Check processingLocks first (atomic check)
-          // This prevents race conditions where two poll cycles both try to process
-          // the same job before either transitions the state
-          if (this.processingLocks.has(tx.id) || this.processedJobs.has(tx.id)) {
-            continue;
-          }
-
-          // IMMEDIATELY acquire lock (atomic in single-threaded JS)
-          this.processingLocks.add(tx.id);
-
-          // Security: Check if already in active jobs (LRUCache handles size limit)
-          if (this.activeJobs.has(tx.id)) {
-            this.processingLocks.delete(tx.id);
-            continue;
-          }
-
-          // Security: Verify this agent is authorized to accept this transaction
-          // Check that tx.provider matches our address (prevents unauthorized state transitions)
-          if (tx.provider !== this.address) {
-            this.logger.warn('Unauthorized transaction detected', {
-              txId: tx.id,
-              expectedProvider: this.address,
-              actualProvider: tx.provider,
-            });
-            this.processingLocks.delete(tx.id);
-            continue;
-          }
-
-          // Find matching service handler
-          const serviceHandler = this.findServiceHandler(tx);
-          if (!serviceHandler) {
-            // No handler registered for this service type
-            this.logger.debug('No handler for transaction', { txId: tx.id });
-            this.processingLocks.delete(tx.id);
-            continue;
-          }
-
-          // Check auto-accept behavior. Pass the already-matched handler so
-          // shouldAutoAccept doesn't re-derive it and so every Job built
-          // inside its filter/pricing/autoAccept paths carries the correct
-          // service name. PRD §5.4.1.
-          const shouldAccept = await this.shouldAutoAccept(tx, serviceHandler);
-          if (!shouldAccept) {
-            this.logger.debug('Auto-accept declined', { txId: tx.id });
-            this.processingLocks.delete(tx.id);
-            continue;
-          }
-
-          // Create Job object from transaction. `serviceHandler` is the
-          // entry returned by findServiceHandler above; for hash-only TXs
-          // this is the only source of the original registered service name.
-          const job = this.createJobFromTransaction(tx, serviceHandler);
-
-          // Security: Add to active jobs (LRUCache prevents unbounded growth)
-          this.activeJobs.set(job.id, job);
-
-          // Link escrow immediately to transition out of INITIATED state
-          // This prevents polling from picking up this job again
-          try {
-            if (this._client && tx.state === 'INITIATED') {
-              await this._client.runtime.linkEscrow(tx.id, tx.amount);
-            }
-
-            // Successfully processed - mark as processed and release lock
-            this.processedJobs.set(job.id, true);
-          } catch (escrowError) {
-            // If linking escrow fails, remove from active jobs and release lock (allow retry)
-            this.activeJobs.delete(job.id);
-            this.logger.error('Failed to link escrow', { txId: tx.id }, escrowError as Error);
-            this.processingLocks.delete(tx.id);
-            continue;
-          } finally {
-            // Always release the lock
-            this.processingLocks.delete(tx.id);
-          }
-
-          this._stats.jobsReceived++;
-          this.emit('job:received', job);
-          this.logger.info('Job accepted', { jobId: job.id, service: job.service });
-
-          // Process the job asynchronously (don't await here to continue polling)
-          this.processJob(job, serviceHandler.handler).catch((error) => {
-            this.logger.error('Job processing failed', { jobId: job.id }, error as Error);
-            this.emit('error', error);
-          });
-        } catch (error) {
-          // Log error but continue processing other jobs
-          this.logger.error('Error processing pending job', { txId: tx.id }, error as Error);
-          this.emit('error', error);
-        }
+        await this.handleIncomingTransaction(tx);
       }
 
       // Update cached balance (non-blocking, don't await)
@@ -908,6 +895,94 @@ export class Agent extends EventEmitter {
       // Polling error - will retry on next interval
       this.logger.error('Polling error', {}, error as Error);
       this.emit('error', error);
+    }
+  }
+
+  /**
+   * Shared per-transaction acceptance pipeline. Reached from two sources:
+   *   - `pollForJobs` — bounded sweep over INITIATED transactions
+   *   - `subscribeIfBlockchain` — live `TransactionCreated` events
+   *
+   * Atomic in single-threaded JS via `processingLocks` (Set). The lock
+   * release is in a `finally` so any error/throw — handler dispatch
+   * failure, linkEscrow revert, malformed payload — does not permanently
+   * occupy the slot. Poison TXs become re-tryable on the next sweep.
+   *
+   * Errors are emitted to consumers but never propagated; the caller loop
+   * must not be killed by a single bad TX. PRD §5.3.
+   */
+  private async handleIncomingTransaction(
+    tx: import('../runtime/types/MockState').MockTransaction
+  ): Promise<void> {
+    // Security: check dedup before acquiring the lock so a TX that finished
+    // on a prior pass returns immediately without disturbing state.
+    if (this.processingLocks.has(tx.id) || this.processedJobs.has(tx.id)) return;
+    if (this.activeJobs.has(tx.id)) return;
+
+    // Acquire lock (atomic in single-threaded JS). Released in finally below.
+    this.processingLocks.add(tx.id);
+    try {
+      // Authorization: TX provider must match this agent. Case-insensitive
+      // (PRD §5.3 carry-forward from §5.1 review): EventMonitor + runtime
+      // already normalize, but checksummed and lowercase forms can both
+      // reach here legitimately.
+      if (tx.provider.toLowerCase() !== this.address.toLowerCase()) {
+        this.logger.warn('Unauthorized transaction detected', {
+          txId: tx.id,
+          expectedProvider: this.address,
+          actualProvider: tx.provider,
+        });
+        return;
+      }
+
+      // Routing (PRD §5.4): hash-first, string fallback.
+      const serviceHandler = this.findServiceHandler(tx);
+      if (!serviceHandler) {
+        this.logger.debug('No handler for transaction', { txId: tx.id });
+        return;
+      }
+
+      // Auto-accept evaluation. PRD §5.4.1: thread the matched handler so
+      // every Job built inside filter/pricing/autoAccept paths carries the
+      // correct service name.
+      const shouldAccept = await this.shouldAutoAccept(tx, serviceHandler);
+      if (!shouldAccept) {
+        this.logger.debug('Auto-accept declined', { txId: tx.id });
+        return;
+      }
+
+      // Build Job using the matched handler so hash-only TXs carry the
+      // registered service name. PRD §5.4.1.
+      const job = this.createJobFromTransaction(tx, serviceHandler);
+      this.activeJobs.set(job.id, job);
+
+      // Link escrow immediately to transition out of INITIATED state.
+      // This prevents the next poll / event from picking up this job again.
+      try {
+        if (this._client && tx.state === 'INITIATED') {
+          await this._client.runtime.linkEscrow(tx.id, tx.amount);
+        }
+        this.processedJobs.set(job.id, true);
+      } catch (escrowError) {
+        this.activeJobs.delete(job.id);
+        this.logger.error('Failed to link escrow', { txId: tx.id }, escrowError as Error);
+        return;
+      }
+
+      this._stats.jobsReceived++;
+      this.emit('job:received', job);
+      this.logger.info('Job accepted', { jobId: job.id, service: job.service });
+
+      // Process the job asynchronously (don't await — handler runs out-of-band).
+      this.processJob(job, serviceHandler.handler).catch((error) => {
+        this.logger.error('Job processing failed', { jobId: job.id }, error as Error);
+        this.emit('error', error);
+      });
+    } catch (error) {
+      this.logger.error('Error processing pending job', { txId: tx.id }, error as Error);
+      this.emit('error', error);
+    } finally {
+      this.processingLocks.delete(tx.id);
     }
   }
 
