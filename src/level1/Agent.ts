@@ -508,8 +508,19 @@ export class Agent extends EventEmitter {
       throw new AgentLifecycleError(this._status, 'resume');
     }
 
-    this.startPolling();
-    this.subscribeIfBlockchain();
+    // PRD §5.3.1: same partial-failure shape as start() — if subscription
+    // wiring throws after the polling timer is armed, tear both down before
+    // propagating so the agent doesn't leak a live timer while still in
+    // 'paused' status. Without this, the next resume() call would short-
+    // circuit on the state check and the orphaned timer would survive.
+    try {
+      this.startPolling();
+      this.subscribeIfBlockchain();
+    } catch (err) {
+      this.stopPolling();
+      this.unsubscribe();
+      throw err;
+    }
     this._status = 'running';
     this.emit('resumed');
   }
@@ -914,6 +925,24 @@ export class Agent extends EventEmitter {
   private async handleIncomingTransaction(
     tx: import('../runtime/types/MockState').MockTransaction
   ): Promise<void> {
+    // PRD §5.3.1: lifecycle status guard. Async polls and queued subscription
+    // callbacks can race with pause() / stop(). Drop the TX rather than
+    // accepting a new job into a paused or terminating agent.
+    //
+    // 'starting' is allowed: the subscription is wired inside start() before
+    // _status flips to 'running', and a fast on-chain event could fire in
+    // that window — dropping it would lose work.
+    if (
+      this._status !== 'running' &&
+      this._status !== 'starting'
+    ) {
+      this.logger.debug('Agent not accepting jobs, dropping incoming tx', {
+        txId: tx.id,
+        status: this._status,
+      });
+      return;
+    }
+
     // Security: check dedup before acquiring the lock so a TX that finished
     // on a prior pass returns immediately without disturbing state.
     if (this.processingLocks.has(tx.id) || this.processedJobs.has(tx.id)) return;

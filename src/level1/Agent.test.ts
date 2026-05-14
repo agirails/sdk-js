@@ -429,6 +429,9 @@ describe('Agent', () => {
           get: () => '0xAbCdEf0000000000000000000000000000000001',
           configurable: true,
         });
+        // PRD §5.3.1: pipeline now refuses work unless agent is running.
+        // Tests bypass start() to keep the unit scope tight.
+        (pipelineAgent as any)._status = 'running';
       });
 
       const baseTx = () => ({
@@ -447,11 +450,20 @@ describe('Agent', () => {
         events: [],
       });
 
+      // Stub the minimum runtime surface the async processJob() reaches into
+      // (linkEscrow + transitionState). Without transitionState, processJob
+      // logs noise like "transitionState is not a function" after the test
+      // assertion runs. Tests still pass, but the noise masks real failures.
+      const stubRuntime = (
+        linkEscrow: jest.Mock = jest.fn().mockResolvedValue(undefined),
+        transitionState: jest.Mock = jest.fn().mockResolvedValue(undefined),
+      ) => {
+        (pipelineAgent as any)._client = { runtime: { linkEscrow, transitionState } };
+        return { linkEscrow, transitionState };
+      };
+
       it('releases processingLocks after successful acceptance', async () => {
-        // Stub linkEscrow so the pipeline reaches the emit step.
-        (pipelineAgent as any)._client = {
-          runtime: { linkEscrow: jest.fn().mockResolvedValue(undefined) },
-        };
+        stubRuntime();
         await (pipelineAgent as any).handleIncomingTransaction(baseTx());
         expect((pipelineAgent as any).processingLocks.has('0xtx')).toBe(false);
       });
@@ -464,9 +476,7 @@ describe('Agent', () => {
       });
 
       it('releases processingLocks when linkEscrow throws (poison TX recovery)', async () => {
-        (pipelineAgent as any)._client = {
-          runtime: { linkEscrow: jest.fn().mockRejectedValue(new Error('revert')) },
-        };
+        stubRuntime(jest.fn().mockRejectedValue(new Error('revert')));
         await (pipelineAgent as any).handleIncomingTransaction(baseTx());
         expect((pipelineAgent as any).processingLocks.has('0xtx')).toBe(false);
       });
@@ -476,8 +486,7 @@ describe('Agent', () => {
         // Without case-insensitive comparison, the unauthorized-tx branch
         // would fire and reject the legitimate job.
         const tx = { ...baseTx(), provider: '0xABCDEF0000000000000000000000000000000001' };
-        const linkEscrow = jest.fn().mockResolvedValue(undefined);
-        (pipelineAgent as any)._client = { runtime: { linkEscrow } };
+        const { linkEscrow } = stubRuntime();
 
         const received = jest.fn();
         pipelineAgent.on('job:received', received);
@@ -489,13 +498,49 @@ describe('Agent', () => {
       });
 
       it('does not double-process when called twice with the same tx', async () => {
-        const linkEscrow = jest.fn().mockResolvedValue(undefined);
-        (pipelineAgent as any)._client = { runtime: { linkEscrow } };
+        const { linkEscrow } = stubRuntime();
 
         await (pipelineAgent as any).handleIncomingTransaction(baseTx());
         await (pipelineAgent as any).handleIncomingTransaction(baseTx());
 
         // Second call is short-circuited by processedJobs / activeJobs check.
+        expect(linkEscrow).toHaveBeenCalledTimes(1);
+      });
+
+      // PRD §5.3.1: status guard.
+      it('drops the tx when agent is paused', async () => {
+        const { linkEscrow } = stubRuntime();
+        (pipelineAgent as any)._status = 'paused';
+
+        const received = jest.fn();
+        pipelineAgent.on('job:received', received);
+
+        await (pipelineAgent as any).handleIncomingTransaction(baseTx());
+
+        expect(received).not.toHaveBeenCalled();
+        expect(linkEscrow).not.toHaveBeenCalled();
+      });
+
+      it.each(['stopping', 'stopped', 'idle'] as const)(
+        'drops the tx when agent status is %s',
+        async (status) => {
+          const { linkEscrow } = stubRuntime();
+          (pipelineAgent as any)._status = status;
+
+          await (pipelineAgent as any).handleIncomingTransaction(baseTx());
+
+          expect(linkEscrow).not.toHaveBeenCalled();
+        }
+      );
+
+      it("allows tx through during 'starting' status (subscribe-before-status race)", async () => {
+        // start() wires the subscription before flipping _status to 'running'.
+        // A fast on-chain event during that window must still be accepted.
+        const { linkEscrow } = stubRuntime();
+        (pipelineAgent as any)._status = 'starting';
+
+        await (pipelineAgent as any).handleIncomingTransaction(baseTx());
+
         expect(linkEscrow).toHaveBeenCalledTimes(1);
       });
     });
@@ -554,6 +599,39 @@ describe('Agent', () => {
         (agentSub as any)._client = { runtime: {} };
         (agentSub as any).subscribeIfBlockchain();
         expect((agentSub as any).jobSubscriptionCleanup).toBeUndefined();
+      });
+    });
+
+    // PRD §5.3.1: resume() must clean up a half-armed lifecycle if
+    // subscribeIfBlockchain throws after startPolling already armed the timer.
+    describe('resume partial-failure cleanup (PRD §5.3.1)', () => {
+      it('rolls back polling when subscribeIfBlockchain throws and surfaces the error', () => {
+        const agentRes = new Agent({ name: 'ResumeAgent' });
+        // Inject a runtime whose subscribeProviderJobs throws synchronously.
+        const failingSubscribe = jest.fn(() => {
+          throw new Error('subscription transport failed');
+        });
+        (agentRes as any)._client = {
+          runtime: { subscribeProviderJobs: failingSubscribe },
+        };
+        Object.defineProperty(agentRes, 'address', {
+          get: () => '0x' + 'a'.repeat(40),
+          configurable: true,
+        });
+        // Pre-flight: pretend the agent was running and got paused (so the
+        // state machine guard at the top of resume() passes).
+        (agentRes as any)._status = 'paused';
+
+        expect(() => agentRes.resume()).toThrow(/subscription transport failed/);
+
+        // Polling timer must be cleared (would survive without the §5.3.1 fix).
+        expect((agentRes as any).pollingIntervalId).toBeUndefined();
+        // Subscription cleanup must also be unset (none was wired anyway, but
+        // unsubscribe() must remain safe to call after the failure).
+        expect((agentRes as any).jobSubscriptionCleanup).toBeUndefined();
+        // Status stays paused — caller can retry resume() once the underlying
+        // transport recovers.
+        expect(agentRes.status).toBe('paused');
       });
     });
 
