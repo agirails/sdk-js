@@ -10,6 +10,7 @@
 export {
   startAnvilFork,
   advanceTime,
+  mineBlocks,
   AnvilUnavailableError,
   FORK_BLOCK,
   type AnvilHandle,

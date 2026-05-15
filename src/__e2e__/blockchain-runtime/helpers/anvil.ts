@@ -183,3 +183,19 @@ export async function advanceTime(anvil: AnvilHandle, seconds: number): Promise<
   await anvil.rpc('evm_setNextBlockTimestamp', [nextTs]);
   await anvil.rpc('evm_mine', []);
 }
+
+/**
+ * Mine N blocks in one atomic call. Used by the catch-up-sweep boundary
+ * test to push a TX past the sweep's bounded block window. Anvil's
+ * `anvil_mine` accepts a hex-quantity count and produces empty blocks
+ * roughly instantly — even 10k blocks finishes in well under a second.
+ *
+ * @param anvil - Handle from {@link startAnvilFork}.
+ * @param count - Number of blocks to mine. Must be > 0.
+ */
+export async function mineBlocks(anvil: AnvilHandle, count: number): Promise<void> {
+  if (!Number.isInteger(count) || count <= 0) {
+    throw new Error(`mineBlocks: count must be a positive integer (got ${count})`);
+  }
+  await anvil.rpc('anvil_mine', ['0x' + count.toString(16)]);
+}
