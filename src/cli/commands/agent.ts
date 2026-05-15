@@ -30,6 +30,7 @@ import { MockStateManager } from '../../runtime/MockStateManager';
 import { ProviderOrchestrator } from '../../negotiation/ProviderOrchestrator';
 import type { ProviderPolicy, IncomingRequest } from '../../negotiation/ProviderPolicy';
 import { RelayChannel } from '../../negotiation/RelayChannel';
+import { serviceNameForHash } from '../lib/serviceNameForHash';
 
 export function createAgentCommand(): Command {
   return new Command('agent')
@@ -145,30 +146,66 @@ async function runAgent(options: AgentOptions, output: Output): Promise<void> {
   output.print('');
 
   // Watch on-chain for new INITIATED txs addressed to us, auto-quote.
+  //
+  // PRD §5.8: pre-4.0.0 this loop called `getAllTransactions()`, which is a
+  // no-op on BlockchainRuntime — `actp agent` saw zero on-chain TXs on every
+  // real chain since BlockchainRuntime was introduced. The migration:
+  //   - Use `getTransactionsByProvider(addr, 'INITIATED', 100)` (the
+  //     bounded EventMonitor-backed sweep from PRD §5.2). It filters
+  //     server-side, so the per-tx `provider` check the old loop did
+  //     after the fact is no longer load-bearing.
+  //   - Add an `inflight` set so a long-running `orchestrator.quote()`
+  //     can't be re-entered by the next sweep tick for the same txId.
+  //   - Only mark a TX `seen` *after* `orchestrator.quote()` resolves
+  //     successfully. The old loop did `seen.add()` before the await,
+  //     which meant a transient quote failure (relay 5xx, signer
+  //     disconnect) permanently dropped the TX with no retry.
+  //   - Replace the `policy.services[0] ?? 'default'` fallback with a
+  //     hash-based `serviceNameForHash` lookup. The old fallback could
+  //     quote the wrong service when the policy has more than one entry.
   const seen = new Set<string>();
+  const inflight = new Set<string>();
   const watchTimer = setInterval(async () => {
     try {
-      const all = await runtime.getAllTransactions();
-      for (const t of all) {
-        if (seen.has(t.id)) continue;
-        if (t.state !== 'INITIATED') { seen.add(t.id); continue; }
-        if (t.provider.toLowerCase() !== signerAddress.toLowerCase()) continue;
-        seen.add(t.id);
-        const req: IncomingRequest = {
-          txId: t.id,
-          consumer: `did:ethr:${chainId}:${t.requester.toLowerCase()}`,
-          offeredAmount: String(t.amount),
-          maxPrice: String(t.amount), // best estimate without separate field
-          deadline: Number(t.deadline) || Math.floor(Date.now() / 1000) + 3600,
-          serviceType: policy.services[0] ?? 'default',
-          currency: policy.pricing.min_acceptable.currency,
-          unit: policy.pricing.min_acceptable.unit,
-        };
+      const pending = await runtime.getTransactionsByProvider(
+        signerAddress,
+        'INITIATED',
+        100
+      );
+      for (const t of pending) {
+        if (seen.has(t.id) || inflight.has(t.id)) continue;
+        inflight.add(t.id);
         try {
+          const serviceType = serviceNameForHash(t.serviceHash, policy.services);
+          if (!serviceType) {
+            // Unknown hash is a deterministic skip (not a transient
+            // failure) — mark seen so we don't re-evaluate it forever.
+            output.warning(
+              `[init] tx=${t.id.slice(0, 12)}… unknown service hash ${t.serviceHash?.slice(0, 10) ?? '(missing)'}…, skipping`
+            );
+            seen.add(t.id);
+            continue;
+          }
+          const req: IncomingRequest = {
+            txId: t.id,
+            consumer: `did:ethr:${chainId}:${t.requester.toLowerCase()}`,
+            offeredAmount: String(t.amount),
+            maxPrice: String(t.amount), // best estimate without separate field
+            deadline: Number(t.deadline) || Math.floor(Date.now() / 1000) + 3600,
+            serviceType,
+            currency: policy.pricing.min_acceptable.currency,
+            unit: policy.pricing.min_acceptable.unit,
+          };
           const result = await orchestrator.quote(req, providerDID);
           output.info(`[init] tx=${t.id.slice(0, 12)}… ${result.decision.action}: ${result.decision.reason}`);
+          // Only mark seen after success; transient failures retry next sweep.
+          seen.add(t.id);
         } catch (err) {
-          output.warning(`[init] tx=${t.id.slice(0, 12)}… quote failed: ${err instanceof Error ? err.message : String(err)}`);
+          output.warning(
+            `[init] tx=${t.id.slice(0, 12)}… quote failed (will retry next sweep): ${err instanceof Error ? err.message : String(err)}`
+          );
+        } finally {
+          inflight.delete(t.id);
         }
       }
     } catch (err) {
