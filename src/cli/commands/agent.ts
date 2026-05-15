@@ -31,6 +31,7 @@ import { ProviderOrchestrator } from '../../negotiation/ProviderOrchestrator';
 import type { ProviderPolicy, IncomingRequest } from '../../negotiation/ProviderPolicy';
 import { RelayChannel } from '../../negotiation/RelayChannel';
 import { serviceNameForHash } from '../lib/serviceNameForHash';
+import { ZeroHash } from 'ethers';
 
 export function createAgentCommand(): Command {
   return new Command('agent')
@@ -176,12 +177,29 @@ async function runAgent(options: AgentOptions, output: Output): Promise<void> {
         if (seen.has(t.id) || inflight.has(t.id)) continue;
         inflight.add(t.id);
         try {
+          // Split the two no-handler paths so logs are diagnostic:
+          //   - ZeroHash → Level 0 `actp pay` tx, never routed to a
+          //     provider handler. Not a misconfiguration; documented per
+          //     PRD §5.4. Still mark seen so we stop evaluating it.
+          //   - Anything else with no policy match → either a typo in
+          //     policy.services or an INITIATED tx for a service this
+          //     provider doesn't offer. Operators should investigate.
+          const isLevel0Pay =
+            typeof t.serviceHash === 'string' &&
+            t.serviceHash.toLowerCase() === ZeroHash.toLowerCase();
+          if (isLevel0Pay) {
+            output.info(
+              `[init] tx=${t.id.slice(0, 12)}… Level 0 pay (ZeroHash) — not routed to any handler, skipping`
+            );
+            seen.add(t.id);
+            continue;
+          }
           const serviceType = serviceNameForHash(t.serviceHash, policy.services);
           if (!serviceType) {
             // Unknown hash is a deterministic skip (not a transient
             // failure) — mark seen so we don't re-evaluate it forever.
             output.warning(
-              `[init] tx=${t.id.slice(0, 12)}… unknown service hash ${t.serviceHash?.slice(0, 10) ?? '(missing)'}…, skipping`
+              `[init] tx=${t.id.slice(0, 12)}… unknown service hash ${t.serviceHash?.slice(0, 10) ?? '(missing)'}…, skipping (check policy.services)`
             );
             seen.add(t.id);
             continue;

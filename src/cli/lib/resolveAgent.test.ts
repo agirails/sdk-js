@@ -88,6 +88,25 @@ describe('resolveAgent (PRD §5.7)', () => {
       expect(r.source).toBe('table');
     });
 
+    it('falls back to the constant table when the env var is whitespace-only (PRD §5.10.1)', () => {
+      // Botched `export ACTP_SENTINEL_ADDRESS=' '` should NOT throw
+      // InvalidAgentAddressError — the operator's intent is clearly
+      // "no override", so we trim and fall through.
+      process.env[ENV_KEY] = '   ';
+      const r = resolveAgent('sentinel', 'base-sepolia');
+      expect(r.source).toBe('table');
+    });
+
+    it('trims surrounding whitespace before validating a real address', () => {
+      // Stray whitespace from shell expansion / clipboard paste shouldn't
+      // reject a perfectly valid address.
+      const override = '0x' + '1'.repeat(40);
+      process.env[ENV_KEY] = `  ${override}\n`;
+      const r = resolveAgent('sentinel', 'base-sepolia');
+      expect(r.source).toBe('env');
+      expect(r.address.toLowerCase()).toBe(override.toLowerCase());
+    });
+
     it('throws InvalidAgentAddressError when env var contains a non-address string', () => {
       process.env[ENV_KEY] = 'not-an-address';
       expect(() => resolveAgent('sentinel', 'base-sepolia')).toThrow(InvalidAgentAddressError);

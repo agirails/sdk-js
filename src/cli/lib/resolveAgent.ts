@@ -105,9 +105,14 @@ export function resolveAgent(slug: string, network: string): ResolvedAgent {
   const normalizedSlug = slug.trim().toLowerCase();
 
   // 1. Env var override path — rotation escape hatch (PRD §A.6).
+  //    Trim before testing for empty so a botched shell export
+  //    (`export ACTP_SENTINEL_ADDRESS=' '`) falls through to the constant
+  //    table instead of throwing InvalidAgentAddressError — the operator's
+  //    intent was clearly "no override", and surfacing a "not an address"
+  //    error for whitespace would be misleading.
   const envVar = ENV_OVERRIDES[normalizedSlug];
   if (envVar) {
-    const raw = process.env[envVar];
+    const raw = process.env[envVar]?.trim();
     if (raw !== undefined && raw !== '') {
       if (!isAddress(raw)) throw new InvalidAgentAddressError(envVar, raw);
       return { slug: normalizedSlug, address: getAddress(raw), network, source: 'env' };

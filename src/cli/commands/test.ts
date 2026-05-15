@@ -60,11 +60,34 @@ export function createTestCommand(): Command {
           process.exit(2);
         }
         // Setup errors get a clearer hint than the generic mapError path.
-        if (error instanceof AgentNotFoundError || error instanceof InvalidAgentAddressError) {
+        // Note the two cases get OPPOSITE remediations: AgentNotFoundError
+        // fires when no override is set + no table entry exists, so the
+        // user needs to SET the env var. InvalidAgentAddressError fires
+        // only when the env var IS set but contains garbage, so telling
+        // them to set it is exactly the wrong advice.
+        if (error instanceof AgentNotFoundError) {
           output.errorResult({
             code: 'SENTINEL_NOT_RESOLVED',
             message: error.message,
-            details: { hint: 'Set ACTP_SENTINEL_ADDRESS=0x... to override the built-in table.' },
+            details: {
+              hint:
+                'Set ACTP_SENTINEL_ADDRESS=0x... to point at a Sentinel deployment, ' +
+                'or upgrade the SDK to pick up a refreshed built-in table.',
+            },
+          });
+          process.exit(ExitCode.ERROR);
+        }
+        if (error instanceof InvalidAgentAddressError) {
+          output.errorResult({
+            code: 'SENTINEL_ADDRESS_INVALID',
+            message: error.message,
+            details: {
+              envVar: error.envVar,
+              hint:
+                `Fix or unset ${error.envVar} — the value "${error.value}" is not a valid ` +
+                'Ethereum address. Use a 0x-prefixed 40-character hex string, ' +
+                'or unset the variable to fall back to the SDK\'s built-in Sentinel address.',
+            },
           });
           process.exit(ExitCode.ERROR);
         }
@@ -144,6 +167,19 @@ async function runTest(output: Output): Promise<void> {
     { quietKey: 'reflection' }
   );
 
+  // Footer wording is conditional on what actually happened. The
+  // structured JSON output above always reports `settled`, but human-mode
+  // consumers see only the line emitted here — so a settle failure that
+  // still produced a reflection must not be celebrated as "Settled".
+  if (!result.settled) {
+    output.blank();
+    output.warning(
+      `Escrow settlement did NOT complete after delivery (finalState=${result.finalState}). ` +
+      'The reflection arrived, but the requester-side releaseEscrow call failed. ' +
+      'Verify with `actp tx status ' + result.txId + '` and retry settlement manually.'
+    );
+    return;
+  }
   if (reflection) {
     output.blank();
     output.success(`Reflection: ${reflection}`);
