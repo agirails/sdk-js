@@ -22,6 +22,15 @@ on:
 jobs:
   secret-scan:
     runs-on: ubuntu-latest
+    # gitleaks-action started requiring a paid license for GitHub Organizations
+    # in late 2024 (see https://github.com/gitleaks/gitleaks-action#-announcement).
+    # Until an org-level GITLEAKS_LICENSE secret is provisioned (tracked
+    # separately from this PR), we run the action but don't gate the
+    # pipeline on it — the job becomes a warning rather than a blocker.
+    # Downstream jobs that have `needs: secret-scan` still proceed because
+    # `continue-on-error` reports success-with-errors to dependents.
+    # Revert this once GITLEAKS_LICENSE is configured.
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
         with:
