@@ -51,6 +51,7 @@
     "test": "jest --runInBand",
     "test:watch": "jest --watch --runInBand",
     "test:coverage": "jest --coverage --runInBand",
+    "test:fork-e2e": "jest --runInBand --testPathPattern='src/__e2e__/blockchain-runtime/' --testTimeout=60000 --testPathIgnorePatterns=/node_modules/",
     "lint": "eslint src --ext .ts",
     "format": "prettier --write 'src/**/*.ts'",
     "prepublishOnly": "npm run build && npm test && npm run lint",
