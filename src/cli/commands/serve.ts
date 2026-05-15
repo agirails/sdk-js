@@ -1,5 +1,5 @@
 /**
- * `actp serve` — long-running provider daemon.
+ * `actp serve` — long-running provider daemon focused on the AIP-2.1 quote channel.
  *
  * Loads a ProviderPolicy JSON, constructs a ProviderOrchestrator, opens
  * an HTTP server on the configured port that exposes the AIP-2.1 quote
@@ -7,16 +7,21 @@
  * and routes incoming buyer counter-offers through
  * orchestrator.evaluateCounter().
  *
- * Scope (v1):
+ * Scope:
  *  - accept + verify incoming counter-offers via QuoteChannelHandler
  *  - log the policy verdict (accept / reject) per round
  *  - emit a one-line health response on `GET /`
  *
- * Out of scope for v1 (Phase 5):
- *  - on-chain event listening (no automatic submitQuote on incoming
- *    INITIATED txs — caller still drives via Agent.ts or manual code)
- *  - sending CounterAcceptMessage back to buyer (no reverse-endpoint
- *    discovery yet — print the verdict, operator handles delivery)
+ * Not in scope here:
+ *  - On-chain INITIATED-tx detection is handled by `actp agent` or
+ *    `new Agent()`. Both use the hybrid subscription + bounded catch-up
+ *    sweep on `BlockchainRuntime` since 4.0.0
+ *    (PRD-event-driven-provider-listening §5.2, §5.3, §5.8). `actp serve`
+ *    intentionally has no on-chain watcher — running it alongside
+ *    `actp agent` is the canonical split: `serve` handles the AIP-2.1
+ *    quote channel, `agent` handles on-chain INITIATED pickups.
+ *  - Sending CounterAcceptMessage back to buyer (no reverse-endpoint
+ *    discovery yet — print the verdict, operator handles delivery).
  *
  * @module cli/commands/serve
  */

@@ -6,7 +6,7 @@
  * @module cli/commands/pay.test
  */
 
-import { runPay } from './pay';
+import { runPay, PAY_SERVICE_REJECTION_MESSAGE } from './pay';
 import { Output } from '../utils/output';
 import * as agirailsApp from '../../api/agirailsApp';
 import * as clientUtil from '../utils/client';
@@ -173,5 +173,66 @@ describe('pay slug resolution', () => {
 
     expect(mockDiscover).not.toHaveBeenCalled();
     expect(mockPay).toHaveBeenCalledWith(expect.objectContaining({ to: WALLET }));
+  });
+});
+
+// ============================================================================
+// PRD §5.9 — --service rejection
+// ============================================================================
+
+describe('pay --service rejection (PRD §5.9)', () => {
+  let exitSpy: jest.SpyInstance;
+  let errorSpy: jest.SpyInstance;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    exitSpy = mockExit();
+    // Output(.error) routes through console.error in quiet/json modes.
+    errorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    exitSpy.mockRestore();
+    errorSpy.mockRestore();
+  });
+
+  it('exits with code 64 (EX_USAGE) when --service is passed', async () => {
+    await expect(
+      runPay(WALLET, '5', { deadline: '+24h', disputeWindow: '172800', service: 'onboarding' }, quietOutput())
+    ).rejects.toThrow('EXIT');
+
+    expect(exitSpy).toHaveBeenCalledWith(64);
+  });
+
+  it('prints the canonical directive pointing at actp request', async () => {
+    await expect(
+      runPay(WALLET, '5', { deadline: '+24h', disputeWindow: '172800', service: 'whatever' }, quietOutput())
+    ).rejects.toThrow('EXIT');
+
+    // We don't pin on the full message — it's stable but allowed to evolve.
+    // The two load-bearing phrases must be present so user-facing copy
+    // doesn't drift away from PRD intent.
+    const allErrorCalls = errorSpy.mock.calls.flat().join(' ');
+    expect(allErrorCalls).toMatch(/Level 0 primitive/);
+    expect(allErrorCalls).toMatch(/actp request <provider> <amount> --service <name>/);
+  });
+
+  it('exposes the canonical message as a constant for downstream tooling', () => {
+    expect(PAY_SERVICE_REJECTION_MESSAGE).toMatch(/Level 0 primitive/);
+    expect(PAY_SERVICE_REJECTION_MESSAGE).toMatch(/actp request/);
+  });
+
+  it('does not reject when --service is absent (back-compat)', async () => {
+    const mockPay = jest.fn().mockResolvedValue({
+      txId: '0x123', state: 'COMMITTED', provider: WALLET,
+      requester: '0x01', amount: '5000000', deadline: 9999999999,
+    });
+    mockCreateClient.mockResolvedValue({ basic: { pay: mockPay } } as any);
+
+    // service omitted — the rejection path must not fire.
+    await runPay(WALLET, '5', { deadline: '+24h', disputeWindow: '172800' }, quietOutput());
+
+    expect(exitSpy).not.toHaveBeenCalled();
+    expect(mockPay).toHaveBeenCalled();
   });
 });
