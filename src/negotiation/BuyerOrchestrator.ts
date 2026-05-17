@@ -22,6 +22,8 @@ import { PolicyEngine, BuyerPolicy, QuoteOffer } from './PolicyEngine';
 import { DecisionEngine, CandidateStats } from './DecisionEngine';
 import { SessionStore } from './SessionStore';
 import { IACTPRuntime } from '../runtime/IACTPRuntime';
+import type { ACTPClient } from '../ACTPClient';
+import type { TransactionState } from '../runtime/types/MockState';
 import { QuoteBuilder } from '../builders/QuoteBuilder';
 import { CounterOfferBuilder, CounterOfferMessage } from '../builders/CounterOfferBuilder';
 import { NonceManager, InMemoryNonceManager } from '../utils/NonceManager';
@@ -126,6 +128,16 @@ export class BuyerOrchestrator {
   private requesterAddress: string;
   private negotiation: BuyerNegotiationContext;
   private counterBuilder?: CounterOfferBuilder;
+  /**
+   * Optional ACTPClient. When provided, on-chain writes route through
+   * `client.standard.*` so AGIRAILS Smart Wallets get Paymaster-sponsored
+   * UserOps (PRD §5.6 invariant: gasless requesters must never be forced
+   * to sign with the raw EOA). When omitted, writes go directly to
+   * `this.runtime` — preserving the legacy backward-compatible behaviour
+   * for callers and tests that construct an orchestrator with only an
+   * `IACTPRuntime`.
+   */
+  private client?: ACTPClient;
 
   /**
    * Per-txId inbound message queue. Channel callbacks push here; the
@@ -151,6 +163,7 @@ export class BuyerOrchestrator {
     requesterAddress: string,
     actpDir?: string,
     negotiation: BuyerNegotiationContext = {},
+    client?: ACTPClient,
   ) {
     // Fail-fast on partial negotiation context. Pre-fix bug: a developer
     // who set `negotiationChannel: new RelayChannel(...)` but forgot
@@ -178,6 +191,7 @@ export class BuyerOrchestrator {
     this.decisionEngine = new DecisionEngine(policy.selection.weights);
     this.sessionStore = new SessionStore(actpDir);
     this.negotiation = negotiation;
+    this.client = client;
 
     if (negotiation.signer) {
       this.counterBuilder = new CounterOfferBuilder(
@@ -417,9 +431,8 @@ export class BuyerOrchestrator {
         // keccak256(toUtf8Bytes(taskName)) so provider routing silently
         // missed. The session_id is no longer carried on-chain; subscription
         // tracking still uses txId as the correlation key.
-        txId = await this.runtime.createTransaction({
+        txId = await this._createTransaction({
           provider: providerAddress,
-          requester: this.requesterAddress,
           amount,
           deadline: Math.floor(Date.now() / 1000) + quoteTtlSeconds + 3600, // quote TTL + 1h buffer
           serviceDescription: keccak256(toUtf8Bytes(this.policy.task)),
@@ -457,7 +470,7 @@ export class BuyerOrchestrator {
       if (!reachedState) {
         // Timeout or cancelled — cancel and try next
         try {
-          await this.runtime.transitionState(txId, 'CANCELLED');
+          await this._transitionState(txId, 'CANCELLED');
         } catch {
           // Best-effort cancel
         }
@@ -595,7 +608,7 @@ export class BuyerOrchestrator {
       const escrowAmount = this.toBaseUnits(offer.unit_price);
       try {
         this.policyEngine.reserve(session.commerce_session_id, offer.unit_price, offer.currency);
-        await this.runtime.linkEscrow(txId, escrowAmount);
+        await this._linkEscrow(txId, escrowAmount);
 
         // Success
         this.sessionStore.linkTransaction(session.commerce_session_id, txId, candidate.slug);
@@ -792,7 +805,7 @@ export class BuyerOrchestrator {
         // We anchor BOTH provider and maxPrice to the FIRST quote
         // (which already cross-checked on-chain hash on round 0).
         if (currentQuote.provider !== firstQuoteEnv.message.provider) {
-          try { await this.runtime.transitionState(txId, 'CANCELLED'); } catch { /* best-effort */ }
+          try { await this._transitionState(txId, 'CANCELLED'); } catch { /* best-effort */ }
           rounds.push({
             round: round + 1,
             provider_slug: candidateSlug,
@@ -805,7 +818,7 @@ export class BuyerOrchestrator {
           return terminate({ done: true, success: false, reason: 'provider mismatch' });
         }
         if (currentQuote.maxPrice !== firstQuoteEnv.message.maxPrice) {
-          try { await this.runtime.transitionState(txId, 'CANCELLED'); } catch { /* best-effort */ }
+          try { await this._transitionState(txId, 'CANCELLED'); } catch { /* best-effort */ }
           rounds.push({
             round: round + 1,
             provider_slug: candidateSlug,
@@ -824,7 +837,7 @@ export class BuyerOrchestrator {
 
       // ----- reject -----
       if (evaluation.action === 'reject') {
-        try { await this.runtime.transitionState(txId, 'CANCELLED'); } catch { /* best-effort */ }
+        try { await this._transitionState(txId, 'CANCELLED'); } catch { /* best-effort */ }
         rounds.push({
           round: round + 1,
           provider_slug: candidateSlug,
@@ -894,7 +907,7 @@ export class BuyerOrchestrator {
         counterTtlMs,
       );
       if (!next) {
-        try { await this.runtime.transitionState(txId, 'CANCELLED'); } catch { /* best-effort */ }
+        try { await this._transitionState(txId, 'CANCELLED'); } catch { /* best-effort */ }
         const reason = `No response within ${counterTtlSec}s on round ${counterRound + 1}`;
         rounds.push({ round: round + 1, provider_slug: candidateSlug, provider_address: providerAddress, action: 'timeout', reason, tx_id: txId });
         emit({ type: 'round_end', round: round + 1, action: 'timeout', reason });
@@ -934,7 +947,7 @@ export class BuyerOrchestrator {
     // branch should have triggered accept-if-affordable; reaching here
     // implies provider re-quoted to the very last round and we still
     // saw 'counter'. Cancel.
-    try { await this.runtime.transitionState(txId, 'CANCELLED'); } catch { /* best-effort */ }
+    try { await this._transitionState(txId, 'CANCELLED'); } catch { /* best-effort */ }
     const reason = `Negotiation budget (${roundsBudget} rounds) exhausted without accept`;
     rounds.push({ round: round + 1, provider_slug: candidateSlug, provider_address: providerAddress, action: 'timeout', reason, tx_id: txId });
     emit({ type: 'round_end', round: round + 1, action: 'timeout', reason });
@@ -959,13 +972,13 @@ export class BuyerOrchestrator {
   ): Promise<{ done: true; success: boolean; reason: string }> {
     let acceptQuoteSucceeded = false;
     try {
-      await this.runtime.acceptQuote(txId, amountBaseUnits);
+      await this._acceptQuote(txId, amountBaseUnits);
       acceptQuoteSucceeded = true;
-      await this.runtime.linkEscrow(txId, amountBaseUnits);
+      await this._linkEscrow(txId, amountBaseUnits);
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
       if (acceptQuoteSucceeded) {
-        try { await this.runtime.transitionState(txId, 'CANCELLED'); } catch { /* best-effort */ }
+        try { await this._transitionState(txId, 'CANCELLED'); } catch { /* best-effort */ }
       }
       rounds.push({
         round: round + 1,
@@ -1104,5 +1117,94 @@ export class BuyerOrchestrator {
   /** Convert a USDC amount (e.g. 0.80) to base units string (e.g. "800000") */
   private toBaseUnits(amount: number): string {
     return String(Math.round(amount * 1_000_000));
+  }
+
+  // ==========================================================================
+  // AA-aware write routing helpers
+  //
+  // When `this.client` is provided, on-chain writes go through the
+  // StandardAdapter which routes via SmartWalletRouter when an AGIRAILS
+  // Smart Wallet is active (PRD §5.6 — gasless requesters). Otherwise
+  // (legacy constructors without `client`, mock-only callers, or EOA
+  // testnet without AA infra) writes fall through to the raw runtime.
+  // StandardAdapter itself falls through to runtime when its
+  // SmartWalletRouter is unavailable, so behaviour is preserved end-to-end.
+  // ==========================================================================
+
+  private async _createTransaction(params: {
+    provider: string;
+    amount: string;
+    deadline: number;
+    disputeWindow?: number;
+    serviceDescription?: string;
+    agentId?: string;
+  }): Promise<string> {
+    if (this.client) {
+      // Convert base-unit amount string (e.g. "5000000") to a parseAmount-
+      // compatible human-readable string (e.g. "5.000000") because
+      // StandardAdapter's parseAmount expects human units. The round-trip
+      // is lossless for any integer base-unit value.
+      return this.client.standard.createTransaction({
+        provider: params.provider,
+        amount: this._baseUnitsToHuman(params.amount),
+        deadline: params.deadline,
+        disputeWindow: params.disputeWindow,
+        serviceDescription: params.serviceDescription,
+        agentId: params.agentId,
+      });
+    }
+    return this.runtime.createTransaction({
+      provider: params.provider,
+      requester: this.requesterAddress,
+      amount: params.amount,
+      deadline: params.deadline,
+      disputeWindow: params.disputeWindow,
+      serviceDescription: params.serviceDescription,
+      agentId: params.agentId,
+    });
+  }
+
+  private async _transitionState(txId: string, newState: TransactionState, proof?: string): Promise<void> {
+    if (this.client) {
+      return this.client.standard.transitionState(txId, newState, proof);
+    }
+    return this.runtime.transitionState(txId, newState, proof);
+  }
+
+  private async _linkEscrow(txId: string, amount: string): Promise<string> {
+    if (this.client) {
+      // StandardAdapter.linkEscrow reads tx.amount from runtime and locks
+      // that. By the ACTP invariant (BuyerOrchestrator L548), tx.amount
+      // equals offer.unit_price at the call sites here — either because
+      // createTransaction was issued at that price (initial-quote path,
+      // L598) or because _acceptQuote ran first and overwrote tx.amount
+      // (counter-accept path, L962-964). So the on-chain locked amount
+      // matches the legacy explicit-amount call. If a future caller
+      // breaks that invariant, the divergence would surface as a
+      // mismatched escrow lock — caught by integration tests.
+      return this.client.standard.linkEscrow(txId);
+    }
+    return this.runtime.linkEscrow(txId, amount);
+  }
+
+  private async _acceptQuote(txId: string, amount: string): Promise<void> {
+    if (this.client) {
+      return this.client.standard.acceptQuote(txId, this._baseUnitsToHuman(amount));
+    }
+    return this.runtime.acceptQuote(txId, amount);
+  }
+
+  /**
+   * Convert a USDC base-unit string (e.g. "5000000") to a human-readable
+   * decimal string (e.g. "5.000000"). Inverse of {@link toBaseUnits} but
+   * operates on bigint (lossless for any non-negative integer input).
+   * Output always has 6 decimals so parseAmount accepts it round-trip.
+   */
+  private _baseUnitsToHuman(baseUnits: string): string {
+    const n = BigInt(baseUnits);
+    if (n < 0n) throw new Error(`_baseUnitsToHuman: negative input "${baseUnits}"`);
+    const whole = n / 1_000_000n;
+    const frac = n % 1_000_000n;
+    return `${whole}.${frac.toString().padStart(6, '0')}`;
   }
 }

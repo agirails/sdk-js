@@ -450,15 +450,22 @@ describe('Agent', () => {
         events: [],
       });
 
-      // Stub the minimum runtime surface the async processJob() reaches into
-      // (linkEscrow + transitionState). Without transitionState, processJob
-      // logs noise like "transitionState is not a function" after the test
-      // assertion runs. Tests still pass, but the noise masks real failures.
+      // Stub the minimum client surface the async processJob() reaches into.
+      // Post-4.0.0-beta.2 Agent routes write operations through
+      // `client.standard.*` so AA-enabled providers go via Paymaster;
+      // the stub provides both `standard` (the route Agent now takes)
+      // and `runtime` (used by some pre-existing helpers and by
+      // StandardAdapter's fallback path) so tests cover both shapes.
+      // linkEscrow signature is StandardAdapter's `(txId)` form — the
+      // adapter reads tx.amount from runtime internally.
       const stubRuntime = (
         linkEscrow: jest.Mock = jest.fn().mockResolvedValue(undefined),
         transitionState: jest.Mock = jest.fn().mockResolvedValue(undefined),
       ) => {
-        (pipelineAgent as any)._client = { runtime: { linkEscrow, transitionState } };
+        (pipelineAgent as any)._client = {
+          standard: { linkEscrow, transitionState },
+          runtime: { linkEscrow, transitionState },
+        };
         return { linkEscrow, transitionState };
       };
 
@@ -494,7 +501,7 @@ describe('Agent', () => {
         await (pipelineAgent as any).handleIncomingTransaction(tx);
 
         expect(received).toHaveBeenCalledTimes(1);
-        expect(linkEscrow).toHaveBeenCalledWith(tx.id, tx.amount);
+        expect(linkEscrow).toHaveBeenCalledWith(tx.id);
       });
 
       it('does not double-process when called twice with the same tx', async () => {

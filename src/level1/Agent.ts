@@ -881,11 +881,32 @@ export class Agent extends EventEmitter {
       // This prevents DoS via memory exhaustion by only fetching relevant transactions.
       // PRD §5.1: getTransactionsByProvider is now required on IACTPRuntime —
       // the prior duck-type fallback to getAllTransactions is gone.
-      const pendingJobs = await this._client.runtime.getTransactionsByProvider(
-        this.address,
-        'INITIATED',
-        100
+      //
+      // State filter is mode-dependent:
+      //   - mock: poll INITIATED. The mock runtime has no "Only requester"
+      //     guard on linkEscrow, so the legacy pattern of the provider
+      //     driving INITIATED → COMMITTED still works there. Existing
+      //     mock-only tests rely on this.
+      //   - testnet / mainnet: poll COMMITTED + IN_PROGRESS. ACTPKernel.linkEscrow
+      //     (≥ 2026-04-15) requires `msg.sender == txn.requester`, so we don't
+      //     poll INITIATED (kernel rejects any provider linkEscrow). COMMITTED
+      //     is the normal entry point. IN_PROGRESS is the orphan-recovery
+      //     entry: if a previous processJob completed the IN_PROGRESS
+      //     transition on-chain but then crashed / paymaster-failed before
+      //     the DELIVERED transition, the tx would be stuck in IN_PROGRESS
+      //     forever without a COMMITTED snapshot in the sweep window.
+      //     Re-entering through handleIncomingTransaction lets processJob
+      //     retry the DELIVERED step. processJob's state-gated transition
+      //     logic skips the IN_PROGRESS hop when the tx is already past it.
+      const isBlockchain = this.network === 'testnet' || this.network === 'mainnet';
+      const states: import('../runtime/types/MockState').TransactionState[] =
+        isBlockchain ? ['COMMITTED', 'IN_PROGRESS'] : ['INITIATED'];
+      const perStateResults = await Promise.all(
+        states.map((s) =>
+          this._client!.runtime.getTransactionsByProvider(this.address, s, 100)
+        )
       );
+      const pendingJobs = perStateResults.flat();
 
       this.logger.debug('Polling for jobs', {
         pendingJobs: pendingJobs.length,
@@ -987,9 +1008,34 @@ export class Agent extends EventEmitter {
 
       // Link escrow immediately to transition out of INITIATED state.
       // This prevents the next poll / event from picking up this job again.
+      //
+      // Mode gating: ACTPKernel ≥ 2026-04-15 enforces
+      // `msg.sender == txn.requester` on linkEscrow, so on testnet /
+      // mainnet a provider-side linkEscrow attempt is guaranteed to
+      // revert with "Only requester". On blockchain modes we skip the
+      // attempt and wait for the requester to drive INITIATED → COMMITTED
+      // themselves (via runRequest / level0.request / BuyerOrchestrator).
+      // Mock mode has no such guard — the legacy provider-drives-linkEscrow
+      // pattern still works there, and existing tests depend on it.
+      //
+      // The adapter route below preserves the AA-aware Paymaster path
+      // when active and falls through to runtime.linkEscrow on EOA / mock.
+      const isBlockchain = this.network === 'testnet' || this.network === 'mainnet';
       try {
-        if (this._client && tx.state === 'INITIATED') {
-          await this._client.runtime.linkEscrow(tx.id, tx.amount);
+        if (this._client && tx.state === 'INITIATED' && !isBlockchain) {
+          await this._client.standard.linkEscrow(tx.id);
+        } else if (this._client && tx.state === 'INITIATED' && isBlockchain) {
+          // Subscription path can deliver an INITIATED tx before the
+          // requester has linkEscrow'd. Skip and rely on pollForJobs to
+          // pick it up once it's COMMITTED. The outer `finally` clears
+          // processingLocks; the early return leaves activeJobs cleaned up.
+          this.logger.debug(
+            'Skipping provider-side linkEscrow on blockchain mode; ' +
+            'awaiting requester-driven INITIATED → COMMITTED transition',
+            { txId: tx.id }
+          );
+          this.activeJobs.delete(job.id);
+          return;
         }
         this.processedJobs.set(job.id, true);
       } catch (escrowError) {
@@ -1258,12 +1304,20 @@ export class Agent extends EventEmitter {
             // Legacy ad-hoc hash path. Buyer's verifier matches via §3.6
             // legacy fallback. Existing pre-AIP-2.1 agents continue to
             // function unchanged.
+            //
+            // Route through StandardAdapter so AA-enabled providers
+            // (Smart Wallet on testnet/mainnet) get Paymaster-sponsored
+            // UserOps for the INITIATED → QUOTED transition. Without this,
+            // counter-offer providers running on AA would revert on raw
+            // EOA gas (the signer has 0 ETH under the gasless model).
+            // EOA / mock callers fall through to runtime.transitionState
+            // inside the adapter.
             const { keccak256, toUtf8Bytes, AbiCoder } = await import('ethers');
             const quoteHash = keccak256(toUtf8Bytes(
               JSON.stringify({ txId: tx.id, providerIdealPrice, actualEscrow: tx.amount, provider: this.address })
             ));
             const proof = AbiCoder.defaultAbiCoder().encode(['bytes32'], [quoteHash]);
-            await this._client!.runtime.transitionState(tx.id, 'QUOTED', proof);
+            await this._client!.standard.transitionState(tx.id, 'QUOTED', proof);
 
             this.logger.info('Counter-offer quoted via legacy hash (no providerOrchestrator configured)', {
               txId: tx.id,
@@ -1504,8 +1558,38 @@ export class Agent extends EventEmitter {
         }
 
         // The kernel rejects COMMITTED → DELIVERED direct transitions, so we
-        // step through IN_PROGRESS first.
-        await this._client.runtime.transitionState(job.id, 'IN_PROGRESS');
+        // step through IN_PROGRESS first. Route via StandardAdapter so AA
+        // providers send Paymaster-sponsored UserOps; EOA / mock paths
+        // fall through to runtime.transitionState inside the adapter.
+        //
+        // Re-entry safety (PRD §5.5 orphan recovery): the orphan-IN_PROGRESS
+        // recovery path in `pollForJobs` (blockchain mode also polls
+        // IN_PROGRESS) re-delivers a tx that already advanced past
+        // COMMITTED on-chain. In that case the IN_PROGRESS transition has
+        // already happened and the kernel would reject a second
+        // `transitionState(IN_PROGRESS)` with "Invalid transition". Skip
+        // the hop when the tx is already in IN_PROGRESS or further.
+        //
+        // We re-read the tx state right before transitioning to avoid
+        // racing with a concurrent admin/dispute pathway that may have
+        // moved the tx since pollForJobs returned. The check is cheap
+        // (one RPC read; the runtime caches recent reads). For test
+        // stubs that don't provide getTransaction, default to COMMITTED —
+        // matches both the canonical mock entry state (post-linkEscrow)
+        // and the blockchain canonical entry state from pollForJobs.
+        const currentTx = await this._client.runtime.getTransaction(job.id).catch(() => null);
+        const currentState = currentTx?.state ?? 'COMMITTED';
+        if (currentState === 'COMMITTED') {
+          await this._client.standard.transitionState(job.id, 'IN_PROGRESS');
+        } else if (currentState !== 'IN_PROGRESS') {
+          // Tx is in some other state (CANCELLED, DISPUTED, etc.) — bail.
+          this.logger.warn('Skipping DELIVERED transition; tx no longer in workable state', {
+            jobId: job.id,
+            currentState,
+          });
+          this.activeJobs.delete(job.id);
+          return;
+        }
 
         // Encode dispute window proof for DELIVERED transition
         // Use transaction's disputeWindow from metadata, fallback to 2 days (172800s) per Options.ts default
@@ -1513,8 +1597,8 @@ export class Agent extends EventEmitter {
         const abiCoder = ethers.AbiCoder.defaultAbiCoder();
         const disputeWindowProof = abiCoder.encode(['uint256'], [disputeWindowSeconds]);
 
-        // Transition to DELIVERED with dispute window proof
-        await this._client.runtime.transitionState(job.id, 'DELIVERED', disputeWindowProof);
+        // Transition to DELIVERED with dispute window proof.
+        await this._client.standard.transitionState(job.id, 'DELIVERED', disputeWindowProof);
       }
 
       // Security: Remove from active jobs on SUCCESS
@@ -1539,9 +1623,51 @@ export class Agent extends EventEmitter {
       this.emit('job:completed', job, result);
       this.emit('payment:received', job.budget);
     } catch (error) {
-      // Remove from active AND processed jobs on FAILURE — allows retry on next poll
+      // Default policy: remove from activeJobs + processedJobs so the next
+      // poll re-attempts the job. Right for transient failures (RPC blip,
+      // bundler timeout, paymaster denied a single attempt).
+      //
+      // Exception: kernel revert reasons that signal a PERMANENT failure
+      // mode (the tx can never make forward progress) must NOT trigger
+      // retry — that would spin every poll cycle, burning bundler quota
+      // and filling logs. Keep job.id in processedJobs so the same tx
+      // is skipped on subsequent sweeps. The set is in-memory and reset
+      // on agent restart, which is the right blast radius: an operator
+      // who intentionally rotates the kernel can clear it by restarting.
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const permanentRevertReasons = [
+        'Transaction expired',  // ACTPKernel _enforceTiming after deadline
+        'Invalid transition',   // _isValidTransition reject (no recovery path)
+        'Only requester',       // wrong msg.sender for requester-only fn
+        'Only provider',        // wrong msg.sender for provider-only fn
+        'Not authorized',       // settle-before-window or wrong party
+        'Not participant',      // attestation anchoring without standing
+      ];
+      // Bundler simulation reverts surface the kernel reason ABI-encoded —
+      // the `Error(string)` selector `0x08c379a0` plus a length + the
+      // UTF-8 bytes of the reason. Match plaintext AND hex form so we
+      // catch both raw runtime reverts and UserOp simulation reverts.
+      const errorMessageLower = errorMessage.toLowerCase();
+      const isPermanentFailure = permanentRevertReasons.some((reason) => {
+        if (errorMessage.includes(reason)) return true;
+        const hexReason = Buffer.from(reason, 'utf-8').toString('hex').toLowerCase();
+        return errorMessageLower.includes(hexReason);
+      });
+
       this.activeJobs.delete(job.id);
-      this.processedJobs.delete(job.id);
+      if (isPermanentFailure) {
+        // Treat as processed so subsequent polls skip it. We don't emit
+        // job:rejected because the job was already accepted upstream;
+        // the operator's monitoring should rely on the job:failed signal
+        // plus the explicit warning below.
+        this.processedJobs.set(job.id, true);
+        this.logger.warn(
+          'Job failed with a permanent kernel revert — marking processed so polling does not retry forever',
+          { jobId: job.id, reason: errorMessage.slice(0, 200) }
+        );
+      } else {
+        this.processedJobs.delete(job.id);
+      }
       this._stats.jobsFailed++;
       this._stats.successRate =
         this._stats.jobsCompleted / (this._stats.jobsCompleted + this._stats.jobsFailed);

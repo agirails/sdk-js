@@ -199,19 +199,49 @@ export async function runRequest(opts: RunRequestOptions): Promise<RunRequestRes
   }
 
   // 7. createTransaction → INITIATED.
+  //    Route through StandardAdapter so AA-enabled requesters use the
+  //    SmartWalletRouter (Paymaster-sponsored UserOps) — `client.runtime`
+  //    directly would force-sign with the raw EOA and break the AGIRAILS
+  //    gasless model for requesters who hold no ETH.
+  //    (Mock + EOA modes fall through to runtime.createTransaction inside
+  //    the adapter, so behaviour is preserved.)
+  //    `requester` is derived from `this.requesterAddress` inside the
+  //    adapter — which ACTPClient.create sets to the smart-wallet address
+  //    when AutoWallet is active, or the EOA otherwise.
+  //    `amount` is the human-readable USDC string (parseAmount handles
+  //    units internally); do NOT pass amountWei here.
   const startedAt = Date.now();
-  const txId = await client.runtime.createTransaction({
+  const txId = await client.standard.createTransaction({
     provider: providerAddress,
-    requester: requesterAddress,
-    amount: amountWei,
+    amount: opts.amount,
     deadline: deadlineUnix,
     disputeWindow: 172_800, // 2 days; kernel enforces ≥ 1h.
     serviceDescription: serviceHash, // PRD §5.6
   });
   opts.onTransition?.('INITIATED', txId, new Date());
 
+  // 7b. linkEscrow → COMMITTED.
+  //     ACTPKernel.linkEscrow requires `msg.sender == txn.requester`
+  //     ("Only requester" — ACTPKernel.sol:328). The kernel will reject
+  //     any provider-side attempt to commit the escrow, so the requester
+  //     must drive this transition. Pre-4.0.0-beta.3 runRequest skipped
+  //     this step and assumed the provider's auto-accept hook would link
+  //     escrow on its side; against the redeployed kernel that path
+  //     reverts and the tx stays INITIATED until QUOTE_TIMEOUT.
+  //
+  //     StandardAdapter.linkEscrow batches USDC.approve + kernel.linkEscrow
+  //     into a single UserOp when AutoWallet is active, so Paymaster sponsors
+  //     the gas. EOA / mock callers fall through to runtime.linkEscrow with
+  //     tx.amount read from the on-chain tx.
+  if (network === 'testnet' || network === 'mainnet') {
+    await client.standard.linkEscrow(txId);
+    opts.onTransition?.('COMMITTED', txId, new Date());
+  }
+
   // 8. Quote phase — wait for INITIATED → QUOTED / COMMITTED / IN_PROGRESS / DELIVERED.
-  //    Sentinel + autoAccept may skip QUOTED entirely and fast-path through.
+  //    On testnet/mainnet the state has already advanced to COMMITTED via
+  //    the linkEscrow above, so waitForStateChange returns immediately.
+  //    On mock the provider still drives the transition.
   const quoteTimeoutMs = opts.quoteTimeoutMs ?? 30_000;
   let lastState: TransactionState = 'INITIATED';
   const passedQuote = await waitForStateChange(
@@ -267,7 +297,9 @@ export async function runRequest(opts: RunRequestOptions): Promise<RunRequestRes
   let settled = finalState === 'SETTLED';
   if (!settled && tx && tx.state === 'DELIVERED' && tx.escrowId) {
     try {
-      await client.runtime.releaseEscrow(tx.escrowId);
+      // Route via StandardAdapter so AA requesters settle via Paymaster
+      // (sendSettle UserOp), not a raw EOA tx that needs ETH for gas.
+      await client.standard.releaseEscrow(tx.escrowId);
       settled = true;
       finalState = 'SETTLED';
       opts.onTransition?.('SETTLED', txId, new Date());

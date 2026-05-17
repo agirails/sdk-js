@@ -702,7 +702,17 @@ export class ACTPClient {
     // Settle-on-interact: sweep expired DELIVERED transactions on each interaction.
     // requesterAddress is the local agent's address — it acts as provider in startWork/deliver flows,
     // so the sweep finds transactions where this address is the provider with expired dispute windows.
-    this.settleOnInteract = new SettleOnInteract(runtime, requesterAddress);
+    //
+    // Pass `this.standard` as the release router so AA-enabled providers
+    // settle through SmartWalletRouter (Paymaster) rather than reverting
+    // on raw-EOA gas. StandardAdapter.releaseEscrow falls through to
+    // runtime.releaseEscrow on EOA / mock, preserving prior behaviour.
+    this.settleOnInteract = new SettleOnInteract(
+      runtime,
+      requesterAddress,
+      undefined,
+      this.standard,
+    );
   }
 
   // ==========================================================================

@@ -5,6 +5,16 @@ const TAG = '[settle-on-interact]';
 const DEFAULT_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
 
 /**
+ * Minimal surface SettleOnInteract needs from the StandardAdapter to
+ * route releaseEscrow through SmartWalletRouter on AA-enabled agents.
+ * Decoupled from the full adapter type so this module stays
+ * test-friendly and free of import cycles.
+ */
+interface ReleaseRouter {
+  releaseEscrow(escrowId: string): Promise<void>;
+}
+
+/**
  * Background sweep for expired DELIVERED transactions.
  *
  * When an agent interacts with the SDK (pay, startWork, deliver),
@@ -15,6 +25,12 @@ const DEFAULT_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
  * It then calls releaseEscrow on each, settling them permissionlessly.
  * All operations are fire-and-forget — never blocks the primary operation.
  *
+ * When the optional `releaseRouter` is provided (typically
+ * `client.standard`), settlements route through SmartWalletRouter so
+ * AGIRAILS Smart Wallet providers get Paymaster-sponsored UserOps
+ * instead of raw EOA reverts. Without it, falls back to the runtime
+ * which only works for EOA / mock setups.
+ *
  * @internal
  */
 export class SettleOnInteract {
@@ -24,6 +40,7 @@ export class SettleOnInteract {
     private readonly runtime: IACTPRuntime,
     private readonly providerAddress: string,
     private readonly cooldownMs: number = DEFAULT_COOLDOWN_MS,
+    private readonly releaseRouter?: ReleaseRouter,
   ) {}
 
   /**
@@ -52,7 +69,14 @@ export class SettleOnInteract {
         for (const tx of txs) {
           const txId = tx.txId || tx.transactionId;
           try {
-            await this.runtime.releaseEscrow(txId);
+            // Prefer the AA-aware adapter route when available so Smart
+            // Wallet providers (0 ETH on the signer EOA) can settle via
+            // Paymaster instead of reverting on intrinsic-gas cost.
+            if (this.releaseRouter) {
+              await this.releaseRouter.releaseEscrow(txId);
+            } else {
+              await this.runtime.releaseEscrow(txId);
+            }
             sdkLogger.info(`${TAG} Auto-settled expired transaction ${txId}`);
           } catch (err) {
             sdkLogger.warn(`${TAG} Failed to settle ${txId}: ${err instanceof Error ? err.message : String(err)}`);

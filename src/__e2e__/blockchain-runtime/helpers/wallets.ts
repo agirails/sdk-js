@@ -32,6 +32,12 @@ const DEFAULT_FUND_WEI = 1_000_000_000_000_000_000n; // 1 ETH
 /**
  * Decode the base64 mnemonic + return ethers' HDNodeWallet root.
  * Throws if the env var is missing or contains an invalid mnemonic.
+ *
+ * ethers v6 quirk: `HDNodeWallet.fromMnemonic(m)` with no path argument
+ * does NOT return the root — it defaults to `m/44'/60'/0'/0/0` (depth 5).
+ * From a deep node, `derivePath('m/...')` rejects absolute paths. We
+ * explicitly pass `'m'` to anchor the returned wallet at depth 0 so
+ * `deriveSlotWallet` below can use the full `m/44'/60'/0'/0/<slot>` path.
  */
 export function loadTestMnemonic(): HDNodeWallet {
   const b64 = process.env.CI_TEST_KEYSTORE_BASE64;
@@ -43,7 +49,7 @@ export function loadTestMnemonic(): HDNodeWallet {
   }
   const phrase = Buffer.from(b64, 'base64').toString('utf-8').trim();
   const mnemonic = Mnemonic.fromPhrase(phrase);
-  return HDNodeWallet.fromMnemonic(mnemonic);
+  return HDNodeWallet.fromMnemonic(mnemonic, 'm');
 }
 
 /**
