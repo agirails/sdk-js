@@ -288,19 +288,74 @@ export function addToGitignore(projectRoot: string = process.cwd()): void {
     content = fs.readFileSync(gitignorePath, 'utf-8');
   }
 
-  // Check if .actp is already in gitignore (whole-line match to avoid false positives from comments)
-  if (/^\.actp\/?$/m.test(content)) {
-    return;
-  }
+  // Apex audit FIND-012(b): consumers regularly commit `.env` files
+  // containing ACTP_KEY_PASSWORD or ACTP_PRIVATE_KEY without realising
+  // it. The dockerignore / railwayignore helpers already cover `.env`
+  // patterns; gitignore covered only `.actp/` before this fix. Now
+  // adds the same `.env` patterns to `.gitignore` so a downstream
+  // `actp init` user is protected at the git boundary too.
+  const desired: Array<{ pattern: RegExp; line: string }> = [
+    { pattern: /^\.actp\/?$/m, line: '.actp/' },
+    { pattern: /^\.env$/m, line: '.env' },
+    { pattern: /^\.env\.\*$/m, line: '.env.*' },
+  ];
 
-  // Add .actp to gitignore
+  const missing = desired.filter(({ pattern }) => !pattern.test(content));
+  if (missing.length === 0) return;
+
+  const header = '# ACTP — local state + secrets (do not commit)\n';
+  const headerPresent = content.includes(header.trim());
+
   const newContent =
     content +
-    (content.endsWith('\n') ? '' : '\n') +
-    '# ACTP local state (contains mock blockchain state)\n' +
-    '.actp/\n';
+    (content.length > 0 && !content.endsWith('\n') ? '\n' : '') +
+    (headerPresent ? '' : header) +
+    missing.map((m) => m.line).join('\n') + '\n';
 
   fs.writeFileSync(gitignorePath, newContent, 'utf-8');
+}
+
+/**
+ * Write a starter `.env.example` to the project root if one isn't already
+ * present. Apex audit FIND-012(b): downstream agents that read secrets
+ * from `.env` need a documented schema with placeholder values, not raw
+ * keys committed to git. The example commits to git; the live `.env`
+ * sits in `.gitignore` (see `addToGitignore` above).
+ *
+ * Idempotent: if `.env.example` already exists, leaves it alone — the
+ * project owner may have customised it.
+ */
+export function writeEnvExample(projectRoot: string = process.cwd()): void {
+  const envExamplePath = path.join(projectRoot, '.env.example');
+  assertNotSymlink(envExamplePath);
+  if (fs.existsSync(envExamplePath)) return;
+
+  const content =
+    '# ACTP runtime secrets — never commit a populated `.env` to git.\n' +
+    '#\n' +
+    '# `actp init` adds `.env` and `.env.*` to .gitignore so the live\n' +
+    '# file stays local. This example is committed to document the schema.\n' +
+    '#\n' +
+    '# Wallet selection (pick ONE of the two patterns):\n' +
+    '#\n' +
+    '# Pattern A — encrypted keystore + password (recommended for CI / deploy):\n' +
+    '#   ACTP_KEYSTORE_BASE64=<base64 of your .actp/keystore.json>\n' +
+    '#   ACTP_KEY_PASSWORD=<password that decrypts the keystore>\n' +
+    '# Tip: `actp deploy:env` formats both for your env target.\n' +
+    '#\n' +
+    '# Pattern B — raw private key (testnet ONLY; mainnet refuses this path):\n' +
+    '#   ACTP_PRIVATE_KEY=0x...\n' +
+    '#\n' +
+    '# Network selector:\n' +
+    '#   ACTP_NETWORK=testnet     # mock | testnet | mainnet\n' +
+    '#\n' +
+    '# Optional overrides:\n' +
+    '#   BASE_SEPOLIA_RPC=https://...    # custom Base Sepolia RPC\n' +
+    '#   BASE_MAINNET_RPC=https://...    # custom Base mainnet RPC\n' +
+    '#   CDP_API_KEY=...                 # Coinbase Cloud bundler / paymaster\n' +
+    '#   PIMLICO_API_KEY=...             # Pimlico bundler / paymaster\n';
+
+  fs.writeFileSync(envExamplePath, content, 'utf-8');
 }
 
 // ============================================================================

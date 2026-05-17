@@ -40,8 +40,20 @@ const PUBLISH_PROXY_URL = process.env.AGIRAILS_PUBLISH_URL || 'https://api.agira
 
 /**
  * Public client key for the AGIRAILS publish proxy.
- * This is NOT a secret — it's a rate-limited, revocable identifier
- * (same model as Firebase API keys). Override via AGIRAILS_PUBLISH_KEY.
+ *
+ * **Intentionally embedded** — same threat model as a Firebase public
+ * client key or a Stripe publishable key. Rate-limited per identifier
+ * and revocable server-side; carries **no privileged scope** on the
+ * publish proxy. It exists so the proxy can attribute traffic per SDK
+ * version without forcing every CLI user to register an account.
+ *
+ * The `ag_pub_v1_` prefix is deliberate convention — it signals "public
+ * identifier, safe to commit" to anyone running `git grep` on the SDK.
+ *
+ * Confirmed safe-to-embed per the 2026-05-17 Apex source-level audit
+ * (FIND-012 soft observation). Override via `AGIRAILS_PUBLISH_KEY` env
+ * var when a deployment needs to opt in to a different rate-limit
+ * bucket on the proxy.
  */
 const PUBLISH_CLIENT_KEY = process.env.AGIRAILS_PUBLISH_KEY || 'ag_pub_v1_2026';
 

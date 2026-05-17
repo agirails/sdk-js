@@ -443,4 +443,55 @@ describe('edge cases', () => {
     const result = canonicalize([true, false, true]);
     expect(result).toEqual([false, true, true]);
   });
+
+  // ============================================================================
+  // Apex audit FIND-016 — defence-in-depth bounds on parser inputs
+  // ============================================================================
+
+  describe('input-size and alias-count guards (FIND-016)', () => {
+    test('rejects content larger than the 256 KB cap', () => {
+      // The bound applies before YAML / regex work so an attacker can't
+      // burn CPU on string normalisation either. Payload is one byte
+      // over the cap.
+      const overSize = '---\nname: test\n---\n' + 'x'.repeat(256_001);
+      expect(() => parseAgirailsMd(overSize)).toThrow(/exceeds 256000 bytes/);
+    });
+
+    test('accepts content right under the cap (boundary)', () => {
+      const padding = '\n'.repeat(255_000);
+      const md = `---\nname: t\n---\n${padding}`;
+      expect(md.length).toBeLessThanOrEqual(256_000);
+      expect(() => parseAgirailsMd(md)).not.toThrow();
+    });
+
+    test('rejects YAML that uses more aliases than the tight cap', () => {
+      // 12 references to one anchor; cap is 10. Canonical AGIRAILS.md
+      // files never use anchors, so the cap is conservative on purpose.
+      const md = [
+        '---',
+        'anchor: &a [1, 2, 3]',
+        'a1: *a',
+        'a2: *a',
+        'a3: *a',
+        'a4: *a',
+        'a5: *a',
+        'a6: *a',
+        'a7: *a',
+        'a8: *a',
+        'a9: *a',
+        'a10: *a',
+        'a11: *a',
+        'a12: *a',
+        '---',
+        '# Body',
+      ].join('\n');
+      expect(() => parseAgirailsMd(md)).toThrow(/alias|Failed to parse YAML/i);
+    });
+
+    test('accepts canonical AGIRAILS.md (no anchors, well under the cap)', () => {
+      const md = `---\nname: Test Agent\nslug: test-agent\nservices:\n  - foo\n---\n# Body`;
+      const result = parseAgirailsMd(md);
+      expect(result.frontmatter.name).toBe('Test Agent');
+    });
+  });
 });

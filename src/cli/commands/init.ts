@@ -16,6 +16,7 @@ import {
   addToGitignore,
   addToDockerignore,
   addToRailwayignore,
+  writeEnvExample,
   isInitialized,
   getActpDir,
   CLIConfig,
@@ -306,7 +307,7 @@ async function runInit(options: InitOptions, output: Output, cmd?: Command): Pro
   // Add to ignore files (AIP-13: gitignore + dockerignore + railwayignore)
   try {
     addToGitignore(projectRoot);
-    output.success('Added .actp/ to .gitignore');
+    output.success('Added .actp/ + .env patterns to .gitignore');
   } catch {
     output.warning('Could not update .gitignore (may not exist)');
   }
@@ -321,6 +322,15 @@ async function runInit(options: InitOptions, output: Output, cmd?: Command): Pro
     output.success('Added .actp/ to .railwayignore');
   } catch {
     output.warning('Could not update .railwayignore');
+  }
+  // Apex audit FIND-012(b): document the secrets schema in a committed
+  // `.env.example` so downstream consumers have a starting point that
+  // never contains live keys.
+  try {
+    writeEnvExample(projectRoot);
+    output.success('Wrote .env.example (secrets schema)');
+  } catch {
+    output.warning('Could not write .env.example (may already exist as symlink)');
   }
 
   // Output result

@@ -85,13 +85,49 @@ export function stripPublishMetadata(
 // ============================================================================
 
 /**
+ * Hard cap on raw AGIRAILS.md content size before YAML parsing.
+ *
+ * Apex audit FIND-016 (2026-05-17 source-level): the CLI runs in
+ * untrusted contexts — CI jobs, cloned repos, PR workspaces, generated
+ * project directories. Any of those can contain an attacker-controlled
+ * `AGIRAILS.md` that is parsed by `health`, `verify`, `publish`, or
+ * `init` without ever crossing a network boundary. The size bound is
+ * a defence-in-depth wall against the YAML resource-exhaustion class
+ * (deep nesting, malicious anchors / aliases) even though `yaml`
+ * v2 already defaults `maxAliasCount` to 100. Canonical AGIRAILS.md
+ * files are ~2-10 KB; 256 KB leaves comfortable headroom for legitimate
+ * long-form `body` content while still tripping on adversarial blobs.
+ */
+const MAX_AGIRAILSMD_BYTES = 256_000;
+
+/**
+ * Tightened `maxAliasCount` for the AGIRAILS.md frontmatter parse.
+ *
+ * Canonical AGIRAILS.md files never use YAML aliases / anchors. We pin
+ * the limit to a small constant rather than the library default of 100
+ * so a malicious file that plants aliases trips the parser early
+ * instead of consuming CPU walking an expansion graph.
+ */
+const FRONTMATTER_MAX_ALIAS_COUNT = 10;
+
+/**
  * Parse an AGIRAILS.md file into frontmatter + body.
  *
  * @param content - Raw file content (string)
  * @returns Parsed config with frontmatter object and body string
- * @throws Error if content has no valid YAML frontmatter
+ * @throws Error if content has no valid YAML frontmatter, exceeds the
+ *   size bound, or uses more YAML aliases than the conservative cap
  */
 export function parseAgirailsMd(content: string): AgirailsMdConfig {
+  // FIND-016 size bound — must fire before any YAML / regex work so a
+  // hostile file can't burn CPU in normalisation either.
+  if (content.length > MAX_AGIRAILSMD_BYTES) {
+    throw new Error(
+      `AGIRAILS.md exceeds ${MAX_AGIRAILSMD_BYTES} bytes (got ${content.length}). ` +
+      'Canonical files are typically 2-10 KB; refusing to parse a file this large.'
+    );
+  }
+
   // Normalize line endings to LF (handles CRLF from Windows)
   const trimmed = content.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trimStart();
 
@@ -111,7 +147,7 @@ export function parseAgirailsMd(content: string): AgirailsMdConfig {
   // Parse YAML
   let frontmatter: Record<string, unknown>;
   try {
-    frontmatter = parseYaml(yamlContent);
+    frontmatter = parseYaml(yamlContent, { maxAliasCount: FRONTMATTER_MAX_ALIAS_COUNT });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     throw new Error(`Failed to parse YAML frontmatter: ${message}`);

@@ -1,5 +1,98 @@
 # Changelog
 
+## [4.0.0-beta.11] — 2026-05-17
+
+Closes the actionable findings from the Apex 2026-05-17 source-level
+audit (`2026-05-17-sdk-js-source-audit.md`) — companion deep-dive to
+the morning's structural refresh. One new LOW (FIND-016 parser
+hardening) plus the three tractable items in the FIND-012 CLI
+secret-leakage checklist.
+
+### Fixed
+
+- **`parseAgirailsMd` defence-in-depth (Apex FIND-016)** — the
+  AGIRAILS.md YAML parser now enforces a 256 KB hard cap on raw
+  content before any YAML / regex work, and tightens `yaml`'s
+  `maxAliasCount` from its 100 default down to 10. Canonical
+  AGIRAILS.md files are 2-10 KB and never use anchors, so the cap is
+  conservative on purpose. Live threat: CLI runs in CI / cloned
+  repos / PR workspaces / generated project directories which can
+  contain attacker-controlled `AGIRAILS.md` parsed by `health`,
+  `verify`, `publish`, or `init` without crossing a network boundary.
+  4 new unit tests in `src/config/agirailsmd.test.ts` covering the
+  size boundary and alias-count guard.
+
+- **`addToGitignore` covers `.env` patterns (Apex FIND-012b)** — the
+  `actp init` ignore-file helper previously added only `.actp/` to
+  `.gitignore`; the docker / railway helpers already covered `.env`
+  and `.env.*`. This brings gitignore to parity. The function is
+  idempotent and migrates pre-existing `.gitignore` files that have
+  only `.actp/`. Closes the most common secret-commit footgun for
+  downstream consumers who store keystore passwords in a local
+  `.env`.
+
+- **`writeEnvExample` ships a documented secrets schema (Apex
+  FIND-012b)** — `actp init` now drops a `.env.example` at the
+  project root explaining the keystore + RPC schema with **placeholder
+  values only**. Two-factor keystore-password pattern called out
+  explicitly. Idempotent (won't clobber an operator-customised
+  file). Symlink-attack guard mirrors the dockerignore / railwayignore
+  helpers. 3 new unit tests covering the happy path, the no-clobber
+  property, and the symlink rejection.
+
+- **`PUBLISH_CLIENT_KEY` documented as intentionally embedded (Apex
+  FIND-012d)** — the proxy identifier in `src/cli/commands/publish.ts`
+  now carries an extended docstring naming the Firebase / Stripe
+  publishable-key threat model, explaining the `ag_pub_v1_` prefix
+  convention, and confirming the proxy gives the identifier no
+  privileged scope. No code change; resolves the soft observation
+  from the audit's `publish.ts` review.
+
+### Added
+
+- **Runtime secret handling paragraph in README.md (Apex FIND-012c)**
+  — new section under "Security" listing what the SDK reads, what it
+  never reads (CLI inline flags for keys / mnemonics / tokens), what
+  it logs (addresses only, never the key), and what `actp init` does
+  to protect downstream consumers. Public commitment to the secret-
+  handling model so downstream agents have a reference to point at
+  in their own threat models.
+
+### Investigation findings — no code change in this release
+
+- **FIND-012a (CLI inline-arg audit)**: confirmed **already clean**.
+  Zero `.option(` declarations across `src/cli/commands/*.ts` accept
+  a private key, mnemonic, signed payload, or API token inline. SDK
+  already routes all sensitive material through env vars or the
+  encrypted keystore. Documented in the new README section.
+
+- **FIND-006 sub (`elliptic` + `bn.js` reachability)**: `npm ls`
+  identified `@irys/sdk@0.2.11` as the sole runtime parent dragging
+  in ethers v5 + the `@near-js/*` cluster + `elliptic` + `bn.js`.
+  `@irys/sdk` is **already marked deprecated upstream** (npm install
+  warning recommends migrating to the Irys datachain client).
+  Hardhat's transitive ethers v5 is dev-only and not reachable at
+  runtime. Action: full Irys migration is a real engineering task
+  (storage API change in `src/storage/ArweaveClient.ts`) and tracked
+  as a separate forward item — out of beta.11 scope. No pin on
+  `elliptic` since CVE-2025-14505 has no patched version listed on
+  GHSA (per Apex audit).
+
+### Known follow-ups (Apex audit; tracked, not blockers for the canary)
+
+- **FIND-001 / FIND-003 / FIND-010** — branch protection / CODEOWNERS /
+  `sdk-ts-ci.yml` permissions block. Need GitHub org-admin.
+- **FIND-006 (the broader Dependabot cluster)** — auto-updates still
+  disabled at repo settings; 26 open alerts.
+- **FIND-008** — git tag drift on stable 3.5.3 and the 2.0.1-beta line.
+  Retroactive tagging requires tarball-to-commit archeology.
+- **FIND-009** — `sdk-ts-ci.yml` uses `npm install`, should be `npm ci`.
+- **`@irys/sdk` migration** — replace with the Irys datachain client
+  to drop ethers v5 + `@near-js/*` + `elliptic` + `bn.js` runtime
+  transitives. Separate cycle.
+- **`bn.js` CVE-2026-2739 `maskn(0)` DoS** — reachable via the same
+  Irys path; pin in `overrides` once a patched line is published.
+
 ## [4.0.0-beta.10] — 2026-05-17
 
 Closes the three Apex 2026-05-17 audit findings that are tractable inside
