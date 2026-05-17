@@ -1,0 +1,51 @@
+name: CodeQL
+
+# Apex audit FIND-004 — JS/TS SAST floor. Runs GitHub's default JS/TS
+# query pack on PRs, pushes to main, and a weekly cron. Catches the
+# defect classes the secret-scan layer (already enabled at the repo)
+# doesn't cover: unsafe eval, prototype pollution, regex injection,
+# hardcoded crypto primitives, taint flows through fetch / fs / child_process.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly Monday 06:00 UTC catches drift in dependencies that the
+    # PR-time scan wouldn't surface unless the dep tree was edited.
+    - cron: '0 6 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: Analyze (javascript-typescript)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write  # required for CodeQL to upload SARIF
+      actions: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11  # v4.1.1
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@379614612a29c9e28f31f39a59013eb8012a51f0  # v3.24.6
+        with:
+          languages: javascript-typescript
+          # Default + security-extended give a reasonable first-pass
+          # signal-to-noise. Tune via .github/codeql/codeql-config.yml
+          # if first runs surface too much benign noise.
+          queries: security-extended,security-and-quality
+
+      # Build step intentionally omitted — CodeQL autobuilds JS/TS from
+      # source without compilation. Adding a build step here would slow
+      # PRs without adding analysis coverage (CodeQL doesn't need tsc).
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@379614612a29c9e28f31f39a59013eb8012a51f0  # v3.24.6
+        with:
+          category: '/language:javascript-typescript'

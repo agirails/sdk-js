@@ -156,6 +156,70 @@ describe('RelayChannel', () => {
     expect(received).toHaveLength(0);
   });
 
+  // ==========================================================================
+  // Apex audit FIND-011 — assertSafePeerUrl guard on consumer-supplied baseUrl
+  // ==========================================================================
+
+  describe('baseUrl SSRF guard (FIND-011)', () => {
+    const kernelMap = { [CHAIN_ID]: KERNEL };
+    it('rejects http:// baseUrl by default', () => {
+      expect(() => new RelayChannel({
+        baseUrl: 'http://relay.test',
+        kernelAddressByChainId: kernelMap,
+      })).toThrow(/https/);
+    });
+
+    it('rejects loopback baseUrl', () => {
+      expect(() => new RelayChannel({
+        baseUrl: 'https://127.0.0.1:8080',
+        kernelAddressByChainId: kernelMap,
+      })).toThrow(/loopback|SSRF/);
+    });
+
+    it('rejects AWS metadata endpoint', () => {
+      expect(() => new RelayChannel({
+        baseUrl: 'https://169.254.169.254',
+        kernelAddressByChainId: kernelMap,
+      })).toThrow(/link-local|metadata|SSRF/);
+    });
+
+    it('rejects RFC1918 (192.168.x.x)', () => {
+      expect(() => new RelayChannel({
+        baseUrl: 'https://192.168.1.1',
+        kernelAddressByChainId: kernelMap,
+      })).toThrow(/RFC1918|SSRF/);
+    });
+
+    it('rejects IPv4-mapped IPv6 loopback bypass', () => {
+      expect(() => new RelayChannel({
+        baseUrl: 'https://[::ffff:127.0.0.1]',
+        kernelAddressByChainId: kernelMap,
+      })).toThrow(/loopback|SSRF/);
+    });
+
+    it('rejects localhost by name', () => {
+      expect(() => new RelayChannel({
+        baseUrl: 'https://localhost:3000',
+        kernelAddressByChainId: kernelMap,
+      })).toThrow(/localhost|SSRF/);
+    });
+
+    it('allows insecure targets when explicitly opted in (dev escape hatch)', () => {
+      expect(() => new RelayChannel({
+        baseUrl: 'http://127.0.0.1:3000',
+        kernelAddressByChainId: kernelMap,
+        allowInsecureTargets: true,
+      })).not.toThrow();
+    });
+
+    it('default https public host (e.g. agirails.app) is accepted', () => {
+      expect(() => new RelayChannel({
+        baseUrl: 'https://agirails.app',
+        kernelAddressByChainId: kernelMap,
+      })).not.toThrow();
+    });
+  });
+
   it('subscribeAgent polls /api/v1/negotiations/inbox/:did and delivers', async () => {
     const providerDID = `did:ethr:${CHAIN_ID}:${provider.address}`;
     const collected: Array<{ txId: string; type: string }> = [];

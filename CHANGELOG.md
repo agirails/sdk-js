@@ -1,5 +1,76 @@
 # Changelog
 
+## [4.0.0-beta.10] — 2026-05-17
+
+Closes the three Apex 2026-05-17 audit findings that are tractable inside
+the SDK repo without org-level admin (FIND-011 SSRF guard, FIND-007 publish
+provenance, FIND-004 JS/TS SAST floor). Structural perimeter items that
+need GitHub org-admin (branch protection, CODEOWNERS, Dependabot
+auto-updates) remain open — tracked separately. No protocol-surface
+changes; canary path validated against beta.9 across seven SETTLED runs
+remains identical.
+
+### Fixed
+
+- **`RelayChannel` baseUrl SSRF guard (Apex FIND-011)** — the constructor
+  now routes `cfg.baseUrl` through `assertSafePeerUrl` (the same helper
+  the SDK uses for adversary-writable peer URLs from the on-chain
+  registry / agirails.app DB). A downstream agent that reads its relay
+  base URL from an env var, config file, or discovery channel can no
+  longer be steered at metadata services (169.254.169.254), RFC1918
+  hosts, IPv6 loopback, IPv4-mapped IPv6 bypasses, or `*.localhost`.
+  Adds the `allowInsecureTargets?: boolean` config field for the
+  documented dev / test escape hatch. 8 new unit tests in
+  `src/negotiation/RelayChannel.test.ts` covering each guard branch.
+
+### Added
+
+- **`.github/workflows/publish.yml` — tag-driven npm publish with
+  provenance (Apex FIND-007)**. Fires on `v*.*.*` and `v*.*.*-*` tag
+  push. Verifies tag matches `package.json` version, runs
+  `npm ci` + `build` + `test` + `lint`, then publishes with
+  `--provenance` (npm OIDC + sigstore attestation) and a dist-tag
+  derived from the version suffix (`-beta` → `next`, `-alpha` →
+  `alpha`, `-rc` → `rc`, stable → `latest`). All third-party
+  actions pinned by full-length commit SHA per the CVE-2025-30066
+  class. Closes the forensic gap on prior `4.0.0-beta.0..9`
+  publishes (10 unattested releases over two days).
+
+- **`.github/workflows/codeql.yml` — JS/TS SAST baseline (Apex
+  FIND-004)**. Runs on PR, push-to-main, and a weekly Monday cron.
+  Default `security-extended` + `security-and-quality` query pack
+  covers unsafe eval, prototype pollution, regex injection,
+  hardcoded crypto primitives, and taint flow analysis through
+  fetch / fs / child_process. Complements the secret-scanning
+  layer (already enabled at the repo) and the gitleaks step in
+  `sdk-ts-ci.yml`.
+
+- **`publishConfig.provenance: true` in `package.json`** — declarative
+  fallback so even a direct `npm publish` from a maintainer machine
+  attempts attestation. The workflow path (above) is the supported
+  publish flow going forward.
+
+### Known follow-ups (Apex audit; tracked, not blockers for the canary)
+
+- **FIND-001 / FIND-003 / FIND-010 — branch protection / CODEOWNERS /
+  workflow permissions block on `sdk-ts-ci.yml`**. Need GitHub org-admin
+  to apply rulesets; one administrative pass for both `sdk-js` and
+  `actp-kernel`.
+- **FIND-006 — 26 Dependabot alerts, auto-updates disabled**. Manual
+  triage + `overrides` block in `package.json`. Out of scope for this
+  release.
+- **FIND-008 — git tag drift on `3.5.3`, `2.0.1-beta`, `4.0.0-beta.0..9`**.
+  The 4.0.0 line is partially anchored as of this release (the new
+  cumulative beta.1..9 commit + the beta.9 tag). Retroactive tagging
+  of stable 3.5.3 and the 2.0.1-beta requires tarball-to-commit
+  archeology — separate housekeeping pass.
+- **FIND-009 — `sdk-ts-ci.yml` uses `npm install`, should be `npm ci`**.
+  Mechanical edit, separate PR.
+- **FIND-012 — CLI runtime secret-leakage surface audit**. Real work
+  (~2-3h) — error-path redaction, `--key-file` over `--key`, `actp
+  init` ship a `.gitignore` template. Out of scope for this release;
+  tracked.
+
 ## [4.0.0-beta.9] — 2026-05-17
 
 Catches a transient RPC propagation race surfaced by the Layer 2
