@@ -1,0 +1,22 @@
+# Code owners for @agirails/sdk (TypeScript)
+#
+# Per Apex audit 2026-05-17 FIND-003 — couples with branch protection
+# "Require review from Code Owners" once enabled.
+
+# Default — any file not matched by a more specific rule.
+*                              @DamirAGI @roosch269
+
+# SDK source — runtime behaviour, on-chain interactions, key handling.
+/src/                          @DamirAGI @roosch269
+
+# Wallet and keystore code — sensitive surface, key-material adjacent.
+/src/wallet/                   @DamirAGI @roosch269
+/src/cli/commands/deploy-env.ts @DamirAGI @roosch269
+/src/cli/commands/deploy-check.ts @DamirAGI @roosch269
+
+# Package metadata — version bumps and publish-time settings.
+/package.json                  @DamirAGI @roosch269
+/package-lock.json             @DamirAGI @roosch269
+
+# CI and Dependabot config — release-integrity surface.
+/.github/                      @DamirAGI @roosch269
