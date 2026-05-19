@@ -2,6 +2,20 @@
 
 ## [4.0.0] — 2026-05-19
 
+### Security
+
+- **Bump `@ethereum-attestation-service/eas-sdk` 1.6.1 → 2.9.x.** Clears the
+  transitively-inherited high-severity advisories in `undici`, `hardhat`,
+  and `mocha` via `eas-contracts@1.7.1`. Adapted `EASHelper.attest` /
+  `EASHelper.revokeAttestation` to read tx hash from `Transaction.receipt.hash`
+  (EAS SDK 2.x relocates the field; behavior is otherwise unchanged).
+- **npm overrides hardened.** Added `undici ^6.25.0`, `serialize-javascript
+  ^7.0.5`, and `mocha ^11` to `package.json#overrides` to pin transitive
+  vulnerable versions out of the install tree.
+- **Production npm-audit baseline: 0 high, 15 moderate, 28 low** — all
+  remaining are dev-tooling transitives with no exploitable runtime path
+  in the shipped SDK. (Pre-4.0.0: 10 high.)
+
 First stable Base mainnet release. Closes the 4.0.0-beta cycle.
 
 ### Mainnet contracts (Base, chain 8453)

@@ -123,9 +123,15 @@ export class EASHelper {
       throw new Error('EAS returned zero UID for attestation (unexpected).');
     }
 
+    // EAS SDK 2.x: receipt is populated by wait(); hash lives on receipt.hash.
+    const txHash = tx.receipt?.hash;
+    if (!txHash) {
+      throw new Error('EAS attestation receipt did not include a tx hash.');
+    }
+
     return {
       uid,
-      transactionHash: tx.tx.hash
+      transactionHash: txHash
     };
   }
 
@@ -141,7 +147,11 @@ export class EASHelper {
       data: { uid }
     });
     await tx.wait();
-    return tx.tx.hash;
+    const txHash = tx.receipt?.hash;
+    if (!txHash) {
+      throw new Error('EAS revocation receipt did not include a tx hash.');
+    }
+    return txHash;
   }
 
   /**
