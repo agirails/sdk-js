@@ -41,6 +41,12 @@ jobs:
           cache: 'npm'
           registry-url: 'https://registry.npmjs.org'
 
+      - name: Bump npm to 11.x (required for npm Trusted Publishing OIDC handshake)
+        # Node 20 ships npm 10.x. Trusted-Publisher OIDC publish (no
+        # NPM_TOKEN secret, sigstore provenance signed via GitHub OIDC)
+        # requires npm 11.5.1+. See npm RFC #850.
+        run: npm install -g npm@11
+
       - name: Verify tag matches package.json version
         # The tag drives the workflow but we double-check it agrees with
         # the in-tree version so an accidentally-mistagged commit fails
@@ -86,12 +92,12 @@ jobs:
             echo "DIST_TAG=latest" >> "$GITHUB_ENV"
           fi
 
-      - name: Publish to npm with provenance
-        # `--provenance` triggers npm's OIDC handshake with sigstore and
-        # attaches a publish attestation to the tarball. Requires
-        # `id-token: write` on this job and that the package is allowed
-        # to publish from this repo (npm-side admin setting on the
-        # @agirails org).
+      - name: Publish to npm with provenance (Trusted Publisher OIDC)
+        # With npm 11+ and a configured Trusted Publisher on npmjs.com
+        # pointing at this repo + workflow, `npm publish --provenance`
+        # uses the GitHub-issued id-token to authenticate and signs the
+        # tarball via sigstore. No NPM_TOKEN secret is needed — and
+        # supplying an empty NODE_AUTH_TOKEN actually blocks the OIDC
+        # path, so this step deliberately sets no token env.
+        # Closes Apex FIND-001 (provenance + tokenless publish).
         run: npm publish --tag "$DIST_TAG" --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
