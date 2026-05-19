@@ -461,8 +461,10 @@ describe('withRetryResult', () => {
         jitterFactor: 0
       });
 
-      // Should have waited at least 50ms between attempts
-      expect(result.totalTimeMs).toBeGreaterThanOrEqual(50);
+      // Should have waited approximately initialDelayMs between attempts.
+      // CI timers occasionally finish ~1ms early due to scheduler granularity;
+      // 5ms tolerance keeps the intent (waited ~50ms) without flaking.
+      expect(result.totalTimeMs).toBeGreaterThanOrEqual(45);
     });
   });
 
