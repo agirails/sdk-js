@@ -132,6 +132,7 @@
     "fast-xml-parser": "^5.3.5",
     "undici": "^6.25.0",
     "serialize-javascript": "^7.0.5",
-    "mocha": "^11.0.0"
+    "mocha": "^11.0.0",
+    "uuid": "^9.0.1"
   }
 }
