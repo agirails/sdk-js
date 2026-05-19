@@ -119,42 +119,42 @@ describe('Networks Config', () => {
     // Sanity checks: deployed contract addresses must match known deployments
     it('should have correct AgentRegistry on base-sepolia', () => {
       const config = getNetwork('base-sepolia');
-      expect(config.contracts.agentRegistry).toBe('0x40ca9b043220ecc26b0b280fe6a02861eadc2448');
+      expect(config.contracts.agentRegistry).toBe('0xD91F9aBfBf60b4a2Fd5317ab0cDF3F44faB5D656');
     });
 
     it('should have correct AgentRegistry on base-mainnet', () => {
       const config = getNetwork('base-mainnet');
-      expect(config.contracts.agentRegistry).toBe('0x6fB222CF3DDdf37Bcb248EE7BBBA42Fb41901de8');
+      expect(config.contracts.agentRegistry).toBe('0x64Cb18bfb3CC1aCb1370a3B01613391D3561a009');
     });
 
     it('should have correct ACTPKernel on base-sepolia', () => {
       const config = getNetwork('base-sepolia');
-      expect(config.contracts.actpKernel).toBe('0xE83cba71C445B4f658D88E4F179FccB9E1454F97');
+      expect(config.contracts.actpKernel).toBe('0x9d25A874f046185d9237Cd4954C88D2B74B0021b');
     });
 
     it('should have correct ACTPKernel on base-mainnet', () => {
       const config = getNetwork('base-mainnet');
-      expect(config.contracts.actpKernel).toBe('0x132B9eB321dBB57c828B083844287171BDC92d29');
+      expect(config.contracts.actpKernel).toBe('0x048c811352e8a3fECd5b0Ec4AA2c2b94083CC842');
     });
 
     it('should have correct EscrowVault on base-sepolia', () => {
       const config = getNetwork('base-sepolia');
-      expect(config.contracts.escrowVault).toBe('0x0DAbBF59C40C1804488a84237C87971b2a7f5f5f');
+      expect(config.contracts.escrowVault).toBe('0x7dF07327090efcA73DCBa70414aA3131Fc6d2efB');
     });
 
     it('should have correct EscrowVault on base-mainnet', () => {
       const config = getNetwork('base-mainnet');
-      expect(config.contracts.escrowVault).toBe('0x6aAF45882c4b0dD34130ecC790bb5Ec6be7fFb99');
+      expect(config.contracts.escrowVault).toBe('0x262D5912A9612F0c66dA5d13B4E678D50ebC44b5');
     });
 
-    it('should have correct X402Relay on base-sepolia', () => {
+    it('should have correct X402Relay on base-sepolia (deprecated but still set)', () => {
       const config = getNetwork('base-sepolia');
       expect(config.contracts.x402Relay).toBe('0x110b25bb3d45c40dfcf34bb451aa7069b2a1cb3b');
     });
 
-    it('should have correct X402Relay on base-mainnet', () => {
+    it('should NOT have X402Relay on base-mainnet (deprecated, no mainnet redeploy)', () => {
       const config = getNetwork('base-mainnet');
-      expect(config.contracts.x402Relay).toBe('0x81DFb954A3D58FEc24Fc9c946aC2C71a911609F8');
+      expect(config.contracts.x402Relay).toBeUndefined();
     });
 
     it('should throw on unknown network', () => {

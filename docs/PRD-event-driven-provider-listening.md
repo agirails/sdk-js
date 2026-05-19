@@ -2,7 +2,7 @@
 
 **Target version:** `@agirails/sdk@4.0.0` (breaking)
 **Status:** Draft v5 — pending implementation
-**Authors:** Arha + Damir, 2026-05-13 v5 (supersedes 2026-05-13 v4/v3/v2, 2026-05-12 v1)
+**Status history:** v5 2026-05-13 (supersedes v4/v3/v2 from 2026-05-13, v1 from 2026-05-12)
 **Drivers:**
 - Sentinel (Seed #0) deploy on 2026-05-12 confirmed `Agent.provide()` is a silent noop on Base Sepolia/Mainnet for SDK ≤ 3.5.3.
 - v1 audit (2026-05-13) identified that transport fix alone produces a broken half-state. v2 expanded scope to all three failure layers.
@@ -55,7 +55,7 @@ From 3.4.x through 3.5.3, no JS SDK consumer running `Agent.provide()` against B
 - A provider boot **after** an incoming `request` recovers it via catch-up sweep within 60 s (within the bounded block window).
 - `Agent.pause()` and `Agent.resume()` correctly stop and restart subscription (no jobs delivered while paused).
 - `actp agent` CLI no longer loses transactions on transient quote failures.
-- Existing Sentinel source code (`/Users/damir/Arha/AGIRAILS/Public Agents/seed-sentinel/src/agent.ts`) requires zero changes beyond `package.json` SDK bump.
+- Existing Sentinel agent source code (in `Public Agents/seed-sentinel/`) requires zero changes beyond a `package.json` SDK bump.
 
 ### Non-goals (4.0.0)
 
@@ -73,8 +73,8 @@ From 3.4.x through 3.5.3, no JS SDK consumer running `Agent.provide()` against B
 
 ## 3. User stories
 
-**P-1 — Provider operator (Damir, Sentinel).**
-*"I run `npm run dev` on Railway against testnet. A developer in Berlin runs `npx actp test`. Within 5 s, my handler fires with the parsed `request`, returns the day's reflection, and the buyer's escrow settles. No `getAllTransactions not implemented` warnings. If Railway restarts mid-job, the catch-up sweep on next boot finds any pending INITIATED jobs from the configured window."*
+**P-1 — Provider operator running Sentinel agent.**
+*"I run `npm run dev` on a hosting provider (e.g. Railway) against testnet. A developer elsewhere runs `npx actp test`. Within 5 s, my handler fires with the parsed `request`, returns the day's reflection, and the buyer's escrow settles. No `getAllTransactions not implemented` warnings. If the host restarts mid-job, the catch-up sweep on next boot finds any pending INITIATED jobs from the configured window."*
 
 **P-2 — Onboarding developer (`actp test`).**
 *"I run `npx actp test` from a shell where my ACTP test wallet is configured and funded. The CLI auto-finds Sentinel, submits a real Level 1 request for $0.05 USDC, walks me through every state transition with timestamps, and prints the reflection. Total time to reflection + requester-side settle target: under 15 s on healthy Base Sepolia RPC. If wallet/funds are missing, I get a precise setup error instead of a mock success. Phase 0 exit criterion #2 passes."*
@@ -665,7 +665,7 @@ Fix in the same PR:
 
 ## 7. Migration plan
 
-### Sentinel (`/Users/damir/Arha/AGIRAILS/Public Agents/seed-sentinel/`)
+### Sentinel reference agent (in `Public Agents/seed-sentinel/`)
 
 ```diff
   // package.json

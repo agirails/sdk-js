@@ -1,5 +1,66 @@
 # Changelog
 
+## [4.0.0] — 2026-05-19
+
+First stable Base mainnet release. Closes the 4.0.0-beta cycle.
+
+### Mainnet contracts (Base, chain 8453)
+
+The mainnet kernel was redeployed 2026-05-19 to ship the post-3.5.x
+cumulative changes (AIP-14 dispute bonds with per-tx-locked rates,
+INV-30 `disputeBondBpsLocked`, M-2 mediator timelock fix, M-3 mediator
+hot-swap fee lock, ERC-8004 agentId tracking, dispute-initiator + bond
+return logic). Storage-incompatible upgrade — fresh address surface.
+
+- `actpKernel`: `0x048c811352e8a3fECd5b0Ec4AA2c2b94083CC842` (deploy block 46,212,266)
+- `escrowVault`: `0x262D5912A9612F0c66dA5d13B4E678D50ebC44b5`
+- `agentRegistry`: `0x64Cb18bfb3CC1aCb1370a3B01613391D3561a009` (active after 2-day timelock execute on 2026-05-21)
+- `archiveTreasury`: `0x6159A80Ce8362aBB2307FbaB4Ed4D3F4A4231Acc`
+- `usdc`: `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` (Circle native, unchanged)
+
+All four contracts Sourcify EXACT_MATCH verified. Admin / pauser /
+feeRecipient = Treasury Safe `0x61fE58E9…b7f2` (2-of-4). Compiler:
+solc 0.8.34 + via_ir. Deploy artifact at
+`agirails/actp-kernel deployments/base-mainnet.json`.
+
+### Breaking
+
+- **`x402Relay` removed from base-mainnet config.** Deprecated SDK-side
+  since 3.3.0; payments route directly buyer→seller via `@x402/fetch`
+  + facilitator (EIP-3009 / Permit2). Old mainnet X402Relay
+  (`0x81DFb954…09F8`) is NOT redeployed. Sepolia retains it for legacy
+  direct-call consumers.
+
+- **Mainnet address surface change.** Integrators that read
+  `getNetwork('base-mainnet').contracts.*` migrate automatically.
+  Code with hardcoded old kernel/vault/registry/archive addresses must
+  swap to the new addresses above. Old contracts stay live and
+  isolated — in-flight transactions on the old kernel continue
+  normally, but new SDK traffic targets the new kernel.
+
+### Carried forward from 4.0.0-beta.0 through beta.11
+
+- AA bypass cascade fixes (beta.1–beta.9) — Smart Wallet routing for
+  `level0/request.ts` and `BuyerOrchestrator.ts`; no raw EOA fallback
+- Apex audit closures: FIND-001/-002/-003/-004/-006/-007/-011/-012/-013/-014/-015/-016
+- CODEOWNERS review gate (FIND-003)
+- Workflow-attested provenance publish (FIND-001)
+- AGIRAILS.md parser hardening (FIND-016)
+- See `feat/4.0.0-event-driven-provider-listening` git history for the
+  full beta-cycle commit log.
+
+### Migration
+
+For most integrators: `npm install @agirails/sdk@latest` after this
+version is promoted to `@latest`. The SDK reads addresses from
+`getNetwork('base-mainnet')` so consumers going through the network
+helper migrate without code changes.
+
+If you hardcoded any old mainnet addresses in your application code,
+swap them per the address list above.
+
+---
+
 ## [4.0.0-beta.11] — 2026-05-17
 
 Closes the actionable findings from the Apex 2026-05-17 source-level

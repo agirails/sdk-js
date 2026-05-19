@@ -134,17 +134,18 @@ export const BASE_SEPOLIA: NetworkConfig = {
   rpcUrl: BASE_SEPOLIA_RPC_URL,
   blockExplorer: 'https://sepolia.basescan.org',
   contracts: {
-    // Redeployed 2026-04-15: kernel + vault + registry + treasury + relay.
+    // Redeployed 2026-05-19 alongside mainnet to align ABI shape
+    // (INV-30 disputeBondBpsLocked + AIP-14 / d9c6e8e requesterPenaltyBpsLocked).
     // See agirails/actp-kernel deployments/base-sepolia.json for details.
-    actpKernel: '0xE83cba71C445B4f658D88E4F179FccB9E1454F97',
-    escrowVault: '0x0DAbBF59C40C1804488a84237C87971b2a7f5f5f',
+    actpKernel: '0x9d25A874f046185d9237Cd4954C88D2B74B0021b',
+    escrowVault: '0x7dF07327090efcA73DCBa70414aA3131Fc6d2efB',
     usdc: '0x444b4e1A65949AB2ac75979D5d0166Eb7A248Ccb', // MockUSDC (unchanged)
     eas: '0x4200000000000000000000000000000000000021',
     easSchemaRegistry: '0x4200000000000000000000000000000000000020',
-    agentRegistry: '0x40ca9b043220ecc26b0b280fe6a02861eadc2448',
+    agentRegistry: '0xD91F9aBfBf60b4a2Fd5317ab0cDF3F44faB5D656',
     identityRegistry: '0xce9749c768b425fab0daa0331047d1340ec99a88', // unchanged (no kernel ref)
-    archiveTreasury: '0x6acb954550b6a5135da9df5ac224cff33d697351',
-    x402Relay: '0x110b25bb3d45c40dfcf34bb451aa7069b2a1cb3b',
+    archiveTreasury: '0x2eE4f7bE289fc9EFC2F9f2D6E53e50abDF23A3eb',
+    x402Relay: '0x110b25bb3d45c40dfcf34bb451aa7069b2a1cb3b', // deprecated; not redeployed
     erc8004IdentityRegistry: '0x8004A818BFB912233c491871b3d84c89A494BD9e',
   },
   eas: {
@@ -154,7 +155,7 @@ export const BASE_SEPOLIA: NetworkConfig = {
     maxFeePerGas: ethers.parseUnits('2', 'gwei'),
     maxPriorityFeePerGas: ethers.parseUnits('1', 'gwei')
   },
-  actpKernelDeploymentBlock: 40239703, // 2026-04-15 redeploy
+  actpKernelDeploymentBlock: 41725686, // 2026-05-19 V4 redeploy
   // AIP-12: Account Abstraction
   aa: {
     entryPoint: '0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789',
@@ -179,14 +180,13 @@ export const BASE_MAINNET: NetworkConfig = {
   rpcUrl: BASE_MAINNET_RPC_URL,
   blockExplorer: 'https://basescan.org',
   contracts: {
-    actpKernel: '0x132B9eB321dBB57c828B083844287171BDC92d29',
-    escrowVault: '0x6aAF45882c4b0dD34130ecC790bb5Ec6be7fFb99',
+    actpKernel: '0x048c811352e8a3fECd5b0Ec4AA2c2b94083CC842',
+    escrowVault: '0x262D5912A9612F0c66dA5d13B4E678D50ebC44b5',
     usdc: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
     eas: '0x4200000000000000000000000000000000000021',
     easSchemaRegistry: '0x4200000000000000000000000000000000000020',
-    agentRegistry: '0x6fB222CF3DDdf37Bcb248EE7BBBA42Fb41901de8',
-    archiveTreasury: '0x0516C411C0E8d75D17A768022819a0a4FB3cA2f2',
-    x402Relay: '0x81DFb954A3D58FEc24Fc9c946aC2C71a911609F8',
+    agentRegistry: '0x64Cb18bfb3CC1aCb1370a3B01613391D3561a009',
+    archiveTreasury: '0x6159A80Ce8362aBB2307FbaB4Ed4D3F4A4231Acc',
     erc8004IdentityRegistry: '0x8004A169FB4a3325136EB29fA0ceB6D2e539a432',
   },
   eas: {
@@ -200,7 +200,7 @@ export const BASE_MAINNET: NetworkConfig = {
    * SECURITY: $1,000 max transaction limit for production safety.
    */
   maxTransactionAmount: 1000,
-  actpKernelDeploymentBlock: 41935749,
+  actpKernelDeploymentBlock: 46212266,
   // AIP-12: Account Abstraction
   aa: {
     entryPoint: '0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789',
