@@ -247,7 +247,24 @@ export class StandardAdapter extends BaseAdapter implements IAdapter {
    * ```
    */
   async linkEscrow(txId: string): Promise<string> {
-    const tx = await this.runtime.getTransaction(txId);
+    // Retry-with-backoff for RPC propagation lag.
+    //
+    // Callers commonly invoke linkEscrow immediately after createTransaction.
+    // The createTransaction UserOp has already been included in a block and
+    // its receipt yielded the txId, but a load-balanced public RPC (e.g.
+    // PublicNode) may route this follow-up `getTransaction` to a node that
+    // hasn't yet ingested the inclusion block. Without a retry the call
+    // surfaces a misleading "Transaction not found" — the tx exists, the
+    // RPC just hasn't seen it yet. Three attempts at 500ms / 1s / 2s
+    // cover the typical propagation window without changing semantics for
+    // genuinely-missing txs (still throws after the last attempt).
+    let tx: import('../runtime/types/MockState').MockTransaction | null = null;
+    const backoffMs = [0, 500, 1000, 2000];
+    for (const wait of backoffMs) {
+      if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+      tx = await this.runtime.getTransaction(txId);
+      if (tx) break;
+    }
 
     if (!tx) {
       throw new Error(`Transaction ${txId} not found`);

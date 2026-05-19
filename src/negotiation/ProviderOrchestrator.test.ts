@@ -9,7 +9,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { Wallet, HDNodeWallet } from 'ethers';
+import { Wallet, HDNodeWallet, keccak256, toUtf8Bytes } from 'ethers';
 import { MockRuntime } from '../runtime/MockRuntime';
 import { MockStateManager } from '../runtime/MockStateManager';
 import { ProviderOrchestrator } from './ProviderOrchestrator';
@@ -77,7 +77,11 @@ describe('ProviderOrchestrator — channel-driven (3.5.0)', () => {
       requester: buyerWallet.address,
       amount,
       deadline: Math.floor(Date.now() / 1000) + 3600,
-      serviceDescription: JSON.stringify({ service: 'code-review' }),
+      // PRD §5.6: on-chain serviceDescription is the bytes32 routing key.
+      // ProviderOrchestrator receives `serviceType` separately on the
+      // IncomingRequest below, so routing here is driven by that field —
+      // but the on-chain shape should still match production.
+      serviceDescription: keccak256(toUtf8Bytes('code-review')),
     });
     return {
       txId,

@@ -221,6 +221,23 @@ function createTxListCommand(): Command {
         const client = await createClient();
         let transactions: MockTransaction[] = await client.advanced.getAllTransactions();
 
+        // PRD §5.10.1 graceful degradation: BlockchainRuntime.getAllTransactions()
+        // is a documented no-op that returns [] — there is no on-chain
+        // "all transactions in the universe" view, only per-address sweeps.
+        // Until the indexer-backed path lands, emit a clear hint so users
+        // running `actp tx list` on a real chain don't think their state
+        // is empty when it's just unreachable from this command.
+        const isRealChainEmptyList =
+          transactions.length === 0 &&
+          'getNetworkConfig' in client.advanced; // BlockchainRuntime exposes this; MockRuntime does not.
+        if (isRealChainEmptyList) {
+          output.warning(
+            'actp tx list is not yet supported on testnet/mainnet — the on-chain ' +
+            'view is per-address, not global. For known txIds use `actp tx status <txId>`; ' +
+            'for live monitoring use `actp watch`. A full event-indexed list will land in a follow-up.'
+          );
+        }
+
         // Filter by state if specified
         if (options.state) {
           const stateFilter = options.state.toUpperCase();

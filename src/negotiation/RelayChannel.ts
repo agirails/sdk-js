@@ -22,6 +22,7 @@
 import { QuoteBuilder } from '../builders/QuoteBuilder';
 import { CounterOfferBuilder } from '../builders/CounterOfferBuilder';
 import { CounterAcceptBuilder } from '../builders/CounterAcceptBuilder';
+import { assertSafePeerUrl } from '../transport/QuoteChannel';
 import {
   NegotiationChannel,
   NegotiationMessage,
@@ -51,6 +52,13 @@ export interface RelayChannelConfig {
   fetchImpl?: typeof fetch;
   /** Logger. Default: noop. */
   log?: (level: 'info' | 'warn' | 'error', msg: string, ctx?: unknown) => void;
+  /**
+   * Permit http:// + loopback / RFC1918 / link-local baseUrl. Off by
+   * default so a misconfigured downstream agent can't be steered to
+   * leak negotiation traffic to a metadata-service or internal-network
+   * host. Set true only in local dev / tests.
+   */
+  allowInsecureTargets?: boolean;
 }
 
 const DEFAULT_BASE_URL = 'https://agirails.app';
@@ -85,6 +93,13 @@ export class RelayChannel implements NegotiationChannel {
 
   constructor(cfg: RelayChannelConfig) {
     this.baseUrl = (cfg.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, '');
+    // Apex audit FIND-011: gate the consumer-supplied baseUrl through
+    // the same SSRF guard used for peer URLs elsewhere in the SDK so a
+    // misconfigured agent (baseUrl from env / discovery / config file)
+    // can't be steered at metadata services (169.254.169.254), RFC1918
+    // hosts, or loopback. The guard rejects IPv4-mapped IPv6 in both
+    // dotted-quad and hex-pair shapes; see src/transport/QuoteChannel.ts.
+    assertSafePeerUrl(this.baseUrl, cfg.allowInsecureTargets ?? false);
     this.kernelAddressByChainId = cfg.kernelAddressByChainId;
     this.pollIntervalMs = cfg.pollIntervalMs ?? DEFAULT_POLL_MS;
     this.fetchImpl = cfg.fetchImpl ?? fetch;

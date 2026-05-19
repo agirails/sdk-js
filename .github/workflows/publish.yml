@@ -1,0 +1,97 @@
+name: Publish to npm
+
+# Apex audit FIND-007 — tag-driven publish pipeline with npm provenance.
+# Fires only on annotated git tags matching v*.*.* (including pre-release
+# tags like v4.0.0-beta.10). The published tarball is signed by sigstore
+# via npm's trusted-publishing OIDC flow, so the npm registry can prove
+# the build came from this repo + this commit. Closes the forensic gap
+# noted in the Apex 2026-05-17 refresh: prior 4.0.0-beta.0..9 publishes
+# had no provenance attestation.
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+      - 'v*.*.*-*'  # pre-release tags (alpha/beta/rc)
+
+# Least-privilege default. The publish job widens to `id-token: write`
+# for OIDC; nothing else needs to write.
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write  # required for npm provenance via OIDC
+    steps:
+      # Pin all third-party actions by full-length commit SHA, not `@vN`,
+      # per the Apex audit recommendation (tj-actions/changed-files class
+      # of compromise — CVE-2025-30066).
+      - name: Checkout
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11  # v4.1.1
+        with:
+          fetch-depth: 0  # we want the full history so the tag points at a real commit
+
+      - name: Setup Node 20 with npm cache
+        uses: actions/setup-node@60edb5dd545a775178f52524783378180af0d1f8  # v4.0.2
+        with:
+          node-version: 20
+          cache: 'npm'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Verify tag matches package.json version
+        # The tag drives the workflow but we double-check it agrees with
+        # the in-tree version so an accidentally-mistagged commit fails
+        # loudly before reaching the publish step.
+        run: |
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME (=> $TAG_VERSION) does not match package.json version $PKG_VERSION"
+            exit 1
+          fi
+          echo "Tag and package.json agree on version $PKG_VERSION"
+
+      - name: Install dependencies (lockfile-pinned)
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Test
+        run: npm test
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Determine dist-tag from version
+        # Pre-release versions (containing `-`) go to a channel matching the
+        # pre-release suffix ('next' for beta.X, 'alpha' for alpha.X, etc.).
+        # Stable versions go to 'latest'. Avoids accidentally clobbering
+        # @latest with a beta.
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if echo "$VERSION" | grep -q '-beta'; then
+            echo "DIST_TAG=next" >> "$GITHUB_ENV"
+          elif echo "$VERSION" | grep -q '-alpha'; then
+            echo "DIST_TAG=alpha" >> "$GITHUB_ENV"
+          elif echo "$VERSION" | grep -q '-rc'; then
+            echo "DIST_TAG=rc" >> "$GITHUB_ENV"
+          elif echo "$VERSION" | grep -q '-'; then
+            # Any other pre-release suffix → next (conservative default)
+            echo "DIST_TAG=next" >> "$GITHUB_ENV"
+          else
+            echo "DIST_TAG=latest" >> "$GITHUB_ENV"
+          fi
+
+      - name: Publish to npm with provenance
+        # `--provenance` triggers npm's OIDC handshake with sigstore and
+        # attaches a publish attestation to the tarball. Requires
+        # `id-token: write` on this job and that the package is allowed
+        # to publish from this repo (npm-side admin setting on the
+        # @agirails org).
+        run: npm publish --tag "$DIST_TAG" --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

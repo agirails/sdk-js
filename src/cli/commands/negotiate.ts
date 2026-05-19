@@ -123,6 +123,11 @@ async function runNegotiate(
     policy,
     client.runtime,
     client.getAddress(),
+    undefined,
+    {},
+    // Pass the ACTPClient so on-chain writes route via StandardAdapter
+    // (Paymaster-sponsored UserOps when AutoWallet is active).
+    client,
   );
 
   // Progress callback for human mode

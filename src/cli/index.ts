@@ -40,6 +40,7 @@ function getVersion(): string {
 // Import commands
 import { createInitCommand } from './commands/init';
 import { createPayCommand } from './commands/pay';
+import { createRequestCommand } from './commands/request';
 import { createTxCommand } from './commands/tx';
 import { createBalanceCommand } from './commands/balance';
 import { createMintCommand } from './commands/mint';
@@ -99,6 +100,7 @@ program
 // Core commands (most used)
 program.addCommand(createInitCommand());
 program.addCommand(createPayCommand());
+program.addCommand(createRequestCommand());
 program.addCommand(createTxCommand());
 program.addCommand(createBalanceCommand());
 program.addCommand(createMintCommand());
@@ -148,8 +150,11 @@ program.addCommand(createRepairCommand());
 // AIP-2.1 provider daemon — channel-driven, no HTTP listener (3.5.0)
 program.addCommand(createAgentCommand());
 
-// Legacy AIP-2.1 HTTP-listener daemon (3.4.x). Deprecated; new
-// deployments should use `actp agent`. Will be removed in 3.6.0.
+// AIP-2.1 quote-channel HTTP daemon. Since 4.0.0, `actp serve` focuses
+// solely on the AIP-2.1 quote channel surface — on-chain INITIATED tx
+// detection is handled by `actp agent` (or `new Agent()` programmatically).
+// Running `actp serve` alongside `actp agent` is the canonical split.
+// See `src/cli/commands/serve.ts` header for scope; PRD §5.10.
 program.addCommand(createServeCommand());
 
 // ============================================================================

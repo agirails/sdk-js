@@ -5,6 +5,13 @@ module.exports = {
   roots: ['<rootDir>/src', '<rootDir>/tests'],
   testMatch: ['**/*.test.ts'],
   moduleFileExtensions: ['ts', 'js', 'json'],
+  // PRD §8.2 anvil-fork e2e tests live under src/__e2e__/blockchain-runtime/.
+  // They spin up real anvil processes against a forked Base Sepolia state
+  // and only run when the dedicated `test:fork-e2e` script is invoked
+  // (with BASE_SEPOLIA_RPC + CI_TEST_KEYSTORE_BASE64 env vars set).
+  // Default `npm test` skips them so contributors without foundry installed
+  // see green.
+  testPathIgnorePatterns: ['/node_modules/', 'src/__e2e__/blockchain-runtime/'],
   // Preserve cwd across test suites to prevent uv_cwd errors
   setupFilesAfterEnv: ['<rootDir>/jest.setup.js'],
   collectCoverageFrom: [

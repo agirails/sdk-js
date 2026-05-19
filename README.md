@@ -516,6 +516,30 @@ This TypeScript SDK maintains **full parity** with the Python SDK:
 - **EAS Integration**: Ethereum Attestation Service for delivery proofs
 - **ERC-8004 Reputation**: On-chain settlement/dispute feedback after ACTP transactions
 - **Input Validation**: All user inputs validated before processing
+- **SSRF Guard on Negotiation Channels**: Both `QuoteChannel` and `RelayChannel` route consumer-supplied base URLs through `assertSafePeerUrl`, rejecting loopback, RFC1918, link-local (incl. cloud metadata `169.254.169.254`), and IPv4-mapped IPv6 bypass shapes by default. Opt-in dev escape: `allowInsecureTargets: true`.
+
+### Runtime secret handling
+
+How the SDK treats wallet keys and other sensitive material:
+
+**What the SDK reads:**
+- `ACTP_KEYSTORE_BASE64` + `ACTP_KEY_PASSWORD` — encrypted keystore (preferred for CI / deploy targets). The base64 blob and the password should live in **separate secret scopes** (different vaults, env groups, or teams) so neither alone is sufficient.
+- `ACTP_PRIVATE_KEY` — raw hex private key. **Testnet only**; the SDK refuses this path on `mainnet` mode and routes you to the keystore pattern instead.
+- `.actp/keystore.json` + `ACTP_KEY_PASSWORD` — the on-disk file the keystore env vars are derived from.
+- `AGIRAILS_PUBLISH_KEY` — *public* client identifier for the publish proxy (same threat model as a Firebase / Stripe publishable key; safe to embed, no privileged scope).
+
+**What the SDK never reads:**
+- CLI inline flags for keys, mnemonics, signed payloads, or tokens. No `--key`, `--mnemonic`, `--secret`, or `--token` flag exists on any `actp` subcommand. This avoids the `ps` / shell history / CI-log leakage class (CWE-532, CWE-312).
+
+**What the SDK logs:**
+- The cached *address* derived from the resolved key (for diagnostic confirmation). Never the key, mnemonic, or password.
+- Bundler / paymaster RPC errors verbatim, which can include the smart-wallet address but not the signer key.
+
+**What `actp init` does for downstream consumers:**
+- Adds `.actp/`, `.env`, and `.env.*` to `.gitignore` so a forgetful operator can't accidentally commit a populated `.env`.
+- Writes a starter `.env.example` documenting the keystore + RPC schema with **placeholder values only**.
+
+If a CI / deployment context needs sensitive material, prefer file-based delivery (mounted secrets, encrypted-at-rest stores) over env vars where the platform supports it, and never echo command lines through `set -x` while ACTP env vars are populated.
 
 ### Transaction Confirmations
 

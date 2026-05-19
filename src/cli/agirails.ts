@@ -1,7 +1,10 @@
 /**
  * npx agirails — One Command Entry Point
  *
- * 60-second quickstart: ask 3 questions → generate {slug}.md → mock earning loop → receipt.
+ * 60-second quickstart: ask 3 questions → generate {slug}.md → real Sentinel
+ * onboarding request on Base Sepolia → reflection. PRD-event-driven-provider-
+ * listening §5.7 replaced the prior MockRuntime earning-loop simulation with
+ * a live Level 1 request against the deployed Sentinel agent.
  * Re-entrant: if identity already exists, skips onboarding and runs test.
  *
  * @module cli/agirails
@@ -172,7 +175,11 @@ async function main(): Promise<void> {
         output.success('Updated .actp/config.json with identity pointer');
       }
 
-      // Run mock earning loop
+      // Run a real Sentinel onboarding request on Base Sepolia. Requires a
+      // wallet at ~/.actp/wallets/base-sepolia (or ACTP_KEYSTORE_BASE64) and
+      // small testnet ETH + USDC. The PRD §5.7 rewrite intentionally
+      // dropped the pre-4.0.0 MockRuntime simulation — "mock success" was a
+      // lie and onboarding deserves the real loop.
       output.print('');
       await runTest(output);
 
@@ -189,8 +196,38 @@ async function main(): Promise<void> {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     output.error(message);
+    // Surface the 4.0.0 setup expectation that runTest() now imposes. The
+    // common first-run failure modes — no keystore, no testnet ETH, no
+    // sentinel address — all flow through here, and a bare error message
+    // gives a new developer nothing to act on. The hint is conditional on
+    // the error shape so non-runtime errors (e.g. file-write failures
+    // earlier in onboarding) don't get the wrong remediation glued on.
+    if (looksLikeRunTestSetupError(message)) {
+      output.print('');
+      output.print(
+        'agirails now runs a real onboarding request against Sentinel on Base Sepolia.\n' +
+        'First-run setup:\n' +
+        "  1. `actp init` to generate a wallet (or set ACTP_KEYSTORE_BASE64).\n" +
+        "  2. Fund the wallet with a small amount of Base Sepolia ETH (gas) + test USDC.\n" +
+        "  3. Rerun `npx agirails`.\n" +
+        'Override Sentinel\'s address with ACTP_SENTINEL_ADDRESS=0x... if needed.'
+      );
+    }
     process.exit(ExitCode.ERROR);
   }
+}
+
+/** Heuristic — match the four most common runRequest / resolveAgent first-run
+ *  failure-message shapes so the setup hint only fires when actionable. */
+function looksLikeRunTestSetupError(message: string): boolean {
+  return (
+    /no wallet found/i.test(message) ||
+    /resolvePrivateKey/i.test(message) ||
+    /Agent ['"]?sentinel['"]?/i.test(message) ||
+    /ACTP_SENTINEL_ADDRESS/i.test(message) ||
+    /insufficient funds/i.test(message) ||
+    /BASE_SEPOLIA_RPC/i.test(message)
+  );
 }
 
 // ============================================================================

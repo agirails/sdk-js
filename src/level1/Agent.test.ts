@@ -19,6 +19,7 @@ import * as os from 'os';
 import { Agent, AgentConfig } from './Agent';
 import { Job, JobHandler } from './types/Job';
 import { ServiceConfigError, AgentLifecycleError } from '../errors';
+import { ZeroHash, keccak256, toUtf8Bytes } from 'ethers';
 
 describe('Agent', () => {
   // State directory must be inside ~/.agirails due to security validation
@@ -256,6 +257,424 @@ describe('Agent', () => {
   });
 
   // ============================================================================
+  // Hash Routing (PRD §5.4)
+  // ============================================================================
+
+  describe('findServiceHandler — hash routing (PRD §5.4)', () => {
+    let agent: Agent;
+    let translate: JobHandler;
+    let echo: JobHandler;
+
+    beforeEach(() => {
+      agent = new Agent({ name: 'RouterAgent' });
+      translate = async (job) => job.input;
+      echo = async (job) => job.input;
+      agent.provide('translate', translate);
+      agent.provide('echo', echo);
+    });
+
+    it('routes on-chain TX by matching serviceHash to a registered handler', () => {
+      const tx = {
+        serviceHash: keccak256(toUtf8Bytes('translate')),
+        serviceDescription: '', // BlockchainRuntime-sourced — no string
+      };
+
+      const result = (agent as any).findServiceHandler(tx);
+
+      expect(result).toBeDefined();
+      expect(result.config.name).toBe('translate');
+      expect(result.handler).toBe(translate);
+    });
+
+    it('matches hash case-insensitively (uppercase serviceHash still routes)', () => {
+      const tx = {
+        serviceHash: keccak256(toUtf8Bytes('echo')).toUpperCase().replace('0X', '0x'),
+        serviceDescription: '',
+      };
+
+      const result = (agent as any).findServiceHandler(tx);
+      expect(result.config.name).toBe('echo');
+    });
+
+    it('skips hash branch for ZeroHash (Level 0 pay semantics)', () => {
+      // ZeroHash means a `pay` call — no INITIATED job, no handler dispatch.
+      // With an empty serviceDescription the string fallback also misses.
+      const tx = {
+        serviceHash: ZeroHash,
+        serviceDescription: '',
+      };
+
+      const result = (agent as any).findServiceHandler(tx);
+      expect(result).toBeUndefined();
+    });
+
+    it('returns undefined when no handler is registered for the hash', () => {
+      const tx = {
+        serviceHash: keccak256(toUtf8Bytes('unregistered-service')),
+        serviceDescription: '',
+      };
+
+      const result = (agent as any).findServiceHandler(tx);
+      expect(result).toBeUndefined();
+    });
+
+    it('falls back to string dispatch when hash is missing (MockRuntime test fixtures)', () => {
+      // Mock-style transactions may carry serviceDescription only.
+      const tx = {
+        serviceDescription: 'translate',
+      };
+
+      const result = (agent as any).findServiceHandler(tx);
+      expect(result).toBeDefined();
+      expect(result.config.name).toBe('translate');
+    });
+
+    it('falls back to string dispatch when hash misses but description matches', () => {
+      // Cross-runtime safety: an unknown hash should not block a legitimate
+      // string-based match for legacy/mock fixtures.
+      const tx = {
+        serviceHash: keccak256(toUtf8Bytes('nonexistent')),
+        serviceDescription: 'echo',
+      };
+
+      const result = (agent as any).findServiceHandler(tx);
+      expect(result?.config.name).toBe('echo');
+    });
+
+    it('keeps hash map and string map in sync on provide()', () => {
+      // Internal consistency: every name we register must also be reachable by hash.
+      const expectedHash = keccak256(toUtf8Bytes('translate')).toLowerCase();
+      expect((agent as any).handlersByHash.has(expectedHash)).toBe(true);
+      expect((agent as any).services.has('translate')).toBe(true);
+    });
+  });
+
+  // ============================================================================
+  // Job construction with hash routing (PRD §5.4.1)
+  // ============================================================================
+
+  describe('createJobFromTransaction — hash routing carries service name (PRD §5.4.1)', () => {
+    let agent: Agent;
+
+    beforeEach(() => {
+      agent = new Agent({ name: 'JobShapeAgent' });
+      agent.provide('onboarding', async (job) => job.input);
+    });
+
+    it("uses matched handler's config.name when tx.serviceDescription is empty (hash-only TX)", () => {
+      // BlockchainRuntime-sourced TX: only the bytes32 routing key is present.
+      // Without the §5.4.1 fix, extractServiceName(tx) would return 'unknown'.
+      const tx = {
+        id: '0xtx',
+        amount: '50000',
+        deadline: Math.floor(Date.now() / 1000) + 3600,
+        requester: '0x' + 'a'.repeat(40),
+        serviceHash: keccak256(toUtf8Bytes('onboarding')),
+        serviceDescription: '',
+      };
+      const matched = (agent as any).findServiceHandler(tx);
+      const job = (agent as any).createJobFromTransaction(tx, matched);
+
+      expect(job.service).toBe('onboarding');
+    });
+
+    it("uses matched handler's name even when tx.serviceDescription is a bytes32 hash", () => {
+      // MockRuntime passthrough mode: createTransaction stores the bytes32
+      // hash in serviceDescription as well. extractServiceName(tx) would
+      // hit the bytes32-detect branch and return 'unknown'. The matched
+      // handler must override.
+      const hash = keccak256(toUtf8Bytes('onboarding'));
+      const tx = {
+        id: '0xtx',
+        amount: '50000',
+        deadline: Math.floor(Date.now() / 1000) + 3600,
+        requester: '0x' + 'a'.repeat(40),
+        serviceHash: hash,
+        serviceDescription: hash,
+      };
+      const matched = (agent as any).findServiceHandler(tx);
+      const job = (agent as any).createJobFromTransaction(tx, matched);
+
+      expect(job.service).toBe('onboarding');
+    });
+
+    it('falls back to extractServiceName when caller omits matched (back-compat)', () => {
+      // No matched supplied → legacy behavior. Plain-string description that
+      // matches a registered name still resolves correctly through
+      // extractServiceName.
+      const tx = {
+        id: '0xtx',
+        amount: '50000',
+        deadline: Math.floor(Date.now() / 1000) + 3600,
+        requester: '0x' + 'a'.repeat(40),
+        serviceHash: ZeroHash,
+        serviceDescription: 'onboarding',
+      };
+      const job = (agent as any).createJobFromTransaction(tx);
+      expect(job.service).toBe('onboarding');
+    });
+
+    // PRD §5.3 — Agent lifecycle: subscription wiring, idempotent start,
+    // pause/resume teardown, try/finally on processingLocks, case-insensitive
+    // provider check. These tests live alongside the hash-routing block since
+    // §5.3 + §5.4 jointly produce the end-to-end provider flow.
+    describe('handleIncomingTransaction pipeline (PRD §5.3)', () => {
+      let pipelineAgent: Agent;
+
+      beforeEach(() => {
+        pipelineAgent = new Agent({ name: 'PipelineAgent' });
+        pipelineAgent.provide('onboarding', async (job) => job.input);
+        // Stub address — the per-tx provider check below compares against it.
+        Object.defineProperty(pipelineAgent, 'address', {
+          get: () => '0xAbCdEf0000000000000000000000000000000001',
+          configurable: true,
+        });
+        // PRD §5.3.1: pipeline now refuses work unless agent is running.
+        // Tests bypass start() to keep the unit scope tight.
+        (pipelineAgent as any)._status = 'running';
+      });
+
+      const baseTx = () => ({
+        id: '0xtx',
+        provider: '0xAbCdEf0000000000000000000000000000000001',
+        requester: '0x' + 'a'.repeat(40),
+        amount: '1000000',
+        state: 'INITIATED' as const,
+        deadline: Math.floor(Date.now() / 1000) + 3600,
+        disputeWindow: 172800,
+        completedAt: 0,
+        escrowId: '',
+        serviceHash: keccak256(toUtf8Bytes('onboarding')),
+        serviceDescription: '',
+        deliveryProof: '',
+        events: [],
+      });
+
+      // Stub the minimum client surface the async processJob() reaches into.
+      // Post-4.0.0-beta.2 Agent routes write operations through
+      // `client.standard.*` so AA-enabled providers go via Paymaster;
+      // the stub provides both `standard` (the route Agent now takes)
+      // and `runtime` (used by some pre-existing helpers and by
+      // StandardAdapter's fallback path) so tests cover both shapes.
+      // linkEscrow signature is StandardAdapter's `(txId)` form — the
+      // adapter reads tx.amount from runtime internally.
+      const stubRuntime = (
+        linkEscrow: jest.Mock = jest.fn().mockResolvedValue(undefined),
+        transitionState: jest.Mock = jest.fn().mockResolvedValue(undefined),
+      ) => {
+        (pipelineAgent as any)._client = {
+          standard: { linkEscrow, transitionState },
+          runtime: { linkEscrow, transitionState },
+        };
+        return { linkEscrow, transitionState };
+      };
+
+      it('releases processingLocks after successful acceptance', async () => {
+        stubRuntime();
+        await (pipelineAgent as any).handleIncomingTransaction(baseTx());
+        expect((pipelineAgent as any).processingLocks.has('0xtx')).toBe(false);
+      });
+
+      it('releases processingLocks when handler resolution fails', async () => {
+        // No `agent.provide('translate', ...)` — handler lookup misses.
+        const tx = { ...baseTx(), serviceHash: keccak256(toUtf8Bytes('translate')) };
+        await (pipelineAgent as any).handleIncomingTransaction(tx);
+        expect((pipelineAgent as any).processingLocks.has(tx.id)).toBe(false);
+      });
+
+      it('releases processingLocks when linkEscrow throws (poison TX recovery)', async () => {
+        stubRuntime(jest.fn().mockRejectedValue(new Error('revert')));
+        await (pipelineAgent as any).handleIncomingTransaction(baseTx());
+        expect((pipelineAgent as any).processingLocks.has('0xtx')).toBe(false);
+      });
+
+      it('matches provider case-insensitively (§5.3 carry-forward)', async () => {
+        // TX provider stored as uppercase; agent.address is mixed case.
+        // Without case-insensitive comparison, the unauthorized-tx branch
+        // would fire and reject the legitimate job.
+        const tx = { ...baseTx(), provider: '0xABCDEF0000000000000000000000000000000001' };
+        const { linkEscrow } = stubRuntime();
+
+        const received = jest.fn();
+        pipelineAgent.on('job:received', received);
+
+        await (pipelineAgent as any).handleIncomingTransaction(tx);
+
+        expect(received).toHaveBeenCalledTimes(1);
+        expect(linkEscrow).toHaveBeenCalledWith(tx.id);
+      });
+
+      it('does not double-process when called twice with the same tx', async () => {
+        const { linkEscrow } = stubRuntime();
+
+        await (pipelineAgent as any).handleIncomingTransaction(baseTx());
+        await (pipelineAgent as any).handleIncomingTransaction(baseTx());
+
+        // Second call is short-circuited by processedJobs / activeJobs check.
+        expect(linkEscrow).toHaveBeenCalledTimes(1);
+      });
+
+      // PRD §5.3.1: status guard.
+      it('drops the tx when agent is paused', async () => {
+        const { linkEscrow } = stubRuntime();
+        (pipelineAgent as any)._status = 'paused';
+
+        const received = jest.fn();
+        pipelineAgent.on('job:received', received);
+
+        await (pipelineAgent as any).handleIncomingTransaction(baseTx());
+
+        expect(received).not.toHaveBeenCalled();
+        expect(linkEscrow).not.toHaveBeenCalled();
+      });
+
+      it.each(['stopping', 'stopped', 'idle'] as const)(
+        'drops the tx when agent status is %s',
+        async (status) => {
+          const { linkEscrow } = stubRuntime();
+          (pipelineAgent as any)._status = status;
+
+          await (pipelineAgent as any).handleIncomingTransaction(baseTx());
+
+          expect(linkEscrow).not.toHaveBeenCalled();
+        }
+      );
+
+      it("allows tx through during 'starting' status (subscribe-before-status race)", async () => {
+        // start() wires the subscription before flipping _status to 'running'.
+        // A fast on-chain event during that window must still be accepted.
+        const { linkEscrow } = stubRuntime();
+        (pipelineAgent as any)._status = 'starting';
+
+        await (pipelineAgent as any).handleIncomingTransaction(baseTx());
+
+        expect(linkEscrow).toHaveBeenCalledTimes(1);
+      });
+    });
+
+    // PRD §5.3 — subscription lifecycle on BlockchainRuntime-like runtimes.
+    describe('subscribeIfBlockchain wiring (PRD §5.3)', () => {
+      let agentSub: Agent;
+      let cleanup: jest.Mock;
+      let subscribeSpy: jest.Mock;
+
+      beforeEach(() => {
+        agentSub = new Agent({ name: 'SubAgent' });
+        cleanup = jest.fn();
+        subscribeSpy = jest.fn().mockReturnValue(cleanup);
+        // Inject a runtime that looks like BlockchainRuntime (has
+        // subscribeProviderJobs). MockRuntime deliberately doesn't, so the
+        // subscription path is gated on this duck-type check.
+        (agentSub as any)._client = {
+          runtime: { subscribeProviderJobs: subscribeSpy },
+        };
+        Object.defineProperty(agentSub, 'address', {
+          get: () => '0x' + '1'.repeat(40),
+          configurable: true,
+        });
+      });
+
+      it('wires subscription and stores cleanup callback', () => {
+        (agentSub as any).subscribeIfBlockchain();
+        expect(subscribeSpy).toHaveBeenCalledWith(
+          '0x' + '1'.repeat(40),
+          expect.any(Function)
+        );
+        expect((agentSub as any).jobSubscriptionCleanup).toBe(cleanup);
+      });
+
+      it('refuses to double-subscribe when one is already active', () => {
+        (agentSub as any).subscribeIfBlockchain();
+        (agentSub as any).subscribeIfBlockchain();
+        expect(subscribeSpy).toHaveBeenCalledTimes(1);
+      });
+
+      it('unsubscribe() invokes and clears the cleanup callback', () => {
+        (agentSub as any).subscribeIfBlockchain();
+        (agentSub as any).unsubscribe();
+        expect(cleanup).toHaveBeenCalledTimes(1);
+        expect((agentSub as any).jobSubscriptionCleanup).toBeUndefined();
+      });
+
+      it('unsubscribe() is idempotent (safe to call when no subscription)', () => {
+        // No prior subscribe — must not throw.
+        expect(() => (agentSub as any).unsubscribe()).not.toThrow();
+        expect(cleanup).not.toHaveBeenCalled();
+      });
+
+      it('skips wiring when runtime does not expose subscribeProviderJobs (MockRuntime)', () => {
+        (agentSub as any)._client = { runtime: {} };
+        (agentSub as any).subscribeIfBlockchain();
+        expect((agentSub as any).jobSubscriptionCleanup).toBeUndefined();
+      });
+    });
+
+    // PRD §5.3.1: resume() must clean up a half-armed lifecycle if
+    // subscribeIfBlockchain throws after startPolling already armed the timer.
+    describe('resume partial-failure cleanup (PRD §5.3.1)', () => {
+      it('rolls back polling when subscribeIfBlockchain throws and surfaces the error', () => {
+        const agentRes = new Agent({ name: 'ResumeAgent' });
+        // Inject a runtime whose subscribeProviderJobs throws synchronously.
+        const failingSubscribe = jest.fn(() => {
+          throw new Error('subscription transport failed');
+        });
+        (agentRes as any)._client = {
+          runtime: { subscribeProviderJobs: failingSubscribe },
+        };
+        Object.defineProperty(agentRes, 'address', {
+          get: () => '0x' + 'a'.repeat(40),
+          configurable: true,
+        });
+        // Pre-flight: pretend the agent was running and got paused (so the
+        // state machine guard at the top of resume() passes).
+        (agentRes as any)._status = 'paused';
+
+        expect(() => agentRes.resume()).toThrow(/subscription transport failed/);
+
+        // Polling timer must be cleared (would survive without the §5.3.1 fix).
+        expect((agentRes as any).pollingIntervalId).toBeUndefined();
+        // Subscription cleanup must also be unset (none was wired anyway, but
+        // unsubscribe() must remain safe to call after the failure).
+        expect((agentRes as any).jobSubscriptionCleanup).toBeUndefined();
+        // Status stays paused — caller can retry resume() once the underlying
+        // transport recovers.
+        expect(agentRes.status).toBe('paused');
+      });
+    });
+
+    it("shouldAutoAccept's autoAccept callback sees the resolved service name", async () => {
+      // Threading proof: shouldAutoAccept's function-form autoAccept must
+      // receive a job whose `service` is the registered name, not 'unknown',
+      // even on hash-only TXs.
+      let seenServiceInCallback: string | undefined;
+      const recordingAgent = new Agent({
+        name: 'CallbackAgent',
+        behavior: {
+          autoAccept: async (job) => {
+            seenServiceInCallback = job.service;
+            return true;
+          },
+        },
+      });
+      recordingAgent.provide('onboarding', async (job) => job.input);
+
+      const tx = {
+        id: '0xtx',
+        amount: '50000',
+        deadline: Math.floor(Date.now() / 1000) + 3600,
+        requester: '0x' + 'a'.repeat(40),
+        serviceHash: keccak256(toUtf8Bytes('onboarding')),
+        serviceDescription: '',
+      };
+      const matched = (recordingAgent as any).findServiceHandler(tx);
+      const decision = await (recordingAgent as any).shouldAutoAccept(tx, matched);
+
+      expect(decision).toBe(true);
+      expect(seenServiceInCallback).toBe('onboarding');
+    });
+  });
+
+  // ============================================================================
   // Properties Tests
   // ============================================================================
 
@@ -399,17 +818,25 @@ describe('Agent', () => {
         expect(agent.client).toBeDefined();
       });
 
-      it('should throw AgentLifecycleError if already running', async () => {
+      it('should be idempotent when already running (PRD §5.3)', async () => {
+        // PRD §5.3 changed start() from throwing AgentLifecycleError to a
+        // logged noop. This is a behavior change from 3.5.3 — see
+        // CHANGELOG / MIGRATION-4.0.
         await agent.start();
+        expect(agent.status).toBe('running');
 
-        await expect(agent.start()).rejects.toThrow(AgentLifecycleError);
+        await expect(agent.start()).resolves.toBeUndefined();
+        expect(agent.status).toBe('running');
       });
 
-      it('should throw AgentLifecycleError if paused', async () => {
+      it('should be idempotent when paused (PRD §5.3)', async () => {
         await agent.start();
         agent.pause();
+        expect(agent.status).toBe('paused');
 
-        await expect(agent.start()).rejects.toThrow(AgentLifecycleError);
+        // start() on a paused agent is a noop — caller must resume() explicitly.
+        await expect(agent.start()).resolves.toBeUndefined();
+        expect(agent.status).toBe('paused');
       });
 
       it('should be able to start after being stopped', async () => {

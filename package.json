@@ -1,6 +1,6 @@
 {
   "name": "@agirails/sdk",
-  "version": "3.5.3",
+  "version": "4.0.0",
   "description": "AGIRAILS SDK for the ACTP (Agent Commerce Transaction Protocol) - Unified mock + blockchain support",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -46,11 +46,16 @@
     "README.md",
     "LICENSE"
   ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "scripts": {
     "build": "tsc",
     "test": "jest --runInBand",
     "test:watch": "jest --watch --runInBand",
     "test:coverage": "jest --coverage --runInBand",
+    "test:fork-e2e": "jest --runInBand --testPathPattern='src/__e2e__/blockchain-runtime/' --testTimeout=60000 --testPathIgnorePatterns=/node_modules/",
     "lint": "eslint src --ext .ts",
     "format": "prettier --write 'src/**/*.ts'",
     "prepublishOnly": "npm run build && npm test && npm run lint",

@@ -500,7 +500,7 @@ describe('ACTPKernel', () => {
           updatedAt: 1700000100n,
           deadline: 1700086400n,
           serviceHash: ethers.ZeroHash,
-          escrowContract: '0x6aAF45882c4b0dD34130ecC790bb5Ec6be7fFb99',
+          escrowContract: '0x262D5912A9612F0c66dA5d13B4E678D50ebC44b5',
           escrowId: TX_ID,
           attestationUID: ethers.ZeroHash,
           disputeWindow: 172800n,
