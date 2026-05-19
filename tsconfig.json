@@ -20,6 +20,7 @@
     "node_modules",
     "dist",
     "**/*.test.ts",
-    "src/__e2e__/**"
+    "src/__e2e__/**",
+    "src/__tests__/**"
   ]
 }
