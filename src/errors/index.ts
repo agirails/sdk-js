@@ -7,6 +7,12 @@ export { ACTPError };
 /**
  * Transaction Errors
  */
+
+/**
+ * @cause USDC balance in your Smart Wallet is below the amount the transaction is trying to lock or transfer.
+ * @fix Fund the wallet at `agent.address` with the required USDC. Check `agent.balance` before high-budget calls.
+ * @recovery user-action
+ */
 export class InsufficientFundsError extends ACTPError {
   constructor(required: bigint, available: bigint) {
     super(
@@ -19,6 +25,11 @@ export class InsufficientFundsError extends ACTPError {
   }
 }
 
+/**
+ * @cause The provided txId does not match any transaction in the kernel, or you are querying on the wrong network.
+ * @fix Verify `network:` matches the chain the transaction was created on. Re-check txId from the original `createTransaction` return value.
+ * @recovery must-investigate
+ */
 export class TransactionNotFoundError extends ACTPError {
   constructor(txId: string) {
     super(`Transaction ${txId} not found`, 'TRANSACTION_NOT_FOUND', undefined, { txId });
@@ -26,6 +37,11 @@ export class TransactionNotFoundError extends ACTPError {
   }
 }
 
+/**
+ * @cause The transaction's deadline (set at createTransaction, default 600s) has passed without delivery.
+ * @fix For new transactions, increase `deadline_seconds`. For an expired one, the requester can transition to CANCELLED. See /recipes/dispute-flow.
+ * @recovery must-investigate
+ */
 export class DeadlineExpiredError extends ACTPError {
   constructor(txId: string, deadline: number) {
     super(
@@ -40,6 +56,12 @@ export class DeadlineExpiredError extends ACTPError {
 
 /**
  * State Machine Errors
+ */
+
+/**
+ * @cause Attempted state transition not allowed by the ACTP state machine from the current state.
+ * @fix Call `getTransaction(txId)` to see the actual state. The error message lists valid transitions. Don't cache transaction state locally; the on-chain state is canonical.
+ * @recovery must-investigate
  */
 export class InvalidStateTransitionError extends ACTPError {
   constructor(from: State, to: State, validTransitions: string[]) {
@@ -57,6 +79,12 @@ export class InvalidStateTransitionError extends ACTPError {
 /**
  * Signature Errors
  */
+
+/**
+ * @cause An EIP-712 signed message (quote, counter-offer, receipt) does not recover to the expected signer address.
+ * @fix Verify the signer's keystore is loaded and that chainId in your EIP-712 domain matches the network. Cross-SDK byte-identical encoding is a CI invariant; if it fails it is almost always a config drift on your side.
+ * @recovery must-investigate
+ */
 export class SignatureVerificationError extends ACTPError {
   constructor(expectedSigner: string, recoveredSigner: string) {
     super(
@@ -72,6 +100,12 @@ export class SignatureVerificationError extends ACTPError {
 /**
  * Blockchain Errors
  */
+
+/**
+ * @cause A kernel call reverted on-chain. Common: state guard violation, address mismatch, or fee param out of bounds.
+ * @fix Read the `reason` field on the error. Use `cast call --trace` or the Basescan tx trace to see the revert reason from the kernel.
+ * @recovery must-investigate
+ */
 export class TransactionRevertedError extends ACTPError {
   constructor(txHash: string, reason?: string) {
     super(
@@ -84,6 +118,11 @@ export class TransactionRevertedError extends ACTPError {
   }
 }
 
+/**
+ * @cause RPC failure, transient connectivity issue, or rate limit on the upstream provider.
+ * @fix Retry with backoff; most NetworkErrors are transient. If persistent, switch RPC endpoint (`ACTP_RPC_URL`). Verify Base network status at status.base.org.
+ * @recovery retry-safe
+ */
 export class NetworkError extends ACTPError {
   constructor(network: string, message: string) {
     super(`Network error on ${network}: ${message}`, 'NETWORK_ERROR', undefined, { network });
@@ -93,6 +132,12 @@ export class NetworkError extends ACTPError {
 
 /**
  * Validation Errors
+ */
+
+/**
+ * @cause Input failed shape validation (invalid address, malformed CID, amount out of bounds, etc.).
+ * @fix Read the error `details` field for the specific failure. Adjust your inputs to match the schema.
+ * @recovery user-action
  */
 export class ValidationError extends ACTPError {
   constructor(field: string, message: string) {
@@ -117,6 +162,12 @@ export class InvalidAmountError extends ValidationError {
 
 /**
  * Storage Errors (AIP-7)
+ */
+
+/**
+ * @cause IPFS/Arweave upload, download, or pin failed. Could be auth, rate limit, or size cap.
+ * @fix For uploads, verify storage credentials and file size. For downloads, the CID may be unreachable; verify pinning status with your provider.
+ * @recovery retry-safe
  */
 export class StorageError extends ACTPError {
   constructor(operation: string, message: string, details?: any) {
@@ -269,6 +320,10 @@ export class SwapExecutionError extends StorageError {
  *   }
  * }
  * ```
+ *
+ * @cause AgentRegistry contains more than MAX_QUERY_AGENTS (1000) agents; on-chain query disabled to prevent DoS.
+ * @fix Migrate to an off-chain indexer: The Graph, Goldsky, or Alchemy Subgraphs. Index `AgentRegistered`, `ServiceTypeUpdated`, and `ActiveStatusUpdated` events.
+ * @recovery user-action
  */
 export class QueryCapExceededError extends ACTPError {
   constructor(registrySize: number, maxQueryAgents: number = 1000) {
@@ -292,9 +347,13 @@ export class QueryCapExceededError extends ACTPError {
  */
 
 /**
- * No provider found for the requested service
+ * No provider found for the requested service.
  *
  * Thrown when request() cannot find any provider offering the service.
+ *
+ * @cause AgentRegistry returned no providers for the requested service, or all returned providers failed the filter.
+ * @fix Verify the service capability tag matches one declared in /reference/agirails-md-v4. Drop the `filter` constraint or widen budget. If you pinned a provider with `provider: '0x…'`, verify the address is registered.
+ * @recovery user-action
  */
 export class NoProviderFoundError extends ACTPError {
   constructor(service: string, details?: any) {
@@ -310,9 +369,13 @@ export class NoProviderFoundError extends ACTPError {
 }
 
 /**
- * Request timeout error
+ * Request timeout error.
  *
  * Thrown when provider doesn't respond within the timeout period.
+ *
+ * @cause Operation exceeded its configured timeout. Most commonly: provider didn't respond, paymaster bundling slow, or RPC sluggish.
+ * @fix Increase `timeout` (seconds in Python, ms in TS). If repeatedly timing out, check provider health or chain network state.
+ * @recovery retry-safe
  */
 export class TimeoutError extends ACTPError {
   constructor(timeoutMs: number, operation?: string) {
@@ -327,9 +390,13 @@ export class TimeoutError extends ACTPError {
 }
 
 /**
- * Provider rejected the job
+ * Provider rejected the job.
  *
  * Thrown when provider explicitly rejects a job (e.g., budget too low).
+ *
+ * @cause Provider refused your job explicitly: typically budget below `min_acceptable_amount` or service filter failed at their end.
+ * @fix Negotiate via AIP-2.1 counter-offer or increase budget. See /recipes/quote-negotiation.
+ * @recovery user-action
  */
 export class ProviderRejectedError extends ACTPError {
   constructor(provider: string, reason?: string, details?: any) {
@@ -344,9 +411,13 @@ export class ProviderRejectedError extends ACTPError {
 }
 
 /**
- * Provider failed to deliver result
+ * Provider failed to deliver result.
  *
- * Thrown when provider transitions to DELIVERED but doesn't provide valid result.
+ * Thrown when provider transitions to DELIVERED but doesn't provide a valid result.
+ *
+ * @cause Provider's handler threw before submitting the deliverable; the SDK transitioned the tx but no payload was attached.
+ * @fix This is a provider-side bug. Requester can transition to DISPUTED. Provider should examine handler logs and ensure the handler returns or throws cleanly.
+ * @recovery must-investigate
  */
 export class DeliveryFailedError extends ACTPError {
   constructor(txId: string, reason?: string) {
@@ -361,9 +432,13 @@ export class DeliveryFailedError extends ACTPError {
 }
 
 /**
- * Dispute raised on transaction
+ * Dispute raised on transaction.
  *
  * Thrown when requester raises a dispute on a delivered result.
+ *
+ * @cause Counterparty raised a dispute on this transaction. Funds remain in escrow pending mediator decision.
+ * @fix Not necessarily a bug; it is a protocol path. See /recipes/dispute-flow for evidence submission and resolution. The disputer has posted bond; respond within the dispute window.
+ * @recovery must-investigate
  */
 export class DisputeRaisedError extends ACTPError {
   constructor(txId: string, reason?: string) {
@@ -378,9 +453,13 @@ export class DisputeRaisedError extends ACTPError {
 }
 
 /**
- * Service configuration error
+ * Service configuration error.
  *
  * Thrown when Agent.provide() is called with invalid service configuration.
+ *
+ * @cause Agent or service config is missing or incorrect. Often: missing network, missing keystore, capability tag not recognized, or pricing fields out of order.
+ * @fix Run `actp deploy:check --strict`. Compare your config to the V4 schema at /reference/agirails-md-v4.
+ * @recovery user-action
  */
 export class ServiceConfigError extends ACTPError {
   constructor(field: string, message: string, details?: any) {
@@ -395,10 +474,14 @@ export class ServiceConfigError extends ACTPError {
 }
 
 /**
- * Agent lifecycle error
+ * Agent lifecycle error.
  *
  * Thrown when invalid agent lifecycle operations are attempted
- * (e.g., calling start() on already running agent).
+ * (e.g., calling start() on an already-running agent).
+ *
+ * @cause `start()`, `stop()`, `pause()`, or `resume()` called in a state where it is not allowed (e.g. stop() on a never-started agent).
+ * @fix Read `agent.status` before lifecycle transitions. Don't call `start()` twice; the SDK does not idempotent it.
+ * @recovery user-action
  */
 export class AgentLifecycleError extends ACTPError {
   constructor(currentState: string, attemptedAction: string) {
