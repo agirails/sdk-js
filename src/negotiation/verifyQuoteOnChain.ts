@@ -1,13 +1,13 @@
 /**
- * verifyQuoteOnChain — cross-reference a received QuoteMessage against
+ * verifyQuoteOnChain: cross-reference a received QuoteMessage against
  * the hash a provider committed on-chain via `transitionState(QUOTED, …)`.
  *
  * AIP-2.1 §3.6 (legacy compatibility). Two matchers, tried in order:
  *
- *   1. `'aip2'`   — canonical EIP-712 hash: keccak256(canonicalJson(
- *                   QuoteMessage minus signature)). This is what
- *                   AIP-2.1-compliant providers emit.
- *   2. `'legacy'` — ad-hoc hash from Agent.ts:1035-1038 (the
+ *   1. `'aip2'`:   canonical EIP-712 hash: keccak256(canonicalJson(
+ *                  QuoteMessage minus signature)). This is what
+ *                  AIP-2.1-compliant providers emit.
+ *   2. `'legacy'`: ad-hoc hash from Agent.ts:1035-1038 (the
  *                   counter-offer pricing path that shipped before the
  *                   formal AIP-2.1 submitQuote runtime method). Hash is:
  *                     keccak256(JSON.stringify({
@@ -23,7 +23,7 @@
  * Both paths return a `{ source, match: true }` tagged result so the
  * orchestrator + telemetry can see how many transactions are still
  * coming through the legacy path. The legacy matcher is
- * observability-tagged technical debt — planned removal in 2 SDK
+ * observability-tagged technical debt; planned removal in 2 SDK
  * minor releases per the AIP-2.1 migration schedule.
  *
  * @module negotiation/verifyQuoteOnChain
@@ -48,7 +48,7 @@ export interface VerifyOnChainResult {
 
 /**
  * Cross-reference an off-chain QuoteMessage against the hash stored on
- * chain in `tx.metadata` (or equivalent — MockTransaction.quoteHash).
+ * chain in `tx.metadata` (or equivalent: MockTransaction.quoteHash).
  *
  * Passing `providerAddress` and `actualEscrow` enables the legacy
  * fallback. Omit them on fresh deployments where legacy is impossible.

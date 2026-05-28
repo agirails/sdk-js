@@ -81,7 +81,7 @@ export const MAX_DEADLINE_DAYS = 3650; // 10 years
 import { ValidationError as ACTPValidationError } from '../errors';
 
 /**
- * Adapter-layer ValidationError — extends ACTPError-based ValidationError
+ * Adapter-layer ValidationError: extends ACTPError-based ValidationError
  * so that `instanceof` checks work against the public SDK export.
  * Accepts a single message string for convenience in adapter code.
  */

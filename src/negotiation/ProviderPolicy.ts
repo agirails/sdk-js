@@ -108,7 +108,7 @@ export interface ProviderPolicyResult {
 }
 
 /**
- * Incoming request surface — the minimum the orchestrator needs to
+ * Incoming request surface: the minimum the orchestrator needs to
  * decide whether + at what price to quote. Extracted from the
  * on-chain transaction plus any off-chain context the caller has
  * (service type, consumer DID).

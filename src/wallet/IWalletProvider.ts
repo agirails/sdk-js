@@ -36,7 +36,7 @@ export interface TransactionReceipt {
 }
 
 /**
- * Wallet tier — determines gas behavior.
+ * Wallet tier: determines gas behavior.
  */
 export type WalletTier = 'auto' | 'eoa';
 

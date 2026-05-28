@@ -91,7 +91,7 @@ export type ProgressEvent =
 // ============================================================================
 
 /**
- * AIP-2.1 negotiation context — wires the orchestrator into the
+ * AIP-2.1 negotiation context: wires the orchestrator into the
  * NegotiationChannel transport. All fields optional: without them the
  * orchestrator runs the legacy fixed-price flow only (no counters).
  *
@@ -99,10 +99,10 @@ export type ProgressEvent =
  *   - signer (signs CounterOfferMessages)
  *   - kernelAddress (EIP-712 domain)
  *   - chainId
- *   - negotiationChannel (transport — RelayChannel default, MockChannel for tests)
+ *   - negotiationChannel (transport: RelayChannel default, MockChannel for tests)
  */
 export interface BuyerNegotiationContext {
-  /** Buyer's EOA signer — signs CounterOfferMessages. */
+  /** Buyer's EOA signer; signs CounterOfferMessages. */
   signer?: Signer;
   /** ACTPKernel address for the chain. Required for counter signing. */
   kernelAddress?: string;

@@ -29,7 +29,7 @@ import { SignatureVerificationError } from '../errors';
 // ============================================================================
 
 /**
- * Counter-offer message — the buyer's reply to a provider quote.
+ * Counter-offer message: the buyer's reply to a provider quote.
  *
  * Field shape mirrors QuoteMessage where it makes sense (txId, currency,
  * decimals, chainId, nonce, signature) but flips provider/consumer
@@ -37,7 +37,7 @@ import { SignatureVerificationError } from '../errors';
  * a (typically lower) price.
  *
  * `quotedAmount` from the original provider quote is preserved as
- * `quoteAmount` for unambiguous binding — the verifier can confirm this
+ * `quoteAmount` for unambiguous binding, so the verifier can confirm this
  * counter is in response to the exact quote it claims to be.
  */
 export interface CounterOfferMessage {

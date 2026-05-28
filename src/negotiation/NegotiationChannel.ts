@@ -44,7 +44,7 @@ export type NegotiationMessage =
   | { type: 'agirails.counteraccept.v1'; message: CounterAcceptMessage };
 
 /**
- * Unsubscribe handle. `unsubscribe()` MUST be idempotent — callers
+ * Unsubscribe handle. `unsubscribe()` MUST be idempotent; callers
  * should call it exactly once but the impl tolerates double-unsubscribe
  * to keep cleanup paths simple.
  */
