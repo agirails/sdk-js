@@ -21,7 +21,7 @@ export type WalletOption =
 export type NetworkOption = 'mock' | 'testnet' | 'mainnet';
 
 /**
- * Options for provide() function (Basic API)
+ * Options for provide() function (Simple tier)
  */
 export interface ProvideOptions {
   /**
@@ -138,7 +138,7 @@ export interface RequestStatus {
 }
 
 /**
- * Options for request() function (Basic API)
+ * Options for request() function (Simple tier)
  */
 export interface RequestOptions {
   /**

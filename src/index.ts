@@ -317,7 +317,7 @@ export {
 export type { ServiceMetadata } from './utils/Helpers';
 
 // =============================================================================
-// Basic API - Simple provide/request interface
+// Simple tier - convenience provide/request interface
 // =============================================================================
 
 export { provide, request, serviceDirectory } from './level0';

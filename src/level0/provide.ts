@@ -1,5 +1,5 @@
 /**
- * provide() - Basic API for service providers
+ * provide() - Simple tier API for service providers
  *
  * The simplest way to provide a service on AGIRAILS.
  * Just write a function, and AGIRAILS handles the rest.

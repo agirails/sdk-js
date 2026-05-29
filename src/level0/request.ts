@@ -1,5 +1,5 @@
 /**
- * request() - Basic API for service requesters
+ * request() - Simple tier API for service requesters
  *
  * The simplest way to request a service from AGIRAILS.
  * Specify what you need and your budget, and AGIRAILS finds a provider.

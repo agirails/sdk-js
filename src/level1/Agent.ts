@@ -660,10 +660,10 @@ export class Agent extends EventEmitter {
       throw new AgentLifecycleError(this._status, 'request (agent not started)');
     }
 
-    // Import Basic API request function
+    // Import Simple-tier request function
     const { request: basicRequest } = await import('../level0/request');
 
-    // Call Basic API request with agent's network
+    // Call Simple-tier request with agent's network
     const result = await basicRequest(service, {
       ...options,
       network: this.network,

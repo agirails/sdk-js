@@ -1,5 +1,5 @@
 /**
- * Basic API - Simple service provision and requests
+ * Simple tier - Convenience exports for service provision and requests
  *
  * @packageDocumentation
  */
