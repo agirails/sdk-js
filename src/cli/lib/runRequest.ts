@@ -349,11 +349,16 @@ export async function runRequest(opts: RunRequestOptions): Promise<RunRequestRes
       // the Platform-side receipts_net_wei_nonneg CHECK constraint.
       const netWeiBig = amountWeiBig > feeWeiBig ? amountWeiBig - feeWeiBig : 0n;
 
+      // The on-chain requester is `client.info.address` — the smart wallet
+      // when AutoWallet is active, or the EOA in Tier 2/3. The local
+      // `requesterAddress` var above is always the EOA when privateKey is
+      // set, so passing it would mismatch on-chain state and fail the
+      // server's assertOnChainMatches check (silently nulling receiptUrl).
       const push = await pushReceiptOnSettled({
         signer: new Wallet(privateKey),
         participantRole: 'requester',
         providerAddress,
-        requesterAddress,
+        requesterAddress: client.info.address,
         kernelAddress,
         txId,
         network: networkName,
