@@ -135,11 +135,13 @@ async function runTest(output: Output): Promise<void> {
   output.print('');
 
   // 3. Hit Sentinel via the shared Level 1 requester flow. Sentinel's
-  //    covenant is $0.05 USDC for the onboarding service; PRD §5.6 quote
-  //    timeout default (30s) is generous on Base Sepolia.
+  //    covenant is $10 USDC for the onboarding service ($10–$100 band).
+  //    Picked to clear the 1%/$0.05 fee floor so receipts show a real
+  //    net earning instead of "$0 earned". PRD §5.6 quote timeout
+  //    default (30s) is generous on Base Sepolia.
   const result = await runRequest({
     provider: sentinel.address,
-    amount: '0.05',
+    amount: '10',
     service: 'onboarding',
     network: 'testnet',
     autoAccept: true,
