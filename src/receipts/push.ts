@@ -106,7 +106,11 @@ export interface PushReceiptResult {
 }
 
 export async function pushReceiptOnSettled(args: PushReceiptArgs): Promise<PushReceiptResult> {
-  const apiBase = (args.apiBase ?? "https://agirails.app").replace(/\/+$/, "");
+  // Resolution priority: explicit arg > AGIRAILS_BASE_URL env > prod default.
+  // Matches the env-driven origin convention already used by cli/receiptUpload.ts.
+  const apiBase = (
+    args.apiBase ?? process.env.AGIRAILS_BASE_URL ?? "https://agirails.app"
+  ).replace(/\/+$/, "");
   const signerAddress = await args.signer.getAddress();
 
   try {
@@ -154,6 +158,7 @@ export async function pushReceiptOnSettled(args: PushReceiptArgs): Promise<PushR
       },
       body: JSON.stringify({
         participantRole: args.participantRole,
+        signerAddress,
         agentAddress: args.providerAddress,
         requesterAddress: args.requesterAddress,
         kernelAddress: args.kernelAddress,
