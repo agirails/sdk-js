@@ -163,6 +163,7 @@ async function runTest(output: Output): Promise<void> {
       settled: result.settled,
       reflection,
       payload: result.payload,
+      receiptUrl: result.receiptUrl,
     },
     { quietKey: 'reflection' }
   );
@@ -186,6 +187,14 @@ async function runTest(output: Output): Promise<void> {
   } else {
     output.blank();
     output.success(`Settled in ${result.elapsedMs} ms`);
+  }
+
+  // Receipt URL — the wow artifact. Only present when the buyer-side V2
+  // push succeeded (real on-chain network + signer). Silent when null:
+  // either mock, or the push failed (indexer cron is the backstop).
+  if (result.receiptUrl) {
+    output.blank();
+    output.print(`Receipt: ${result.receiptUrl}`);
   }
 }
 
