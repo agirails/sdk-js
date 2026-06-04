@@ -115,6 +115,18 @@ export interface RunRequestResult {
   payload?: unknown;
   /** Whether the requester settled the escrow before returning. */
   settled: boolean;
+  /**
+   * Absolute public receipt URL (https://agirails.app/r/r_...) when the
+   * buyer-side V2 push to the AGIRAILS Platform succeeded after SETTLED.
+   *
+   * null when:
+   *   - settle did not complete (no receipt to share)
+   *   - the push failed (network error, 422 verify, etc.) — the Platform
+   *     indexer cron is the backstop and will mint a row within ~5min,
+   *     just no URL handy for the immediate CLI moment
+   *   - network is 'mock' (no real chain ⇒ no real receipt to publish)
+   */
+  receiptUrl: string | null;
 }
 
 const TERMINAL_FAILURE: TransactionState[] = ['CANCELLED', 'DISPUTED'];
@@ -311,12 +323,64 @@ export async function runRequest(opts: RunRequestOptions): Promise<RunRequestRes
     }
   }
 
+  // 12. Buyer-visible settlement receipt push — the wow flow.
+  //
+  // On SETTLED with a real on-chain network and a real signer, post the
+  // requester-side receipt to the AGIRAILS Platform. The Platform verifies
+  // the V2 signature, independently confirms with the kernel that the tx
+  // matches (forgery defense), then mints a row and returns a clickable
+  // public URL.
+  //
+  // Failure is intentionally non-fatal: the settlement already happened
+  // on-chain, and the Platform indexer cron is the backstop. The CLI just
+  // can't print a URL for this specific tx if the push failed.
+  let receiptUrl: string | null = null;
+  if (settled && privateKey && (network === 'testnet' || network === 'mainnet')) {
+    try {
+      const { pushReceiptOnSettled } = await import('../../receipts/push');
+      const { computeDisplayFee } = await import('../../config/defaults');
+      const { getNetwork } = await import('../../config/networks');
+
+      const networkName = network === 'testnet' ? 'base-sepolia' : 'base-mainnet';
+      const kernelAddress = getNetwork(networkName).contracts.actpKernel;
+      const amountWeiBig = BigInt(amountWei);
+      const feeWeiBig = computeDisplayFee(amountWeiBig);
+      // Clamp net to zero for dust amounts where fee >= amount; matches
+      // the Platform-side receipts_net_wei_nonneg CHECK constraint.
+      const netWeiBig = amountWeiBig > feeWeiBig ? amountWeiBig - feeWeiBig : 0n;
+
+      const push = await pushReceiptOnSettled({
+        signer: new Wallet(privateKey),
+        participantRole: 'requester',
+        providerAddress,
+        requesterAddress,
+        kernelAddress,
+        txId,
+        network: networkName,
+        amountWei: amountWeiBig.toString(),
+        feeWei: feeWeiBig.toString(),
+        netWei: netWeiBig.toString(),
+        serviceHash,
+        service: normalizedService,
+        durationMs: Date.now() - startedAt,
+      });
+      receiptUrl = push.receiptUrl;
+    } catch (err) {
+      // Non-fatal: log and continue. The indexer cron is the backstop.
+      logger.warn('Buyer-side receipt push failed; indexer will backfill', {
+        txId,
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
   return {
     txId,
     finalState,
     elapsedMs: Date.now() - startedAt,
     payload,
     settled,
+    receiptUrl,
   };
 }
 
