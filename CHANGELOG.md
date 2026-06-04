@@ -1,5 +1,21 @@
 # Changelog
 
+## [4.1.1] — 2026-06-04
+
+### Changed
+
+- **`actp test` default amount $0.05 → $10.** The old amount sat exactly
+  on the protocol fee floor (`max(1%, $0.05min)`), so every Sentinel
+  settlement minted a receipt that read "earned $0" — the demo signal
+  we want most was zero. $10 clears the floor cleanly: fee $0.10 (1%),
+  net $9.90. Above $5 the fee is purely 1%, making the structure
+  visible to anyone reading their first receipt.
+
+  Companion change in
+  [agirails/seed-sentinel@19d8f3a](https://github.com/agirails/seed-sentinel/commit/19d8f3a)
+  bumped the Sentinel covenant band from $0.05–$10 to $10–$100 so the
+  Railway-deployed Sentinel still accepts the new default.
+
 ## [4.1.0] — 2026-06-04
 
 ### Added
