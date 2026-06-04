@@ -1,5 +1,43 @@
 # Changelog
 
+## [4.1.0] — 2026-06-04
+
+### Added
+
+- **Buyer-visible receipt URL on SETTLED.** `RunRequestResult.receiptUrl`
+  surfaces an absolute `https://agirails.app/r/r_...` URL when the
+  requester-side V2 push to the AGIRAILS Platform succeeds after
+  settlement. `actp test` and `actp pay` print it as a `Receipt:` line
+  at the end of a successful settle. Null when the push fails — the
+  Platform indexer cron is the backstop and still mints the receipt
+  within ~5 min.
+
+### Fixed
+
+- **`pushReceiptOnSettled` now uses `client.info.address`** as
+  `requesterAddress`. With AutoWallet active (Tier 1, the default for
+  published agents), the on-chain requester is the deterministic
+  Coinbase smart wallet derived from the EOA — not the EOA itself.
+  Passing the EOA produced a smart-wallet / EOA mismatch that the
+  server rejected with 422 from `assertOnChainMatches`, and the push
+  catch block silently nulled the receipt URL. Tier 2/3 EOA paths are
+  unaffected since `info.address` is the EOA there. (#12)
+- **V2 receipt POST body now carries `signerAddress`.** The Platform's
+  V2 route prefers `body.signerAddress` when reconstructing the typed
+  payload for signature verification; without it, the server fell back
+  to `participantRole === "requester" ? requesterAddress : agentAddress`,
+  which broke smart-wallet buyers signing with their EOA owner. (#11)
+
+### Companion server fix
+
+The matching Platform-side fix landed in
+[agirails/agirails.app#36](https://github.com/agirails/agirails.app/pull/36):
+`@upstash/redis@1.36.2` auto-deserializes the nonce sentinel `"1"` to
+the number `1` via `JSON.parse`, so the server's `stored === "1"` check
+rejected every fresh nonce as "invalid or already used". Both shapes
+are now accepted. Without the server fix, no V2 push could succeed
+regardless of SDK version.
+
 ## [4.0.0] — 2026-05-19
 
 ### Security
