@@ -74,7 +74,11 @@ export interface UpsertAgentParams {
    * Omit if wallet == signer (non-AA flow).
    */
   signer?: string;
-  configCid: string;
+  /**
+   * IPFS CID of the published service file. Absent for pay-only buyers, which
+   * publish no service file (AIP-18 DEC-4) — they link with configHash only.
+   */
+  configCid?: string;
   configHash: string;
   /** Wallet signature proving ownership (signs a message containing agentId) */
   signature: string;

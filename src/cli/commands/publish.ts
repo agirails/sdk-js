@@ -433,66 +433,86 @@ async function runPublish(
       }
     }
 
-    // Upload to IPFS: direct (Filebase) or via publish proxy
-    const filebaseAccessKey = process.env.FILEBASE_ACCESS_KEY;
-    const filebaseSecretKey = process.env.FILEBASE_SECRET_KEY;
-    const useProxy = !filebaseAccessKey || !filebaseSecretKey;
+    // AIP-18 DEC-3/DEC-4: a pure buyer (intent: pay) LINKS — it does not
+    // publish a service file. Skip the IPFS upload entirely so the buyer's
+    // local file (which may carry a private `budget`) never reaches IPFS or
+    // the publish proxy. No CID is produced; the buyer is identified by
+    // wallet + the agirails.app DB link. (budget is additionally stripped
+    // from the configHash via PUBLISH_METADATA_KEYS, so it is absent from
+    // every hashed artifact too.) This also moves the pay-only short-circuit
+    // ahead of any network upload, closing the leak where the file was sent
+    // before the later on-chain skip.
+    const isPayOnly = v4Config?.intent === 'pay';
 
-    spinner.stop(true);
-
-    if (useProxy) {
-      output.info('No Filebase credentials — using AGIRAILS publish proxy.');
-    }
-
-    const publishSpinner = output.spinner('Publishing to IPFS...');
-
-    let cid: string;
+    let cid: string | undefined;
     let arweaveTxId: string | undefined;
 
-    if (useProxy) {
-      // Fallback: upload via AGIRAILS publish proxy API
-      const proxyResult = await publishViaProxy(content, configHash);
-      cid = proxyResult.cid;
-      // Proxy doesn't do Arweave — skip
+    if (isPayOnly) {
+      spinner.stop(true);
+      output.info(
+        'Pay-only agent: no service file to publish — linking to agirails.app only (budget stays local).'
+      );
     } else {
-      // Direct upload via Filebase S3 + optional Arweave
-      const filebaseClient = new FilebaseClient({
-        accessKey: filebaseAccessKey,
-        secretKey: filebaseSecretKey,
-      });
+      // Upload to IPFS: direct (Filebase) or via publish proxy
+      const filebaseAccessKey = process.env.FILEBASE_ACCESS_KEY;
+      const filebaseSecretKey = process.env.FILEBASE_SECRET_KEY;
+      const useProxy = !filebaseAccessKey || !filebaseSecretKey;
 
-      let arweaveClient: ArweaveClient | undefined;
-      if (!options.skipArweave) {
-        const arweaveKey = process.env.ARCHIVE_UPLOADER_KEY;
-        if (arweaveKey) {
-          arweaveClient = await ArweaveClient.create({
-            privateKey: arweaveKey,
-            rpcUrl: 'https://mainnet.base.org',
-          });
-        }
+      spinner.stop(true);
+
+      if (useProxy) {
+        output.info('No Filebase credentials — using AGIRAILS publish proxy.');
       }
 
-      const prepResult = await preparePublish({
-        path: resolvedPath,
-        filebaseClient,
-        arweaveClient,
-        skipArweave: options.skipArweave || !arweaveClient,
-      });
+      const publishSpinner = output.spinner('Publishing to IPFS...');
 
-      cid = prepResult.cid;
-      arweaveTxId = prepResult.arweaveTxId;
+      if (useProxy) {
+        // Fallback: upload via AGIRAILS publish proxy API
+        const proxyResult = await publishViaProxy(content, configHash);
+        cid = proxyResult.cid;
+        // Proxy doesn't do Arweave — skip
+      } else {
+        // Direct upload via Filebase S3 + optional Arweave
+        const filebaseClient = new FilebaseClient({
+          accessKey: filebaseAccessKey,
+          secretKey: filebaseSecretKey,
+        });
+
+        let arweaveClient: ArweaveClient | undefined;
+        if (!options.skipArweave) {
+          const arweaveKey = process.env.ARCHIVE_UPLOADER_KEY;
+          if (arweaveKey) {
+            arweaveClient = await ArweaveClient.create({
+              privateKey: arweaveKey,
+              rpcUrl: 'https://mainnet.base.org',
+            });
+          }
+        }
+
+        const prepResult = await preparePublish({
+          path: resolvedPath,
+          filebaseClient,
+          arweaveClient,
+          skipArweave: options.skipArweave || !arweaveClient,
+        });
+
+        cid = prepResult.cid;
+        arweaveTxId = prepResult.arweaveTxId;
+      }
+
+      publishSpinner.stop(true);
     }
-
-    publishSpinner.stop(true);
 
     // Parse frontmatter for registration params
     const { frontmatter, body } = parseAgirailsMd(content);
     const regParams = extractRegistrationParams(frontmatter as Record<string, unknown>);
 
+    // Only consumed in the non-pay activation-failure path (cid is a real
+    // string there); the '' fallback for pay-only is never persisted.
     const pendingData = {
       version: 1 as const,
       configHash,
-      cid,
+      cid: cid ?? '',
       endpoint: regParams.endpoint,
       serviceDescriptors: regParams.serviceDescriptors,
       createdAt: new Date().toISOString(),
@@ -536,7 +556,6 @@ async function runPublish(
     // ================================================================
     let testnetTxHash: string | undefined;
     let smartWalletAddress: string | undefined;
-    const isPayOnly = v4Config?.intent === 'pay';
 
     if (isPayOnly) {
       output.info(
@@ -547,7 +566,8 @@ async function runPublish(
       const activationSpinner = output.spinner('Activating on testnet...');
       try {
         const activationResult = await activateOnTestnet(
-          projectRoot, configHash, cid,
+          // Non-pay branch: the upload above always assigns cid.
+          projectRoot, configHash, cid!,
           regParams.endpoint, regParams.serviceDescriptors, output,
         );
         activationSpinner.stop(true);

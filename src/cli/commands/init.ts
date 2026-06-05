@@ -116,10 +116,16 @@ async function runInit(options: InitOptions, output: Output, cmd?: Command): Pro
       const { parseAgirailsMdV4 } = await import('../../config/agirailsmdV4');
       const content = fs.readFileSync(path.join(projectRoot, mdFile), 'utf-8');
       const v4 = parseAgirailsMdV4(content);
-      if (v4.name && v4.services.length > 0) {
+      // A provider file has services; a pure buyer (AIP-18 intent: pay) has
+      // none — it is identified by servicesNeeded instead. Accept both so a
+      // pay-only {slug}.md isn't silently ignored at init.
+      const isBuyerFile = v4.intent === 'pay' && v4.servicesNeeded.length > 0;
+      if (v4.name && (v4.services.length > 0 || isBuyerFile)) {
         // Valid identity file found
         identityFilename = mdFile;
-        mdConfig = { name: v4.name, network: v4.network, services: v4.services, price: v4.pricing.base };
+        mdConfig = isBuyerFile
+          ? { name: v4.name, network: v4.network, intent: 'pay', servicesNeeded: v4.servicesNeeded }
+          : { name: v4.name, network: v4.network, services: v4.services, price: v4.pricing.base };
         output.info(`Found identity file: ${mdFile}`);
         break;
       }
@@ -350,19 +356,28 @@ async function runInit(options: InitOptions, output: Output, cmd?: Command): Pro
   if (options.scaffold) {
     await runScaffold(options, mode, output, mdConfig);
   } else {
+    const resolvedIntent = (options.intent || 'earn') as ScaffoldIntent;
     output.blank();
     output.print('Next steps:');
     if (walletType === 'auto') {
-      output.print('  1. Publish config: actp publish');
-      output.print('  2. Create a payment: actp pay <provider> <amount>');
-      output.print('  3. Check your balance: actp balance');
+      if (resolvedIntent === 'pay') {
+        // AIP-18 DEC-3: a buyer LINKS (no on-chain publish). `actp publish`
+        // is still the single command — it branches to a link for pay-only.
+        // budget never leaves the local config.
+        output.print('  1. Link your buyer profile: actp publish   (budget stays local & private)');
+        output.print('  2. Discover providers: actp find <capability>');
+        output.print('  3. Pay a provider: actp pay <provider> <amount>');
+      } else {
+        output.print('  1. Publish config: actp publish');
+        output.print('  2. Create a payment: actp pay <provider> <amount>');
+        output.print('  3. Check your balance: actp balance');
+      }
     } else {
       output.print('  1. Create a payment: actp pay <provider> <amount>');
       output.print('  2. Check your balance: actp balance');
       output.print('  3. List transactions: actp tx list');
     }
 
-    const resolvedIntent = (options.intent || 'earn') as ScaffoldIntent;
     if (resolvedIntent === 'earn' || resolvedIntent === 'both') {
       output.print('');
       output.print('  Receive x402 payments (Express):');
