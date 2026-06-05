@@ -1714,9 +1714,18 @@ export class ACTPClient {
   }
 
   /**
-   * Non-blocking drift detection for AGIRAILS.md config.
-   * Checks if local AGIRAILS.md matches on-chain config hash.
-   * Logs warnings but never blocks agent operation.
+   * Non-blocking config sync on startup (Faza B "magic").
+   *
+   * When auto-sync is enabled (default; disable with ACTP_AUTO_SYNC=0) and the
+   * local AGIRAILS.md carries a slug, this runs the bidirectional reconcile in
+   * its safe direction: a newer web edit is pulled into the local file
+   * (conflict-safe — the previous local version is snapshotted, never silently
+   * clobbered). The push direction (local → chain + web) is left to
+   * `actp publish` / `actp autopublish` / `actp sync` since only the keyholder
+   * signs and we never auto-spend gas at startup.
+   *
+   * Falls back to warning-only drift detection when auto-sync is off or the
+   * file has no slug. Always best-effort — never blocks agent operation.
    * @internal
    */
   private async checkConfigDrift(config: ACTPClientConfig): Promise<void> {
@@ -1744,19 +1753,51 @@ export class ACTPClient {
       }
 
       const content = readFileSync(agirailsMdPath, 'utf-8');
-      const { computeConfigHash } = await import('./config/agirailsmd');
+      const { computeConfigHash, parseAgirailsMd: parseMd } = await import('./config/agirailsmd');
+      const { frontmatter } = parseMd(content);
+      const agentAddress = config.requesterAddress ?? this.info.address;
+
+      // Slug for the web lookup: top-level or nested under `agent:`.
+      const agentBlock = frontmatter.agent as Record<string, unknown> | undefined;
+      const slug =
+        (typeof frontmatter.slug === 'string' ? frontmatter.slug : undefined) ||
+        (agentBlock && typeof agentBlock.slug === 'string' ? agentBlock.slug : undefined);
+
+      const autoSync =
+        process.env.ACTP_AUTO_SYNC !== '0' && process.env.ACTP_AUTO_SYNC !== 'false';
+
+      // ── Auto-sync (default): pull a newer web edit into the local file ──
+      if (autoSync && slug) {
+        const { reconcile } = await import('./config/syncOperations');
+        const provider = new ethers.JsonRpcProvider(networkConfig.rpcUrl);
+        const r = await reconcile({
+          path: agirailsMdPath,
+          agentAddress,
+          registryAddress: networkConfig.contracts.agentRegistry,
+          provider,
+          slug,
+        });
+        if (r.wroteLocal) {
+          sdkLogger.info(
+            `[AGIRAILS] Synced config from web (${r.action})` +
+              (r.snapshotPath ? ` — previous local saved to ${r.snapshotPath}` : '') + '.'
+          );
+        } else if (r.needsPublish) {
+          // Local (or both) ahead of chain/web — we never auto-publish at startup.
+          sdkLogger.warn('[AGIRAILS] Local config is ahead. Run: actp sync (or actp publish).');
+        }
+        return;
+      }
+
+      // ── Auto-sync off: warning-only drift detection (legacy behavior) ──
       const { configHash: localHash } = computeConfigHash(content);
+      const isTemplate = !frontmatter.config_hash;
 
       const { AgentRegistryClient } = await import('./registry/AgentRegistryClient');
       const provider = new ethers.JsonRpcProvider(networkConfig.rpcUrl);
       const registryClient = AgentRegistryClient.readOnly(networkConfig.contracts.agentRegistry, provider);
 
-      // Detect template vs published state from frontmatter
-      const { parseAgirailsMd: parseMd } = await import('./config/agirailsmd');
-      const { frontmatter } = parseMd(content);
-      const isTemplate = !frontmatter.config_hash;
-
-      const onChainState = await registryClient.getConfig(config.requesterAddress ?? this.info.address);
+      const onChainState = await registryClient.getConfig(agentAddress);
       const ZERO_HASH = '0x' + '0'.repeat(64);
 
       if (onChainState.configHash === ZERO_HASH) {
@@ -1769,7 +1810,7 @@ export class ACTPClient {
         sdkLogger.warn('[AGIRAILS] Local AGIRAILS.md differs from on-chain. Run: actp diff');
       }
     } catch {
-      // Silently ignore — drift detection is best-effort
+      // Silently ignore — drift detection / auto-sync is best-effort
     }
   }
 }
