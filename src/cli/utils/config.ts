@@ -467,7 +467,17 @@ export function resolveIdentityPath(projectRoot: string = process.cwd()): string
         const { parseAgirailsMdV4 } = require('../../config/agirailsmdV4');
         const content = fs.readFileSync(path.join(projectRoot, mdFile), 'utf-8');
         const v4 = parseAgirailsMdV4(content);
-        if (v4.name && v4.services && v4.services.length > 0) {
+        // Accept provider files (services), buyer files (servicesNeeded), and
+        // any pay/both agent. Requiring services > 0 used to skip buyer
+        // ({slug}.md with no services), making publish fall back to the 48 KB
+        // owner AGIRAILS.md → 413. (AIP-18 §1.)
+        const isIdentity =
+          !!v4.name &&
+          (((v4.services?.length ?? 0) > 0) ||
+            ((v4.servicesNeeded?.length ?? 0) > 0) ||
+            v4.intent === 'pay' ||
+            v4.intent === 'both');
+        if (isIdentity) {
           return path.join(projectRoot, mdFile);
         }
       } catch {
