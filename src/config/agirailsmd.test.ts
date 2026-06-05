@@ -171,7 +171,8 @@ describe('stripPublishMetadata', () => {
     expect(PUBLISH_METADATA_KEYS).toContain('wallet');
     expect(PUBLISH_METADATA_KEYS).toContain('agent_id');
     expect(PUBLISH_METADATA_KEYS).toContain('did');
-    expect(PUBLISH_METADATA_KEYS).toHaveLength(8);
+    expect(PUBLISH_METADATA_KEYS).toContain('claim_code');
+    expect(PUBLISH_METADATA_KEYS).toHaveLength(9);
   });
 });
 
