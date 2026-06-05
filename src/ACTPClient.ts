@@ -1731,17 +1731,34 @@ export class ACTPClient {
   private async checkConfigDrift(config: ACTPClientConfig): Promise<void> {
     try {
       const { existsSync, readFileSync } = await import('fs');
-      const { join } = await import('path');
+      const { join, basename } = await import('path');
 
-      // Look for AGIRAILS.md in cwd
-      const agirailsMdPath = join(process.cwd(), 'AGIRAILS.md');
-      if (!existsSync(agirailsMdPath)) {
-        // No local file — try cached hash from pending-publish.json
+      // Resolve the identity file the agent actually publishes ({slug}.md), via
+      // the .actp identity pointer. The on-chain configHash and the web copy are
+      // both hashes of THIS file — so reconcile must target it, not the
+      // ~900-line owner AGIRAILS.md protocol doc. Falls back to AGIRAILS.md.
+      let identityPath = join(process.cwd(), 'AGIRAILS.md');
+      try {
+        const actpDir = process.env.ACTP_DIR || join(process.cwd(), '.actp');
+        const cfgPath = join(actpDir, 'config.json');
+        if (existsSync(cfgPath)) {
+          const cfg = JSON.parse(readFileSync(cfgPath, 'utf-8')) as { identity?: string };
+          if (cfg.identity) {
+            const p = join(process.cwd(), cfg.identity);
+            if (existsSync(p)) identityPath = p;
+          }
+        }
+      } catch {
+        // fall back to AGIRAILS.md
+      }
+
+      if (!existsSync(identityPath)) {
+        // No local identity file — try cached hash from pending-publish.json
         const { loadPendingPublish: loadPP } = await import('./config/pendingPublish');
         const driftNetwork = config.mode === 'testnet' ? 'base-sepolia' : 'base-mainnet';
         const pp = loadPP(driftNetwork);
         if (pp) {
-          sdkLogger.info('[AGIRAILS] No AGIRAILS.md found, using cached config hash from pending-publish.json');
+          sdkLogger.info('[AGIRAILS] No identity file found, using cached config hash from pending-publish.json');
         }
         return;
       }
@@ -1752,16 +1769,19 @@ export class ACTPClient {
         return; // No registry on this network
       }
 
-      const content = readFileSync(agirailsMdPath, 'utf-8');
+      const content = readFileSync(identityPath, 'utf-8');
       const { computeConfigHash, parseAgirailsMd: parseMd } = await import('./config/agirailsmd');
       const { frontmatter } = parseMd(content);
       const agentAddress = config.requesterAddress ?? this.info.address;
 
-      // Slug for the web lookup: top-level or nested under `agent:`.
+      // Slug for the web lookup: frontmatter (top-level / agent block), else the
+      // identity filename ({slug}.md).
       const agentBlock = frontmatter.agent as Record<string, unknown> | undefined;
+      const fileSlug = basename(identityPath).replace(/\.md$/, '');
       const slug =
         (typeof frontmatter.slug === 'string' ? frontmatter.slug : undefined) ||
-        (agentBlock && typeof agentBlock.slug === 'string' ? agentBlock.slug : undefined);
+        (agentBlock && typeof agentBlock.slug === 'string' ? agentBlock.slug : undefined) ||
+        (fileSlug !== 'AGIRAILS' ? fileSlug : undefined);
 
       const autoSync =
         process.env.ACTP_AUTO_SYNC !== '0' && process.env.ACTP_AUTO_SYNC !== 'false';
@@ -1771,7 +1791,7 @@ export class ACTPClient {
         const { reconcile } = await import('./config/syncOperations');
         const provider = new ethers.JsonRpcProvider(networkConfig.rpcUrl);
         const r = await reconcile({
-          path: agirailsMdPath,
+          path: identityPath,
           agentAddress,
           registryAddress: networkConfig.contracts.agentRegistry,
           provider,
@@ -1807,7 +1827,7 @@ export class ACTPClient {
           sdkLogger.warn('[AGIRAILS] Config not published on-chain. Run: actp publish');
         }
       } else if (onChainState.configHash !== localHash) {
-        sdkLogger.warn('[AGIRAILS] Local AGIRAILS.md differs from on-chain. Run: actp diff');
+        sdkLogger.warn('[AGIRAILS] Local identity file differs from on-chain. Run: actp diff');
       }
     } catch {
       // Silently ignore — drift detection / auto-sync is best-effort
