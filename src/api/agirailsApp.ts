@@ -47,6 +47,13 @@ export interface CheckSlugResult {
     /** AgentRegistry tokenId / on_chain_id as a string */
     agentId: string;
   };
+  /**
+   * True when the slug is held by a not-yet-published web draft
+   * (wallet="pending:onboarding", no on_chain_id). Such a draft can be
+   * ADOPTED by publishing the same slug with the `claim_code` embedded in
+   * the owner AGIRAILS.md — instead of auto-renaming to "<slug>-2".
+   */
+  draft?: boolean;
 }
 
 export interface UpsertAgentParams {
@@ -79,6 +86,12 @@ export interface UpsertAgentParams {
   network?: string;
   /** Agent config (name, description, capabilities, pricing) for profile display */
   config?: Record<string, unknown>;
+  /**
+   * Draft-adoption code from the owner AGIRAILS.md `agent:` block. When the
+   * slug is held by a pending web draft, sending a valid code makes the server
+   * adopt that exact record (bind this wallet + agent_id) instead of failing.
+   */
+  claimCode?: string;
 }
 
 export interface UpsertAgentResult {

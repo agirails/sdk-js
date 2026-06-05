@@ -64,6 +64,9 @@ export const PUBLISH_METADATA_KEYS = [
   'wallet',
   'agent_id',
   'did',
+  // Draft-adoption code embedded by the web owner doc — never part of the
+  // canonical config. Mirror in web lib/ipfs/config-hash.ts.
+  'claim_code',
 ] as const;
 
 /**

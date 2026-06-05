@@ -206,6 +206,12 @@ async function runPublish(
     // ================================================================
     // Phase 1: Slug check (pre-chain, no auth, only on first publish)
     // ================================================================
+    // Set when this publish should ADOPT the user's own pending web draft
+    // (created via the onboarding wizard) using the claim_code embedded in
+    // AGIRAILS.md. Threaded into the upsert call so the server binds this
+    // wallet + agent_id to that exact record instead of duplicating it.
+    let draftClaimCode: string | undefined;
+
     let v4Config: ReturnType<typeof parseAgirailsMdV4> | undefined;
     try {
       v4Config = parseAgirailsMdV4(content);
@@ -264,6 +270,7 @@ async function runPublish(
           // file replaced, scaffold redo) but still owns the slug on
           // agirails.app. Treat this publish as an UPDATE, not NEW.
           let recovered = false;
+          let adoptedDraft = false;
           if (slugResult.owner) {
             // projectRoot isn't bound until later in the function; derive
             // a local equivalent inline (parent dir of the .md file).
@@ -293,7 +300,28 @@ async function runPublish(
             }
           }
 
-          if (!recovered) {
+          // Adopt the user's own pending web draft (onboarding wizard) using
+          // the claim_code embedded in AGIRAILS.md. Publishing the original
+          // slug lets the server bind this wallet + agent_id to that exact
+          // record instead of creating a duplicate "<slug>-2".
+          if (!recovered && slugResult.draft) {
+            const code = readDraftClaimCode(content, resolvedPath);
+            if (code) {
+              slugSpinner.stop(true);
+              output.info(`Slug "${v4Config.slug}" matches your web draft — adopting it (no duplicate).`);
+              draftClaimCode = code;
+              adoptedDraft = true;
+            } else {
+              output.warning(
+                `Slug "${v4Config.slug}" is held by an unpublished web draft, but no ` +
+                  `claim_code was found in AGIRAILS.md. Re-download the owner doc ` +
+                  `(curl ".../a/${v4Config.slug}/AGIRAILS.md?token=...") to adopt it ` +
+                  `instead of creating a duplicate.`
+              );
+            }
+          }
+
+          if (!recovered && !adoptedDraft) {
             if (slugResult.suggestion) {
               slugSpinner.stop(true);
               const oldSlug = v4Config.slug;
@@ -650,6 +678,8 @@ async function runPublish(
             message: upsertMessage,
             timestamp: publishTimestamp,
             network: publishNetwork,
+            // Present only when adopting a pending web draft (see slug phase).
+            ...(draftClaimCode ? { claimCode: draftClaimCode } : {}),
             config: {
               name: v4Config.name,
               description: (v4Config.description || "").replace(/^#\s+[^\n]+\n*/, "").trim(),
@@ -931,6 +961,52 @@ async function activateOnTestnet(
 // ============================================================================
 // Slug Ownership Recovery
 // ============================================================================
+
+/**
+ * Find the draft adoption code so `actp publish` can adopt the user's own
+ * pending web draft instead of auto-renaming to "<slug>-2".
+ *
+ * Looks first in the published file's frontmatter, then in a sibling owner
+ * AGIRAILS.md (the curled onboarding doc), where the code lives under the
+ * `agent:` block. Best-effort: any read/parse error returns undefined.
+ *
+ * @internal Exported for unit tests; not part of the SDK public API.
+ */
+export function readDraftClaimCode(
+  identityContent: string,
+  identityPath: string,
+): string | undefined {
+  const fromFrontmatter = (fm: Record<string, unknown> | undefined): string | undefined => {
+    if (!fm) return undefined;
+    if (typeof fm.claim_code === 'string' && fm.claim_code) return fm.claim_code;
+    const agent = fm.agent as Record<string, unknown> | undefined;
+    if (agent && typeof agent.claim_code === 'string' && agent.claim_code) return agent.claim_code;
+    return undefined;
+  };
+
+  // 1. The file being published (if the onboarding step copied it in).
+  try {
+    const code = fromFrontmatter(parseAgirailsMd(identityContent).frontmatter as Record<string, unknown>);
+    if (code) return code;
+  } catch {
+    // ignore — fall through to sibling lookup
+  }
+
+  // 2. A sibling owner AGIRAILS.md in the same directory (the curled doc).
+  try {
+    for (const name of ['AGIRAILS.md', 'agirails.md']) {
+      const p = resolve(identityPath, '..', name);
+      if (existsSync(p)) {
+        const code = fromFrontmatter(parseAgirailsMd(readFileSync(p, 'utf-8')).frontmatter as Record<string, unknown>);
+        if (code) return code;
+      }
+    }
+  } catch {
+    // ignore — best-effort
+  }
+
+  return undefined;
+}
 
 /**
  * Best-effort lookup of the local EOA signer that would publish this agent.
