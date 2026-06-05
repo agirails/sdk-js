@@ -121,6 +121,20 @@ describe('identity backfill for existing configs', () => {
     // Use realpath to normalize macOS /var → /private/var symlink
     expect(fs.realpathSync(resolveIdentityPath()!)).toBe(fs.realpathSync(path.join(testDir, filename)));
   });
+
+  // AIP-18 §1 / 413 fix: a pay-only (buyer) {slug}.md has no `services` — only
+  // `servicesNeeded`. The scan must still resolve it, else publish falls back to
+  // the 48 KB owner AGIRAILS.md and 413s.
+  it('resolveIdentityPath finds a pay-only {slug}.md via scan (servicesNeeded, no services)', () => {
+    const filename = 'my-buyer.md';
+    fs.writeFileSync(
+      filename,
+      '---\nname: My Buyer\nslug: my-buyer\nintent: pay\nservicesNeeded:\n  - testing\n---\nbuyer body\n',
+      'utf-8',
+    );
+    // No identity pointer set → forces the scan fallback path.
+    expect(fs.realpathSync(resolveIdentityPath()!)).toBe(fs.realpathSync(path.join(testDir, filename)));
+  });
 });
 
 // ============================================================================

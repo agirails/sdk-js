@@ -18,7 +18,7 @@
 import { Command } from 'commander';
 import { Output, ExitCode } from '../utils/output';
 import { mapError } from '../utils/client';
-import { resolve, join } from 'path';
+import { resolve, join, basename } from 'path';
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from 'fs';
 import * as readline from 'readline';
 import { computeConfigHash, serializeAgirailsMd, parseAgirailsMd } from '../../config/agirailsmd';
@@ -182,6 +182,25 @@ async function runPublish(
   try {
     // Read and compute hash
     let content = readFileSync(resolvedPath, 'utf-8');
+
+    // Guard: never publish the AGIRAILS protocol guide (the ~48 KB owner doc the
+    // owner curls). It is documentation, not an identity file — publishing it
+    // 413s at the proxy and is meaningless on-chain. Real identity files are tiny.
+    const guideBytes = Buffer.byteLength(content, 'utf-8');
+    const looksLikeProtocolGuide =
+      /^#{1,4}\s+Step\s+\d/m.test(content) && content.includes('actp init');
+    if (looksLikeProtocolGuide || (basename(resolvedPath) === 'AGIRAILS.md' && guideBytes > 20480)) {
+      spinner.stop(false);
+      output.error(
+        `"${basename(resolvedPath)}" looks like the AGIRAILS protocol guide ` +
+        `(${Math.round(guideBytes / 1024)} KB), not your agent's identity file.\n` +
+        `Publish your {slug}.md instead:\n` +
+        `  actp init      # scaffolds the identity file\n` +
+        `  actp publish   # auto-detects {slug}.md`,
+      );
+      process.exit(ExitCode.INVALID_INPUT);
+    }
+
     let { configHash, structuredHash, bodyHash } = computeConfigHash(content);
 
     if (options.dryRun) {
