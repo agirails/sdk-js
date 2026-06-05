@@ -63,6 +63,7 @@ import { SmartWalletCall } from './wallet/aa/constants';
 import { SmartWalletRouter, createSmartWalletRouter } from './wallet/SmartWalletRouter';
 import { buildActivationBatch, ActivationScenario } from './wallet/aa/TransactionBatcher';
 import { loadPendingPublish, deletePendingPublish, PendingPublish } from './config/pendingPublish';
+import { loadBuyerLink, BuyerLink } from './config/buyerLink';
 import { sdkLogger } from './utils/Logger';
 import { SettleOnInteract } from './settle/SettleOnInteract';
 
@@ -927,6 +928,19 @@ export class ACTPClient {
               // Ignore file read errors
             }
 
+            // Load buyer-link marker (may be null). A pure buyer (intent: pay)
+            // links instead of registering, so it has no on-chain configHash
+            // and no pending-publish — this marker is the signal that lets the
+            // gate below grant the gas-sponsored auto wallet anyway (AIP-18
+            // DEC-8). It triggers NO lazy on-chain activation (lazyPending
+            // stays null, so the activation path is never entered).
+            let buyerLink: BuyerLink | null = null;
+            try {
+              buyerLink = loadBuyerLink(network);
+            } catch {
+              // Absence just means "not a linked buyer".
+            }
+
             let useAutoWallet = false;
 
             if (registryAddr) {
@@ -943,20 +957,28 @@ export class ACTPClient {
                   lazyScenario = 'none';
                 }
 
-                // Gate: configHash != ZERO || hasPendingPublish → use AutoWallet
+                // Gate: configHash != ZERO || hasPendingPublish || linked buyer
+                //   → use the gas-sponsored AutoWallet.
+                // The buyer leg (AIP-18 DEC-8) lets a pure buyer be gasless: it
+                // has no configHash and no pending-publish, but its only costly
+                // on-chain action — pay() — locks USDC in escrow, which is the
+                // anti-DOS backstop, so granting sponsorship here opens no
+                // free-gas vector.
                 const hasOnChainConfig = onChainState.configHash !== ZERO_HASH;
                 const hasPendingPublish = lazyPending !== null;
+                const isLinkedBuyer = buyerLink !== null;
 
-                if (hasOnChainConfig || hasPendingPublish) {
+                if (hasOnChainConfig || hasPendingPublish || isLinkedBuyer) {
                   useAutoWallet = true;
                 }
               } catch {
                 // Registry check failed (e.g. RPC down).
-                // Fail-open only if pending publish exists (agent did `actp publish` → legitimate intent).
-                // Fail-closed otherwise to prevent unregistered agents getting free gas.
-                if (lazyPending) {
+                // Fail-open if pending publish OR a buyer link exists (the agent
+                // ran `actp publish` → legitimate intent). Fail-closed otherwise
+                // to prevent unregistered agents getting free gas.
+                if (lazyPending || buyerLink) {
                   useAutoWallet = true;
-                  sdkLogger.warn('AgentRegistry check failed, but pending publish found — proceeding with AA.');
+                  sdkLogger.warn('AgentRegistry check failed, but pending publish / buyer link found — proceeding with AA.');
                 } else {
                   sdkLogger.warn('AgentRegistry check failed and no pending publish — falling back to EOA.');
                 }

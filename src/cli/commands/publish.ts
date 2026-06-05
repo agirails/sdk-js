@@ -24,6 +24,7 @@ import * as readline from 'readline';
 import { computeConfigHash, serializeAgirailsMd, parseAgirailsMd } from '../../config/agirailsmd';
 import { preparePublish, extractRegistrationParams, PENDING_ENDPOINT, defaultDiscoveryEndpoint } from '../../config/publishPipeline';
 import { savePendingPublish, getActpDir } from '../../config/pendingPublish';
+import { saveBuyerLink } from '../../config/buyerLink';
 import { addToGitignore, loadConfig, saveConfig, isInitialized, CLIConfig, CONFIG_DEFAULTS } from '../utils/config';
 import { ethers } from 'ethers';
 import { FilebaseClient } from '../../storage/FilebaseClient';
@@ -562,6 +563,21 @@ async function runPublish(
         'Pay-only agent: skipping on-chain registration. ' +
           'Identity is your wallet + agirails.app profile.'
       );
+      // Write the buyer-link marker so the SDK's auto-wallet gate grants
+      // gas-sponsored transactions to this linked buyer (AIP-18 DEC-8) — a
+      // buyer has no on-chain configHash and no pending-publish, so without
+      // this marker the gate would fall back to the EOA wallet and require
+      // ETH. The marker triggers NO lazy on-chain activation.
+      try {
+        saveBuyerLink({
+          version: 1,
+          slug: v4Config!.slug,
+          wallet: (walletAddress || '').toLowerCase(),
+          linkedAt: new Date().toISOString(),
+        });
+      } catch {
+        // Best-effort — publish/link still succeeds without the gas marker.
+      }
     } else {
       const activationSpinner = output.spinner('Activating on testnet...');
       try {
