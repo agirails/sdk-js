@@ -156,6 +156,33 @@ describe('stripPublishMetadata', () => {
     expect(fm.config_hash).toBe('0xabc');
   });
 
+  // AIP-18 DEC-2 / §8 invariant: a buyer's budget is a private operational cap
+  // and must never influence the canonical hash, so changing it (or omitting
+  // it) leaves the stripped frontmatter — and therefore the configHash —
+  // identical. This guarantees budget can never leak on-chain or to IPFS.
+  test('strips budget so it never affects the canonical config hash', () => {
+    const withBudget: Record<string, unknown> = {
+      name: 'buyer-agent',
+      intent: 'pay',
+      servicesNeeded: ['code-review'],
+      budget: 25,
+    };
+    const withDifferentBudget: Record<string, unknown> = {
+      ...withBudget,
+      budget: 9999,
+    };
+    const noBudget: Record<string, unknown> = {
+      name: 'buyer-agent',
+      intent: 'pay',
+      servicesNeeded: ['code-review'],
+    };
+
+    expect(stripPublishMetadata(withBudget)).not.toHaveProperty('budget');
+    // Same regardless of the budget value, and identical to having no budget.
+    expect(stripPublishMetadata(withBudget)).toEqual(stripPublishMetadata(noBudget));
+    expect(stripPublishMetadata(withBudget)).toEqual(stripPublishMetadata(withDifferentBudget));
+  });
+
   test('handles object with no publish metadata', () => {
     const fm = { name: 'test', version: '1.0.0' };
     const stripped = stripPublishMetadata(fm);
@@ -172,7 +199,10 @@ describe('stripPublishMetadata', () => {
     expect(PUBLISH_METADATA_KEYS).toContain('agent_id');
     expect(PUBLISH_METADATA_KEYS).toContain('did');
     expect(PUBLISH_METADATA_KEYS).toContain('claim_code');
-    expect(PUBLISH_METADATA_KEYS).toHaveLength(9);
+    // AIP-18 DEC-2: budget is stripped from the canonical hash so it never
+    // appears in any hashed/published artifact.
+    expect(PUBLISH_METADATA_KEYS).toContain('budget');
+    expect(PUBLISH_METADATA_KEYS).toHaveLength(10);
   });
 });
 

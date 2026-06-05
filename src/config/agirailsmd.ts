@@ -67,6 +67,10 @@ export const PUBLISH_METADATA_KEYS = [
   // Draft-adoption code embedded by the web owner doc — never part of the
   // canonical config. Mirror in web lib/ipfs/config-hash.ts.
   'claim_code',
+  // AIP-18 DEC-2: a buyer's budget is a PRIVATE operational cap and must never
+  // appear in any hashed/published artifact. Stripping it from the canonical
+  // hash means budget can never leak on-chain or to IPFS via the configHash.
+  'budget',
 ] as const;
 
 /**
