@@ -52,6 +52,7 @@ import { createTimeCommand } from './commands/time';
 import { createPublishCommand } from './commands/publish';
 import { createPullCommand } from './commands/pull';
 import { createDiffCommand } from './commands/diff';
+import { createSyncCommand } from './commands/sync';
 import { createVerifyCommand } from './commands/verify';
 import { createRegisterCommand } from './commands/register';
 import { createDeployEnvCommand } from './commands/deploy-env';
@@ -118,6 +119,7 @@ program.addCommand(createTimeCommand());
 program.addCommand(createPublishCommand());
 program.addCommand(createPullCommand());
 program.addCommand(createDiffCommand());
+program.addCommand(createSyncCommand());
 program.addCommand(createVerifyCommand());
 
 // AIP-12: Gas-free registration
