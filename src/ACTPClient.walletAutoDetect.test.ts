@@ -10,6 +10,7 @@
 import { ACTPClient } from './ACTPClient';
 import { getNetwork } from './config/networks';
 import { AutoWalletProvider } from './wallet/AutoWalletProvider';
+import { loadBuyerLink } from './config/buyerLink';
 
 // --- Mocks ---
 
@@ -33,6 +34,11 @@ jest.mock('./runtime/BlockchainRuntime', () => ({
 jest.mock('./config/pendingPublish', () => ({
   loadPendingPublish: jest.fn().mockReturnValue(null),
   deletePendingPublish: jest.fn(),
+  getActpDir: jest.fn().mockReturnValue('/tmp/.actp'),
+}));
+
+jest.mock('./config/buyerLink', () => ({
+  loadBuyerLink: jest.fn().mockReturnValue(null),
 }));
 
 // Prevent real JsonRpcProvider startup retries/noise in unit tests.
@@ -169,5 +175,50 @@ describe('ACTPClient wallet auto-detection', () => {
 
     expect(client.info.walletTier).toBe('auto');
     expect(AutoWalletProvider.create).toHaveBeenCalled();
+  });
+
+  // AIP-18 DEC-8: a pure buyer has no on-chain configHash and no
+  // pending-publish, so the registry gate would normally drop it to EOA. The
+  // buyer-link marker grants the gas-sponsored auto wallet anyway. (With a mock
+  // provider the on-chain read throws, exercising the fail-open gate path,
+  // where the buyer link is honoured exactly like a pending publish.)
+  test('linked buyer (registry set, no configHash/pending) → auto (gasless)', async () => {
+    (getNetwork as jest.Mock).mockReturnValue(
+      makeNetworkConfig({ hasBundler: true, hasPaymaster: true })
+    );
+    setupAutoWalletMock();
+    (loadBuyerLink as jest.Mock).mockReturnValue({
+      version: 1,
+      slug: 'my-buyer',
+      wallet: '0x' + '11'.repeat(20),
+      linkedAt: '2026-06-06T12:00:00.000Z',
+    });
+
+    const client = await ACTPClient.create({
+      mode: 'testnet',
+      privateKey: TEST_PRIVATE_KEY,
+      wallet: 'auto',
+      // registry left at the network default (non-empty) so the gate runs
+    });
+
+    expect(client.info.walletTier).toBe('auto');
+    expect(AutoWalletProvider.create).toHaveBeenCalled();
+  });
+
+  test('unregistered non-buyer (no configHash/pending/link) → EOA', async () => {
+    (getNetwork as jest.Mock).mockReturnValue(
+      makeNetworkConfig({ hasBundler: true, hasPaymaster: true })
+    );
+    setupAutoWalletMock();
+    (loadBuyerLink as jest.Mock).mockReturnValue(null);
+
+    const client = await ACTPClient.create({
+      mode: 'testnet',
+      privateKey: TEST_PRIVATE_KEY,
+      wallet: 'auto',
+      // registry default (non-empty) → gate runs; no link → fail-closed to EOA
+    });
+
+    expect(client.info.walletTier).toBe('eoa');
   });
 });
