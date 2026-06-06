@@ -50,22 +50,27 @@ export interface BuyerLink {
 
 /**
  * Path to the buyer-link marker. Network-agnostic by design.
+ *
+ * @param actpDir - the `.actp` directory to use. Defaults to `getActpDir()`
+ *   (ACTP_DIR env or `cwd/.actp`). `actp publish` passes the project root of
+ *   the published `{slug}.md` so the marker lands beside that agent's config —
+ *   not in whatever directory the command happened to run from.
  */
-export function getBuyerLinkPath(): string {
-  return join(getActpDir(), 'buyer-link.json');
+export function getBuyerLinkPath(actpDir?: string): string {
+  return join(actpDir ?? getActpDir(), 'buyer-link.json');
 }
 
 /**
- * Save the buyer-link marker to `.actp/buyer-link.json`.
+ * Save the buyer-link marker to `{actpDir}/buyer-link.json`.
  *
- * Mirrors pending-publish: creates `.actp/` if missing, refuses to write
+ * Mirrors pending-publish: creates the dir if missing, refuses to write
  * through a symlinked directory, and writes atomically with mode 0o600.
  */
-export function saveBuyerLink(link: BuyerLink): void {
-  const dir = getActpDir();
+export function saveBuyerLink(link: BuyerLink, actpDir?: string): void {
+  const dir = actpDir ?? getActpDir();
 
-  // Verify .actp/ is a real directory (symlink-attack prevention) — use
-  // lstatSync so a symlinked or broken-symlink .actp is rejected, not followed.
+  // Verify the dir is real (symlink-attack prevention) — use lstatSync so a
+  // symlinked or broken-symlink dir is rejected, not followed.
   let dirExists = false;
   try {
     const stat = lstatSync(dir);
@@ -80,7 +85,7 @@ export function saveBuyerLink(link: BuyerLink): void {
     mkdirSync(dir, { recursive: true, mode: 0o700 });
   }
 
-  const filePath = getBuyerLinkPath();
+  const filePath = getBuyerLinkPath(dir);
   const tmpPath = filePath + '.tmp';
   writeFileSync(tmpPath, JSON.stringify(link, null, 2), { mode: 0o600 });
   renameSync(tmpPath, filePath);
@@ -91,9 +96,12 @@ export function saveBuyerLink(link: BuyerLink): void {
  *
  * @param network - accepted for call-site symmetry with loadPendingPublish;
  *   the marker is network-agnostic so the argument is ignored.
+ * @param actpDir - the `.actp` directory to read from. Defaults to
+ *   `getActpDir()` — at runtime ACTPClient runs from the project root, so the
+ *   default matches where `actp publish` wrote the marker.
  */
-export function loadBuyerLink(_network?: string): BuyerLink | null {
-  const filePath = getBuyerLinkPath();
+export function loadBuyerLink(_network?: string, actpDir?: string): BuyerLink | null {
+  const filePath = getBuyerLinkPath(actpDir);
   if (!existsSync(filePath)) return null;
   try {
     return JSON.parse(readFileSync(filePath, 'utf-8')) as BuyerLink;
@@ -104,8 +112,8 @@ export function loadBuyerLink(_network?: string): BuyerLink | null {
 }
 
 /** Whether a buyer-link marker exists. */
-export function hasBuyerLink(network?: string): boolean {
-  return loadBuyerLink(network) !== null;
+export function hasBuyerLink(network?: string, actpDir?: string): boolean {
+  return loadBuyerLink(network, actpDir) !== null;
 }
 
 /**
@@ -114,9 +122,9 @@ export function hasBuyerLink(network?: string): boolean {
  * Called when an agent transitions away from pure-buyer (e.g. it now publishes
  * a provider config and gains a real configHash), so the marker doesn't linger.
  */
-export function deleteBuyerLink(): void {
+export function deleteBuyerLink(actpDir?: string): void {
   try {
-    const filePath = getBuyerLinkPath();
+    const filePath = getBuyerLinkPath(actpDir);
     if (existsSync(filePath)) unlinkSync(filePath);
   } catch {
     // Best-effort cleanup.

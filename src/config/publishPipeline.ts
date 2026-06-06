@@ -342,29 +342,42 @@ export async function publishAgirailsMd(options: PublishOptions): Promise<Publis
     };
   }
 
-  // Step 2: Upload raw AGIRAILS.md to IPFS via Filebase
-  // Upload the actual markdown file (not a JSON wrapper) so CID points to the real file
-  const ipfsResult = await filebaseClient.uploadBinary(
-    Buffer.from(content, 'utf-8'),
-    'text/markdown',
-    { metadata: { type: 'agirails-config', version: '1.0' } }
-  );
-  const cid = ipfsResult.cid;
+  // AIP-18 DEC-2/DEC-4: a pure buyer (intent: pay) publishes NO service file.
+  // Detect intent up front and skip the IPFS/Arweave upload entirely so the
+  // buyer's file — which may carry a private `budget` — never leaves the
+  // machine. The CLI `actp publish` already does this; guarding the exported
+  // helper here means a direct caller can't break the budget-privacy invariant.
+  const intent = typeof frontmatter.intent === 'string'
+    ? frontmatter.intent.toLowerCase()
+    : 'earn';
 
-  // Step 3: Upload to Arweave (optional)
-  // Arweave stores the JSON-structured form for archival querying.
-  // uploadJSON already sets Content-Type: application/json and Protocol: AGIRAILS as defaults.
+  let cid = '';
   let arweaveTxId: string | undefined;
-  if (!skipArweave && arweaveClient) {
-    const arweaveResult = await arweaveClient.uploadJSON(
-      { frontmatter, body, _format: 'agirails.md.v1' },
-      [
-        { name: 'Type', value: 'agent-config' },
-        { name: 'ConfigHash', value: configHash },
-        { name: 'IPFS-CID', value: cid },
-      ]
+
+  if (intent !== 'pay') {
+    // Step 2: Upload raw AGIRAILS.md to IPFS via Filebase
+    // Upload the actual markdown file (not a JSON wrapper) so CID points to the real file
+    const ipfsResult = await filebaseClient.uploadBinary(
+      Buffer.from(content, 'utf-8'),
+      'text/markdown',
+      { metadata: { type: 'agirails-config', version: '1.0' } }
     );
-    arweaveTxId = arweaveResult.txId;
+    cid = ipfsResult.cid;
+
+    // Step 3: Upload to Arweave (optional)
+    // Arweave stores the JSON-structured form for archival querying.
+    // uploadJSON already sets Content-Type: application/json and Protocol: AGIRAILS as defaults.
+    if (!skipArweave && arweaveClient) {
+      const arweaveResult = await arweaveClient.uploadJSON(
+        { frontmatter, body, _format: 'agirails.md.v1' },
+        [
+          { name: 'Type', value: 'agent-config' },
+          { name: 'ConfigHash', value: configHash },
+          { name: 'IPFS-CID', value: cid },
+        ]
+      );
+      arweaveTxId = arweaveResult.txId;
+    }
   }
 
   // Step 4: Auto-register if needed, then publish on-chain.
@@ -373,11 +386,8 @@ export async function publishAgirailsMd(options: PublishOptions): Promise<Publis
   // serviceDescriptors > 0 (contract guard), so a buyer-only agent
   // cannot be on-chain at all under the current kernel. We skip both
   // registerAgent and publishConfig — pay-only identity lives off-chain
-  // (wallet + agirails.app DB record). IPFS upload above already gave
-  // them a content-addressed config; that's enough.
-  const intent = typeof frontmatter.intent === 'string'
-    ? frontmatter.intent.toLowerCase()
-    : 'earn';
+  // (wallet + agirails.app DB record). The IPFS upload was also skipped
+  // above, so a buyer publishes nothing. (`intent` computed above.)
   let registered = false;
   let txHash: string | undefined;
 
@@ -404,7 +414,8 @@ export async function publishAgirailsMd(options: PublishOptions): Promise<Publis
     ...frontmatter,
     config_hash: configHash,
     published_at: new Date().toISOString(),
-    config_cid: cid,
+    // Pay-only agents have no CID (nothing uploaded) — omit rather than write "".
+    ...(cid ? { config_cid: cid } : {}),
     ...(arweaveTxId ? { arweave_tx: arweaveTxId } : {}),
   };
 

@@ -99,6 +99,17 @@ version: "1.0.0"
 # Test Agent
 `;
 
+const SAMPLE_MD_PAY_ONLY = `---
+name: buyer-agent
+version: "1.0.0"
+intent: pay
+servicesNeeded:
+  - code-review
+budget: 25
+---
+# Buyer Agent
+`;
+
 // ============================================================================
 // extractRegistrationParams (tested indirectly via publishAgirailsMd)
 // ============================================================================
@@ -151,6 +162,34 @@ describe('publishAgirailsMd', () => {
       'text/markdown',
       expect.any(Object)
     );
+  });
+
+  test('pay-only (intent: pay) uploads NOTHING and never registers (AIP-18 DEC-2/DEC-4)', async () => {
+    mockReadFileSync.mockReturnValue(SAMPLE_MD_PAY_ONLY);
+    const mockFilebase = createMockFilebaseClient();
+    const mockArweave = createMockArweaveClient();
+
+    const result = await publishAgirailsMd({
+      path: '/test/buyer.md',
+      network: 'base-sepolia',
+      registryAddress: '0xreg',
+      signer: createMockSigner(),
+      filebaseClient: mockFilebase as any,
+      arweaveClient: mockArweave as any,
+      skipArweave: false,
+    });
+
+    // A pure buyer publishes no service file: no IPFS upload (budget can't
+    // leak), no Arweave, no on-chain registration.
+    expect(mockFilebase.uploadBinary).not.toHaveBeenCalled();
+    expect(mockArweave.uploadJSON).not.toHaveBeenCalled();
+    expect(result.cid).toBe('');
+    expect(result.registered).toBe(false);
+    expect(result.txHash).toBeUndefined();
+
+    // Frontmatter writeback carries no config_cid (nothing was uploaded).
+    const written = mockWriteFileSync.mock.calls[0][1] as string;
+    expect(written).not.toContain('config_cid:');
   });
 
   test('full publish with Arweave', async () => {

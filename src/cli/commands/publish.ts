@@ -568,13 +568,22 @@ async function runPublish(
       // buyer has no on-chain configHash and no pending-publish, so without
       // this marker the gate would fall back to the EOA wallet and require
       // ETH. The marker triggers NO lazy on-chain activation.
+      //
+      // Write it into the published agent's project root (.actp beside the
+      // {slug}.md), not the cwd — otherwise `actp publish path/to/buyer.md`
+      // run from elsewhere would drop the marker where the runtime client
+      // can't find it. ACTP_DIR (if set) still wins, matching the client.
       try {
-        saveBuyerLink({
-          version: 1,
-          slug: v4Config!.slug,
-          wallet: (walletAddress || '').toLowerCase(),
-          linkedAt: new Date().toISOString(),
-        });
+        const buyerLinkActpDir = process.env.ACTP_DIR || join(projectRoot, '.actp');
+        saveBuyerLink(
+          {
+            version: 1,
+            slug: v4Config!.slug,
+            wallet: (walletAddress || '').toLowerCase(),
+            linkedAt: new Date().toISOString(),
+          },
+          buyerLinkActpDir,
+        );
       } catch {
         // Best-effort — publish/link still succeeds without the gas marker.
       }
@@ -800,7 +809,8 @@ async function runPublish(
     const updatedFrontmatter = {
       ...(frontmatter as Record<string, unknown>),
       config_hash: configHash,
-      config_cid: cid,
+      // Pay-only buyers upload nothing — omit config_cid rather than write undefined.
+      ...(cid ? { config_cid: cid } : {}),
       published_at: new Date().toISOString(),
       ...(arweaveTxId ? { arweave_tx: arweaveTxId } : {}),
       ...publishMetadata,
@@ -825,64 +835,95 @@ async function runPublish(
       }
     }
 
-    // Output results
-    output.result(
-      {
-        configHash,
-        cid,
-        arweaveTxId: arweaveTxId || null,
-        pendingPublish: true,
-        testnetActivated: !!testnetTxHash,
-        ...(testnetTxHash ? { testnetTxHash } : {}),
-      },
-      { quietKey: 'configHash' }
-    );
-
-    output.blank();
-    output.success('Config published to IPFS and saved locally.');
-
-    if (testnetTxHash) {
-      output.print('');
-      output.success('Testnet: activated on-chain.');
-    }
-
-    output.print('');
-    output.print('Mainnet: on-chain activation will happen on your first payment.');
-
-    // Context-aware next steps. Endpoint is optional; when absent we
-    // send the agent's agirails.app profile URL on-chain as a default.
-    const customEndpoint = frontmatter.endpoint
-      && frontmatter.endpoint !== PENDING_ENDPOINT
-      && frontmatter.endpoint !== defaultDiscoveryEndpoint(v4Config?.slug);
-    output.print('');
-    output.print('Next steps:');
-    output.print('  1. Check your balance:   actp balance');
-    output.print('  2. Verify config match:  actp diff');
-    if (customEndpoint) {
-      output.print('  3. Probe endpoint:       actp health');
-    }
-
-    // Suggest test payment on testnet
-    if (testnetTxHash && v4Config?.slug) {
-      output.print('');
-      output.print(`  Try a test payment: actp pay agirails.app/a/${v4Config.slug} 5`);
-    }
-
-    // Inform about endpoint default — it is OPTIONAL. When unset, the
-    // on-chain endpoint defaults to the agent's profile URL on
-    // agirails.app, which is a real navigable page (vs the legacy
-    // pending.agirails.io 404). Set a custom endpoint only if you want
-    // x402 atomic HTTP payments or off-protocol job intake.
-    if (!customEndpoint && v4Config?.slug) {
-      output.print('');
-      output.info(
-        `No custom endpoint set — using your profile URL as the discovery anchor: ` +
-          `${defaultDiscoveryEndpoint(v4Config.slug)}`
+    // ────────────────────────────────────────────────────────────────
+    // Output results — branch by intent so a buyer's mental model stays
+    // clean: a pure buyer LINKS (DEC-3/DEC-4). It does NOT publish to IPFS
+    // and has NO mainnet lazy activation. Reporting otherwise re-muddies
+    // exactly what AIP-18 set out to clarify.
+    // ────────────────────────────────────────────────────────────────
+    if (isPayOnly) {
+      output.result(
+        {
+          configHash,
+          linked: true,
+          intent: 'pay',
+          // No cid, no on-chain activation — a buyer publishes nothing.
+          pendingPublish: false,
+          testnetActivated: false,
+        },
+        { quietKey: 'configHash' }
       );
-      output.print(
-        '  Set a custom endpoint only if you want x402 instant HTTP payments or ' +
-          'off-protocol job intake (HTTPS webhook). Otherwise leave it as is.'
+
+      output.blank();
+      output.success('Buyer profile linked to agirails.app. Budget stays local and private.');
+      output.print('');
+      output.print('No on-chain registration and no IPFS upload — a pure buyer needs neither.');
+      output.print('Gas is sponsored via your auto wallet; top up test USDC with `actp mint`.');
+
+      output.print('');
+      output.print('Next steps:');
+      output.print('  1. Check your balance:   actp balance');
+      output.print('  2. Discover providers:   actp find <capability>');
+      output.print('  3. Pay a provider:       actp pay <provider> <amount>');
+    } else {
+      output.result(
+        {
+          configHash,
+          cid,
+          arweaveTxId: arweaveTxId || null,
+          pendingPublish: true,
+          testnetActivated: !!testnetTxHash,
+          ...(testnetTxHash ? { testnetTxHash } : {}),
+        },
+        { quietKey: 'configHash' }
       );
+
+      output.blank();
+      output.success('Config published to IPFS and saved locally.');
+
+      if (testnetTxHash) {
+        output.print('');
+        output.success('Testnet: activated on-chain.');
+      }
+
+      output.print('');
+      output.print('Mainnet: on-chain activation will happen on your first payment.');
+
+      // Context-aware next steps. Endpoint is optional; when absent we
+      // send the agent's agirails.app profile URL on-chain as a default.
+      const customEndpoint = frontmatter.endpoint
+        && frontmatter.endpoint !== PENDING_ENDPOINT
+        && frontmatter.endpoint !== defaultDiscoveryEndpoint(v4Config?.slug);
+      output.print('');
+      output.print('Next steps:');
+      output.print('  1. Check your balance:   actp balance');
+      output.print('  2. Verify config match:  actp diff');
+      if (customEndpoint) {
+        output.print('  3. Probe endpoint:       actp health');
+      }
+
+      // Suggest test payment on testnet
+      if (testnetTxHash && v4Config?.slug) {
+        output.print('');
+        output.print(`  Try a test payment: actp pay agirails.app/a/${v4Config.slug} 5`);
+      }
+
+      // Inform about endpoint default — it is OPTIONAL. When unset, the
+      // on-chain endpoint defaults to the agent's profile URL on
+      // agirails.app, which is a real navigable page (vs the legacy
+      // pending.agirails.io 404). Set a custom endpoint only if you want
+      // x402 atomic HTTP payments or off-protocol job intake.
+      if (!customEndpoint && v4Config?.slug) {
+        output.print('');
+        output.info(
+          `No custom endpoint set — using your profile URL as the discovery anchor: ` +
+            `${defaultDiscoveryEndpoint(v4Config.slug)}`
+        );
+        output.print(
+          '  Set a custom endpoint only if you want x402 instant HTTP payments or ' +
+            'off-protocol job intake (HTTPS webhook). Otherwise leave it as is.'
+        );
+      }
     }
   } catch (error) {
     spinner.stop(false);

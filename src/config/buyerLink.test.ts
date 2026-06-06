@@ -60,6 +60,21 @@ describe('buyerLink', () => {
     expect(hasBuyerLink('base-mainnet')).toBe(true);
   });
 
+  it('honours an explicit actpDir (publish writes beside the {slug}.md, not cwd)', () => {
+    const projectActp = join(dir, 'some-project-root', '.actp');
+    saveBuyerLink(SAMPLE, projectActp);
+
+    // The marker is NOT in the default (cwd/ACTP_DIR) location...
+    expect(loadBuyerLink()).toBeNull();
+    expect(hasBuyerLink()).toBe(false);
+
+    // ...but is found when the same project-root dir is supplied (what the
+    // runtime client does when run from that project root).
+    expect(getBuyerLinkPath(projectActp)).toBe(join(projectActp, 'buyer-link.json'));
+    expect(loadBuyerLink(undefined, projectActp)).toEqual(SAMPLE);
+    expect(hasBuyerLink(undefined, projectActp)).toBe(true);
+  });
+
   it('deletes the marker (and is a no-op when already absent)', () => {
     saveBuyerLink(SAMPLE);
     deleteBuyerLink();
