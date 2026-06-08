@@ -603,6 +603,12 @@ async function runPublish(
       } catch {
         // Best-effort — publish/link still succeeds without the gas marker.
       }
+
+      // A buyer skips on-chain activation — which is where providers receive
+      // their 1,000 test USDC. Mint it here so the buyer can actually pay
+      // (gasless, no registration). Without this the agent links but has a
+      // zero balance and can buy nothing.
+      await mintTestnetUsdcForBuyer(projectRoot, output);
     } else {
       const activationSpinner = output.spinner('Activating on testnet...');
       try {
@@ -881,7 +887,7 @@ async function runPublish(
       output.success('Buyer profile linked to agirails.app. Budget stays local and private.');
       output.print('');
       output.print('No on-chain registration and no IPFS upload — a pure buyer needs neither.');
-      output.print('Gas is sponsored via your auto wallet; top up test USDC with `actp mint`.');
+      output.print('Gas is sponsored via your auto wallet; on testnet you start with 1,000 test USDC.');
 
       output.print('');
       output.print('Next steps:');
@@ -1075,6 +1081,91 @@ async function activateOnTestnet(
 
   output.success('Minted 1,000 test USDC to Smart Wallet');
   return { txHash: receipt.hash, smartWalletAddress };
+}
+
+/**
+ * Auto-mint test USDC to a pay-only buyer's Smart Wallet on testnet.
+ *
+ * Providers receive their 1,000 test USDC as part of on-chain activation. A
+ * pure buyer (intent: pay) skips activation (DEC-3) but STILL needs USDC to
+ * pay — otherwise the agent links successfully yet can't buy anything. So mint
+ * it here via the same gasless, paymaster-sponsored UserOp, without any
+ * registration.
+ *
+ * Idempotent: only mints when the wallet has no USDC, so re-publishing doesn't
+ * keep topping up. Best-effort — a failure (no AA infra, paymaster down) warns
+ * but never blocks the link.
+ */
+async function mintTestnetUsdcForBuyer(projectRoot: string, output: Output): Promise<void> {
+  try {
+    const { resolvePrivateKey } = await import('../../wallet/keystore');
+    const privateKey = await resolvePrivateKey(projectRoot, { network: 'testnet' });
+    if (!privateKey) return;
+
+    const { getNetwork } = await import('../../config/networks');
+    const networkConfig = getNetwork('base-sepolia');
+    if (!networkConfig.aa || !networkConfig.contracts.agentRegistry) return;
+
+    const bundlerPrimary = networkConfig.aa.bundlerUrls.coinbase ?? networkConfig.aa.bundlerUrls.pimlico;
+    const paymasterPrimary = networkConfig.aa.paymasterUrls.coinbase ?? networkConfig.aa.paymasterUrls.pimlico;
+    if (!bundlerPrimary || !paymasterPrimary) {
+      output.info('Skipped test-USDC mint (no testnet bundler/paymaster configured).');
+      return;
+    }
+    const bundlerBackup =
+      networkConfig.aa.bundlerUrls.coinbase && networkConfig.aa.bundlerUrls.pimlico
+        ? networkConfig.aa.bundlerUrls.pimlico
+        : undefined;
+    const paymasterBackup =
+      networkConfig.aa.paymasterUrls.coinbase && networkConfig.aa.paymasterUrls.pimlico
+        ? networkConfig.aa.paymasterUrls.pimlico
+        : undefined;
+
+    const provider = new ethers.JsonRpcProvider(networkConfig.rpcUrl);
+    const signer = new ethers.Wallet(privateKey, provider);
+    const { AutoWalletProvider } = await import('../../wallet/AutoWalletProvider');
+    const autoWallet = await AutoWalletProvider.create({
+      signer,
+      provider,
+      chainId: networkConfig.chainId,
+      actpKernelAddress: networkConfig.contracts.actpKernel,
+      bundler: { primaryUrl: bundlerPrimary, backupUrl: bundlerBackup },
+      paymaster: { primaryUrl: paymasterPrimary, backupUrl: paymasterBackup },
+    });
+    const smartWalletAddress = autoWallet.getAddress();
+
+    // Only mint when empty (first link) so re-publishing doesn't keep topping up.
+    const usdc = new ethers.Contract(
+      networkConfig.contracts.usdc,
+      ['function balanceOf(address) view returns (uint256)'],
+      provider,
+    );
+    const bal: bigint = await usdc.balanceOf(smartWalletAddress);
+    if (bal > 0n) {
+      output.info(`Test USDC already present (${(Number(bal) / 1e6).toFixed(2)} USDC) — skipping mint.`);
+      return;
+    }
+
+    const { buildTestnetMintBatch } = await import('../../wallet/aa/TransactionBatcher');
+    const mintCalls = buildTestnetMintBatch(
+      networkConfig.contracts.usdc,
+      smartWalletAddress,
+      '1000000000', // 1000 USDC
+    );
+    const txRequests = mintCalls.map((c) => ({ to: c.target, data: c.data, value: c.value.toString() }));
+
+    output.info('Minting 1,000 test USDC to your Smart Wallet (gasless)...');
+    const receipt = await autoWallet.sendBatchTransaction(txRequests);
+    if (receipt.success) {
+      output.success('Minted 1,000 test USDC to your Smart Wallet.');
+    } else {
+      output.warning(`Test-USDC mint did not confirm (${receipt.hash}). You can fund the wallet later.`);
+    }
+  } catch (e) {
+    output.warning(
+      `Could not auto-mint test USDC: ${(e as Error).message}. The link succeeded — fund the wallet manually if needed.`,
+    );
+  }
 }
 
 // ============================================================================
