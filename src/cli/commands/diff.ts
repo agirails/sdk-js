@@ -73,6 +73,40 @@ async function runDiff(
   }
   const resolvedPath = resolve(effectivePath);
 
+  // AIP-18 DEC-3: a pure buyer (intent: pay) is never anchored on-chain — its
+  // config is local-authored and its budget is private (never synced). An
+  // on-chain diff doesn't apply, so report that honestly instead of the
+  // misleading "no-remote / run publish".
+  try {
+    const { existsSync, readFileSync } = await import('fs');
+    if (existsSync(resolvedPath)) {
+      const { parseAgirailsMdV4 } = await import('../../config/agirailsmdV4');
+      const v4 = parseAgirailsMdV4(readFileSync(resolvedPath, 'utf-8'));
+      if (v4.intent === 'pay') {
+        output.result(
+          {
+            status: 'buyer-local',
+            intent: 'pay',
+            inSync: true,
+            hasLocalFile: true,
+            hasOnChainConfig: false,
+            note: 'Buyer config is local-authored; not anchored on-chain (budget stays private).',
+          },
+          { quietKey: 'status' }
+        );
+        output.blank();
+        output.info(
+          'Buyer (intent: pay): config is local-authored and budget is private — ' +
+            'nothing to diff on-chain.'
+        );
+        output.print('Edit your {slug}.md locally, then run: actp publish (re-links to agirails.app).');
+        return;
+      }
+    }
+  } catch {
+    // Not a parseable v4 buyer file — fall through to the normal on-chain diff.
+  }
+
   // Determine agent address via AIP-13 keystore resolution
   let agentAddress = options.address;
   if (!agentAddress) {
