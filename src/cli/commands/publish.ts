@@ -563,6 +563,22 @@ async function runPublish(
         'Pay-only agent: skipping on-chain registration. ' +
           'Identity is your wallet + agirails.app profile.'
       );
+
+      // Resolve the Smart Wallet address for a wallet:auto buyer so the DB
+      // link (and the buyer-link marker) record the address the agent actually
+      // transacts from — not the bare EOA signer. Providers get this from
+      // on-chain activation; a buyer skips activation, so read the address
+      // `actp init` derived into .actp/config.json. (Falls back to the EOA if
+      // unknown.) This makes buyer attribution match on-chain payments.
+      try {
+        const cfg = loadConfig(projectRoot);
+        if (cfg.wallet === 'auto' && cfg.smartWallet) {
+          smartWalletAddress = cfg.smartWallet;
+        }
+      } catch {
+        // Best-effort — the EOA fallback below still produces a valid link.
+      }
+
       // Write the buyer-link marker so the SDK's auto-wallet gate grants
       // gas-sponsored transactions to this linked buyer (AIP-18 DEC-8) — a
       // buyer has no on-chain configHash and no pending-publish, so without
@@ -579,7 +595,7 @@ async function runPublish(
           {
             version: 1,
             slug: v4Config!.slug,
-            wallet: (walletAddress || '').toLowerCase(),
+            wallet: (smartWalletAddress || walletAddress || '').toLowerCase(),
             linkedAt: new Date().toISOString(),
           },
           buyerLinkActpDir,
@@ -753,6 +769,13 @@ async function runPublish(
               // the next re-publish.
               intent: v4Config.intent,
               capabilities: v4Config.services.map(s => s.type),
+              // Buyer-side discovery metadata (AIP-18 §7.1, opt-in semi-public)
+              // so the dashboard/profile reflects what the buyer requests.
+              // budget is deliberately NOT synced — it is a private operational
+              // cap (DEC-2) and never leaves the owner's machine.
+              ...(v4Config.servicesNeeded?.length
+                ? { services_needed: v4Config.servicesNeeded }
+                : {}),
               pricing: {
                 model: "fixed",
                 amount: String(v4Config.pricing.base),

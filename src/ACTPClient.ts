@@ -1805,6 +1805,18 @@ export class ACTPClient {
         (agentBlock && typeof agentBlock.slug === 'string' ? agentBlock.slug : undefined) ||
         (fileSlug !== 'AGIRAILS' ? fileSlug : undefined);
 
+      // AIP-18 DEC-3: a pure buyer (intent: pay) is never anchored on-chain —
+      // its config lives in the local file + the agirails.app DB, not the
+      // AgentRegistry. Chain-based drift/reconcile does not apply, so skip it
+      // rather than emit a misleading "not published / config ahead" warning
+      // on every client startup. (DB-based buyer reconcile is future work.)
+      const intentVal =
+        (typeof frontmatter.intent === 'string' ? frontmatter.intent : undefined) ||
+        (agentBlock && typeof agentBlock.intent === 'string' ? agentBlock.intent : undefined);
+      if (intentVal?.toLowerCase() === 'pay') {
+        return;
+      }
+
       const autoSync =
         process.env.ACTP_AUTO_SYNC !== '0' && process.env.ACTP_AUTO_SYNC !== 'false';
 
