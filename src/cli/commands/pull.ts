@@ -74,6 +74,43 @@ async function runPull(
   options: PullCommandOptions,
   output: Output
 ): Promise<void> {
+  // AIP-18 DEC-3: a pure buyer (intent: pay) is local-authored and never
+  // anchored on-chain — there is nothing on-chain to pull, and its budget is
+  // private (never synced). Report that honestly instead of "No config
+  // published on-chain". (Authenticated web→local pull for buyers is future
+  // work; budget would never be part of it.)
+  try {
+    const { existsSync, readFileSync } = await import('fs');
+    let identityPath = filePath ? resolve(filePath) : undefined;
+    if (!identityPath) {
+      const p = resolveIdentityPath();
+      if (p) identityPath = p;
+    }
+    if (identityPath && existsSync(identityPath)) {
+      const { parseAgirailsMdV4 } = await import('../../config/agirailsmdV4');
+      const v4 = parseAgirailsMdV4(readFileSync(identityPath, 'utf-8'));
+      if (v4.intent === 'pay') {
+        output.result(
+          {
+            written: false,
+            status: 'buyer-local',
+            intent: 'pay',
+            note: 'Buyer config is local-authored; nothing to pull (budget stays private).',
+          },
+          { quietKey: 'status' }
+        );
+        output.blank();
+        output.info(
+          'Buyer (intent: pay): config is local-authored and budget is private — nothing to pull.'
+        );
+        output.print('Edit your {slug}.md locally, then run: actp publish to push the public fields.');
+        return;
+      }
+    }
+  } catch {
+    // Not a parseable v4 buyer file — fall through to the normal on-chain pull.
+  }
+
   // Resolve agent address: --agent-id > --address/--wallet > identity pointer > env
   let agentAddress = options.address || options.wallet;
 
