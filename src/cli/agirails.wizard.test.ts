@@ -379,7 +379,9 @@ describe('runWizard — runTest failure', () => {
   it('returns ERROR with a clean message when runTest throws a non-Error value', async () => {
     const deps = makeDeps({
       runTestImpl: async () => {
-        // eslint-disable-next-line @typescript-eslint/only-throw-error
+        // Rule `@typescript-eslint/only-throw-error` is not loaded in our
+        // eslint config (would need @typescript-eslint v8+; we are on v6);
+        // disable directive removed 2026-06-09 to fix CI lint.
         throw 'string error from a buggy library';
       },
     });

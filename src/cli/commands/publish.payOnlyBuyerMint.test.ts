@@ -227,7 +227,8 @@ jest.mock('ethers', () => {
 });
 
 // Import the publish command AFTER all jest.mock() calls are registered.
-// eslint-disable-next-line import/first
+// (Rule `import/first` is not loaded in our eslint config — disable
+// removed 2026-06-09 to fix CI lint "Definition for rule not found".)
 import { createPublishCommand } from './publish';
 
 // ---------------------------------------------------------------------------

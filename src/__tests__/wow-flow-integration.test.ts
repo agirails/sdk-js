@@ -82,12 +82,11 @@ jest.mock('../cli/lib/runRequest', () => {
 });
 
 // `runTest` is the entry point. Import AFTER mocks so the mocked surface
-// is what runTest sees at call time.
-// eslint-disable-next-line import/first
+// is what runTest sees at call time. (Rule `import/first` is not loaded
+// in our eslint config — disable directives removed 2026-06-09 because
+// they cause "Definition for rule not found" errors on CI lint.)
 import { runTest } from '../cli/commands/test';
-// eslint-disable-next-line import/first
 import * as resolveAgentMod from '../cli/lib/resolveAgent';
-// eslint-disable-next-line import/first
 import * as runRequestMod from '../cli/lib/runRequest';
 
 const mockResolveAgent = resolveAgentMod.resolveAgent as jest.MockedFunction<
