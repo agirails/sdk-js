@@ -113,7 +113,10 @@ export class PaymasterClient {
             'No backup paymaster configured.'
         );
       }
-      sdkLogger.warn('Primary paymaster failed, trying backup', {
+      // Debug, not warn: a recovered failover (primary slow → backup sponsors)
+      // is normal resilience, not a user-facing error. The both-failed case
+      // below still throws a clear, surfaced error.
+      sdkLogger.debug('Primary paymaster failed, trying backup', {
         method,
         error: primaryError instanceof Error ? primaryError.message : String(primaryError),
       });
