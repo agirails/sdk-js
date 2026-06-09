@@ -425,27 +425,33 @@ export class Agent extends EventEmitter {
    * {@link AgentConfig.deliveryChannel} at construction time. Read by
    * the `processJob` delivery hook. `undefined` disables the hook.
    */
-  private readonly deliveryChannel?: DeliveryChannel;
+  // AIP-16 4.6.1 — mutable so `ensureAip16AutoWire()` can lazy-fill
+  // missing deps when ACTP_DELIVERY_CHANNEL=v1 is set process-wide.
+  // Public API unchanged (these are still `private`).
+  private deliveryChannel?: DeliveryChannel;
 
   /**
    * AIP-16 Phase 2e — EOA signer for delivery envelopes. Captured from
    * {@link AgentConfig.deliverySigner} at construction time. Read by
    * the `processJob` delivery hook. `undefined` disables the hook.
    */
-  private readonly deliverySigner?: Signer;
+  // See note on deliveryChannel above (AIP-16 4.6.1 auto-wire mutability).
+  private deliverySigner?: Signer;
 
   /**
    * AIP-16 Phase 2e — kernel address for the EIP-712 verifying contract.
    * Captured from {@link AgentConfig.kernelAddress}. `undefined` disables
    * the hook.
    */
-  private readonly kernelAddress?: string;
+  // See note on deliveryChannel above (AIP-16 4.6.1 auto-wire mutability).
+  private kernelAddress?: string;
 
   /**
    * AIP-16 Phase 2e — chain id for the EIP-712 domain. Captured from
    * {@link AgentConfig.chainId}. `undefined` disables the hook.
    */
-  private readonly chainId?: number;
+  // See note on deliveryChannel above (AIP-16 4.6.1 auto-wire mutability).
+  private chainId?: number;
 
   /**
    * AIP-16 Phase 3 (H4 fix) — CoinbaseSmartWallet factory nonce used to
@@ -1874,6 +1880,77 @@ export class Agent extends EventEmitter {
    *   envelope body (UTF-8 for `public-v1`, AES-GCM ciphertext for
    *   `x25519-aes256gcm-v1`).
    */
+  /**
+   * AIP-16 4.6.1: lazy zero-config wire-up of channel delivery deps.
+   *
+   * Pre-4.6.1, providers had to construct `Agent` with all four delivery
+   * fields explicitly (deliveryChannel, deliverySigner, kernelAddress,
+   * chainId). Sentinel — the canonical reference provider — never adopted
+   * that boilerplate, so even with `ACTP_DELIVERY_CHANNEL=v1` set process-
+   * wide its provide() handlers never POSTed an envelope. Buyers fell back
+   * to the vendored local-reflection cache (`reflectionSource: local-
+   * fallback`).
+   *
+   * This method auto-resolves any missing dep when the flag is on:
+   *  * `deliveryChannel`  → new RelayDeliveryChannel({ baseUrl })
+   *  * `kernelAddress`    → networkConfig.contracts.actpKernel
+   *  * `chainId`          → networkConfig.chainId
+   *  * `deliverySigner`   → ethers Wallet built from the resolved private
+   *                         key (keystore/env, same path resolveBaseSigner
+   *                         already uses on line 2185).
+   *
+   * Idempotent — only fills what's missing. Any failure (e.g. no private
+   * key on mock mode) logs and leaves the field unset; the dependency
+   * gate below will then no-op the publish, matching prior behavior.
+   */
+  private async ensureAip16AutoWire(): Promise<void> {
+    if (process.env.ACTP_DELIVERY_CHANNEL !== 'v1') return;
+
+    if (!this.deliveryChannel) {
+      try {
+        const { RelayDeliveryChannel } = await import('../delivery/RelayDeliveryChannel');
+        this.deliveryChannel = new RelayDeliveryChannel({
+          baseUrl: process.env.AGIRAILS_RELAY_URL || 'https://www.agirails.app',
+        });
+      } catch (err) {
+        this.logger.warn('AIP-16 auto-wire: RelayDeliveryChannel import failed', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    if (!this.kernelAddress || typeof this.chainId !== 'number') {
+      try {
+        const { getNetwork } = await import('../config/networks');
+        const networkName = this.network === 'testnet' ? 'base-sepolia'
+          : this.network === 'mainnet' ? 'base-mainnet'
+          : this.network;
+        const net = getNetwork(networkName);
+        if (!this.kernelAddress) this.kernelAddress = net.contracts.actpKernel;
+        if (typeof this.chainId !== 'number') this.chainId = net.chainId;
+      } catch (err) {
+        this.logger.warn('AIP-16 auto-wire: failed to derive kernel/chainId', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    if (!this.deliverySigner && (this.network === 'testnet' || this.network === 'mainnet')) {
+      try {
+        const { resolvePrivateKey } = await import('../wallet/keystore');
+        const pk = await resolvePrivateKey(this.config.stateDirectory, { network: this.network });
+        if (pk) {
+          const { Wallet } = await import('ethers');
+          this.deliverySigner = new Wallet(pk);
+        }
+      } catch (err) {
+        this.logger.warn('AIP-16 auto-wire: failed to resolve deliverySigner', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+  }
+
   private async maybePublishDeliveryEnvelope(
     job: Job,
     result: unknown,
@@ -1886,6 +1963,13 @@ export class Agent extends EventEmitter {
     if (process.env.ACTP_DELIVERY_CHANNEL !== 'v1') {
       return;
     }
+
+    // --- Zero-config auto-wire (AIP-16 4.6.1) ---
+    //
+    // Lazy-resolve any missing delivery dep when the flag is on. Idempotent
+    // — only fills holes. Providers that pass deps explicitly keep their
+    // exact prior behavior.
+    await this.ensureAip16AutoWire();
 
     // --- Constructor-side dependency gate ---
     //

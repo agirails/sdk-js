@@ -40,6 +40,8 @@ import {
   copyToClipboardOSC52,
   openUrl,
 } from '../utils/share';
+import { RelayDeliveryChannel } from '../../delivery/RelayDeliveryChannel';
+import { getNetwork } from '../../config/networks';
 
 // ============================================================================
 // Command Definition
@@ -148,12 +150,33 @@ async function runTest(output: Output): Promise<void> {
   //    Picked to clear the 1%/$0.05 fee floor so receipts show a real
   //    net earning instead of "$0 earned". PRD §5.6 quote timeout
   //    default (30s) is generous on Base Sepolia.
+  //
+  // AIP-16: wire the delivery channel so the buyer posts a setup envelope
+  // and subscribes for Sentinel's response envelope. Without these three
+  // opts (`deliveryChannel`, `expectedKernelAddress`, `expectedChainId`)
+  // `runRequest`'s `deliveryEnabled` gate stays false, the whole AIP-16
+  // path is skipped, no envelope is ever requested, and the reflection
+  // falls through to the vendored local cache (`reflectionSource:
+  // local-fallback`). Per Sentinel's descriptor (sentinel.md) the channel
+  // privacy is `public`, so no buyer ephemeral keypair is needed —
+  // CANONICAL_EMPTY_BYTES32 is signed for the pubkey field.
+  const networkConfig = getNetwork('base-sepolia');
+  const deliveryChannel = new RelayDeliveryChannel({
+    // Default `baseUrl` is the production AGIRAILS relay; keeping it
+    // explicit here makes the intent reviewable without grepping
+    // RelayDeliveryChannel internals.
+    baseUrl: process.env.AGIRAILS_RELAY_URL || 'https://www.agirails.app',
+  });
   const result = await runRequest({
     provider: sentinel.address,
     amount: '10',
     service: 'onboarding',
     network: 'testnet',
     autoAccept: true,
+    deliveryChannel,
+    expectedKernelAddress: networkConfig.contracts.actpKernel as `0x${string}`,
+    expectedChainId: networkConfig.chainId,
+    deliveryPrivacy: 'public',
     onTransition: (state, txId, ts) => {
       output.print(`  [${ts.toISOString()}] ${state.padEnd(12)} ${txId}`);
     },
