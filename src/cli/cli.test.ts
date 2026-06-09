@@ -754,20 +754,34 @@ describe('Init Command', () => {
     }
   });
 
-  it('should require password for testnet wallet generation', async () => {
+  it('FIX-3: auto-generates ACTP_KEY_PASSWORD for testnet wallet when none is set', async () => {
+    // Pre-FIX-3 contract was: throw "Wallet password required" in non-TTY mode.
+    // FIX-3 contract: silently generate a strong password, persist to .env,
+    // chmod 0o600, and proceed with keystore creation. This test guards the
+    // new behavior so a future regression to "throw" is caught.
     const mockOutput = createMockOutput();
     const originalCwd = process.cwd();
     const origTTY = process.stdin.isTTY;
+    const savedPw = process.env.ACTP_KEY_PASSWORD;
 
     try {
       process.chdir(testDir);
-      // Force non-TTY so promptPassword() returns '' immediately
       (process.stdin as any).isTTY = false;
       delete process.env.ACTP_KEY_PASSWORD;
 
-      await expect(runInit({ mode: 'testnet' }, mockOutput)).rejects.toThrow('Wallet password required');
+      // Should NOT throw — FIX-3 auto-generates the password.
+      await runInit({ mode: 'testnet' }, mockOutput);
+
+      // Password is now in env (in-memory) and on disk (.env).
+      expect(process.env.ACTP_KEY_PASSWORD).toBeDefined();
+      expect(process.env.ACTP_KEY_PASSWORD!.length).toBe(32);
     } finally {
       (process.stdin as any).isTTY = origTTY;
+      if (savedPw === undefined) {
+        delete process.env.ACTP_KEY_PASSWORD;
+      } else {
+        process.env.ACTP_KEY_PASSWORD = savedPw;
+      }
       process.chdir(originalCwd);
     }
   });
