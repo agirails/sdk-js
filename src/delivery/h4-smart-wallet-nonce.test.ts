@@ -249,9 +249,28 @@ describe('H4 — DeliveryEnvelopeBuilder.buildPublic with smartWalletNonce', () 
 // Cross-repo schema parity (smoke)
 // ---------------------------------------------------------------------------
 
-describe('H4 — cross-repo type schema still byte-identical after smartWalletNonce addition', () => {
+// 2026-06-09: cross-repo path only exists in Damir's local sibling layout,
+// not in GitHub Actions CI. We skip the suite when the Platform repo is
+// not present; the Platform repo's own EIP-712 unit tests enforce parity
+// from the opposite side.
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const _fs = require('fs') as typeof import('fs');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const _pathLib = require('path') as typeof import('path');
+const _platformDir = _pathLib.resolve(
+  __dirname,
+  '../../../../Platform/agirails.app/web/lib/delivery'
+);
+const _platformAvailable =
+  _fs.existsSync(_pathLib.join(_platformDir, 'eip712.ts')) ||
+  _fs.existsSync(_pathLib.join(_platformDir, 'eip712.js'));
+const _describeCrossRepo = _platformAvailable ? describe : describe.skip;
+
+_describeCrossRepo('H4 — cross-repo type schema still byte-identical after smartWalletNonce addition', () => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const platformEip712 = require('../../../../Platform/agirails.app/web/lib/delivery/eip712') as {
+  const platformEip712 = (_platformAvailable
+    ? require('../../../../Platform/agirails.app/web/lib/delivery/eip712')
+    : {}) as {
     DELIVERY_SETUP_TYPES_V1: typeof DELIVERY_SETUP_TYPES_V1;
     DELIVERY_ENVELOPE_TYPES_V1: typeof DELIVERY_ENVELOPE_TYPES_V1;
   };
@@ -283,7 +302,9 @@ describe('H4 — cross-repo type schema still byte-identical after smartWalletNo
 
   it('cross-repo recovery: SDK-signed payload with nonce=7 recovers via Platform helper', async () => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { recoverSetupSigner: platformRecover } = require('../../../../Platform/agirails.app/web/lib/delivery/eip712') as {
+    const { recoverSetupSigner: platformRecover } = (_platformAvailable
+      ? require('../../../../Platform/agirails.app/web/lib/delivery/eip712')
+      : { recoverSetupSigner }) as {
       recoverSetupSigner: typeof recoverSetupSigner;
     };
     const wallet = Wallet.createRandom();
