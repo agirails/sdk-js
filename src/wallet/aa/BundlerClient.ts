@@ -65,7 +65,10 @@ export class BundlerClient {
     this.backupUrl = config.backupUrl;
     this.maxRetries = config.maxRetries ?? 2;
     this.baseDelayMs = config.baseDelayMs ?? 1000;
-    this.timeoutMs = config.timeoutMs ?? 30_000;
+    // 20s: long enough for a healthy bundler's eth_sendUserOperation /
+    // estimate, short enough that an occasionally-hung CDP fails over to the
+    // backup quickly instead of stalling the user. (Paymaster is already 15s.)
+    this.timeoutMs = config.timeoutMs ?? 20_000;
   }
 
   /**
@@ -166,7 +169,11 @@ export class BundlerClient {
       if (!this.backupUrl) {
         throw primaryError;
       }
-      sdkLogger.warn('Primary bundler failed, trying backup', {
+      // Debug, not warn: a recovered failover (primary slow → backup works) is
+      // normal resilience, not a user-facing error. Surfacing it mid-flow (e.g.
+      // "error: This operation was aborted" during a successful mint) just
+      // alarms users. A total failure (backup also fails) still throws below.
+      sdkLogger.debug('Primary bundler failed, trying backup', {
         method,
         error: primaryError instanceof Error ? primaryError.message : String(primaryError),
       });
@@ -191,7 +198,7 @@ export class BundlerClient {
         if (isNonTransient(lastError)) throw lastError;
         if (attempt < this.maxRetries) {
           const delay = this.baseDelayMs * Math.pow(2, attempt);
-          sdkLogger.warn('Bundler request failed, retrying', {
+          sdkLogger.debug('Bundler request failed, retrying', {
             attempt: attempt + 1,
             method,
             delayMs: delay,
@@ -261,6 +268,14 @@ function sleep(ms: number): Promise<void> {
  * Detect non-transient errors that shouldn't be retried.
  */
 function isNonTransient(error: Error): boolean {
+  // A timed-out request means THIS provider is hung. Don't burn the remaining
+  // retries hammering it (that's how an occasionally-slow CDP turned into a
+  // ~90s wait before failover) — treat a timeout as non-transient so
+  // callWithFallback flips to the backup provider immediately.
+  const name = (error as { name?: string }).name;
+  if (name === 'AbortError' || error.message.toLowerCase().includes('aborted')) {
+    return true;
+  }
   const code = (error as any).code;
   if (typeof code === 'number') {
     // JSON-RPC protocol errors: -32700 to -32600
