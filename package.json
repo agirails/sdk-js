@@ -1,6 +1,6 @@
 {
   "name": "@agirails/sdk",
-  "version": "4.4.9",
+  "version": "4.5.0",
   "description": "AGIRAILS SDK for the ACTP (Agent Commerce Transaction Protocol) - Unified mock + blockchain support",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -34,6 +34,11 @@
       "types": "./dist/transport/QuoteChannel.d.ts",
       "require": "./dist/transport/QuoteChannel.js",
       "default": "./dist/transport/QuoteChannel.js"
+    },
+    "./delivery": {
+      "types": "./dist/delivery/index.d.ts",
+      "require": "./dist/delivery/index.js",
+      "default": "./dist/delivery/index.js"
     }
   },
   "bin": {

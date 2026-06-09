@@ -286,6 +286,18 @@ export class MockRuntime implements IACTPRuntime {
   private eventLog: MockEvent[] = [];
 
   /**
+   * AIP-16 Phase 2e: Envelope deferral flags (test-only).
+   *
+   * When a txId is present in this set, the next `autoSettleIfReady` call
+   * will skip one cycle (and clear the flag), giving tests a deterministic
+   * way to assert envelope arrival ordering vs. settlement.
+   *
+   * Default behavior is unchanged — flags are opt-in via the
+   * `setEnvelopePendingForTests` / `clearEnvelopePendingForTests` APIs.
+   */
+  private _envelopeDeferralFlags: Set<string> = new Set<string>();
+
+  /**
    * Time management interface.
    *
    * SECURITY NOTE: All time-modifying operations are async and use
@@ -528,6 +540,15 @@ export class MockRuntime implements IACTPRuntime {
    * @param txId - Transaction ID to check
    */
   private async autoSettleIfReady(txId: string): Promise<void> {
+    // AIP-16 Phase 2e: envelope deferral hook (test-only).
+    // If a deferral flag is set for this txId, consume it and skip one cycle.
+    // This lets tests deterministically interleave envelope publishes with
+    // settlement without racing wall-clock or block timing.
+    if (this._envelopeDeferralFlags.has(txId)) {
+      this._envelopeDeferralFlags.delete(txId);
+      return;
+    }
+
     // Pre-check without lock to avoid unnecessary lock acquisition
     const precheck = this.stateManager.loadState();
     const preTx = precheck.transactions[txId];
@@ -541,6 +562,33 @@ export class MockRuntime implements IACTPRuntime {
     } catch {
       // Already settled, disputed, or other concurrent state change — ignore
     }
+  }
+
+  /**
+   * AIP-16 Phase 2e (test-only): mark a transaction as having a pending
+   * envelope so the next `autoSettleIfReady` cycle is skipped exactly once.
+   *
+   * Intended for delivery surface integration tests that need to assert
+   * "envelope arrives before settlement" without depending on wall-clock
+   * timing. Production code MUST NOT call this — flag is consumed on the
+   * next auto-settle check.
+   *
+   * @param txId - Transaction ID to defer.
+   */
+  public setEnvelopePendingForTests(txId: string): void {
+    this._envelopeDeferralFlags.add(txId);
+  }
+
+  /**
+   * AIP-16 Phase 2e (test-only): clear a previously set envelope deferral
+   * flag without consuming an auto-settle cycle.
+   *
+   * Idempotent — clearing a flag that was never set is a no-op.
+   *
+   * @param txId - Transaction ID to clear.
+   */
+  public clearEnvelopePendingForTests(txId: string): void {
+    this._envelopeDeferralFlags.delete(txId);
   }
 
   /**

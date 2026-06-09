@@ -27,6 +27,218 @@ import { generateWallet, computeSmartWalletInit } from '../utils/wallet';
 import { MockStateManager } from '../../runtime/MockStateManager';
 
 // ============================================================================
+// FIX-3: ACTP_KEY_PASSWORD auto-generation
+// ============================================================================
+
+/**
+ * Source of the resolved ACTP_KEY_PASSWORD.
+ *  - `env`: already in `process.env.ACTP_KEY_PASSWORD` before this ran.
+ *  - `dotenv`: read from `<dir>/.env`.
+ *  - `generated`: newly minted by `generateStrongPassword()`.
+ */
+export type KeyPasswordSource = 'env' | 'dotenv' | 'generated';
+
+/**
+ * Result of `ensureKeyPassword`.
+ *
+ * `envFilePath` is present whenever the helper looked at or wrote to a `.env`
+ * file on disk; it is `undefined` when the password was taken from
+ * `process.env` (no disk touch).
+ */
+export interface EnsureKeyPasswordResult {
+  source: KeyPasswordSource;
+  wroteToDisk: boolean;
+  fingerprint: string;
+  envFilePath?: string;
+}
+
+/**
+ * Generate a 32-character password from the base64 alphabet (`A-Za-z0-9+/`).
+ *
+ * 24 random bytes encode to exactly 32 base64 chars with no `=` padding
+ * (since 24 % 3 === 0), which keeps the alphabet test happy.
+ */
+export function generateStrongPassword(): string {
+  return crypto.randomBytes(24).toString('base64');
+}
+
+/**
+ * Deterministic short fingerprint of a password: first 12 hex chars of SHA-256.
+ * Safe to log — it does NOT reveal the password.
+ */
+export function fingerprintPassword(password: string): string {
+  return crypto.createHash('sha256').update(password, 'utf8').digest('hex').slice(0, 12);
+}
+
+/**
+ * Read the value of `ACTP_KEY_PASSWORD` from a `.env` file.
+ *
+ * Returns `undefined` if the file does not exist, the key is missing, or
+ * the value is empty. Strips surrounding single or double quotes.
+ * Comment lines (starting with `#`) are skipped.
+ */
+export function readKeyPasswordFromDotenv(envPath: string): string | undefined {
+  let content: string;
+  try {
+    content = fs.readFileSync(envPath, 'utf8');
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT' || code === 'EACCES' || code === 'EPERM') {
+      return undefined;
+    }
+    return undefined;
+  }
+  const lines = content.split(/\r?\n/);
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const match = /^ACTP_KEY_PASSWORD\s*=\s*(.*)$/.exec(trimmed);
+    if (match) {
+      let value = match[1].trim();
+      // Strip surrounding matched quotes (double or single).
+      if (
+        value.length >= 2 &&
+        ((value.startsWith('"') && value.endsWith('"')) ||
+          (value.startsWith("'") && value.endsWith("'")))
+      ) {
+        value = value.slice(1, -1);
+      }
+      return value.length > 0 ? value : undefined;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Append `.env` to the project's `.gitignore`, creating the file if missing
+ * and avoiding duplicate lines.
+ *
+ * Best-effort: failures are swallowed (returns `false`).
+ */
+function appendDotenvToGitignore(gitignorePath: string): boolean {
+  let content = '';
+  try {
+    content = fs.readFileSync(gitignorePath, 'utf8');
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code !== 'ENOENT') return false;
+    content = '';
+  }
+  // Already present? bail.
+  if (/^\.env$/m.test(content)) return true;
+  if (content.length > 0 && !content.endsWith('\n')) content += '\n';
+  content += '.env\n';
+  try {
+    fs.writeFileSync(gitignorePath, content);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Write `ACTP_KEY_PASSWORD=<password>` to the .env file (appending if the
+ * file already exists, creating it otherwise) and chmod it to 0o600.
+ *
+ * Returns `true` on success, `false` if any filesystem op fails — callers
+ * should still set `process.env.ACTP_KEY_PASSWORD` in memory so the rest of
+ * the init flow can proceed.
+ */
+function writeKeyPasswordToDotenv(envPath: string, password: string): boolean {
+  let content = '';
+  try {
+    content = fs.readFileSync(envPath, 'utf8');
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code !== 'ENOENT') return false;
+    content = '';
+  }
+  // If the key already exists, do not overwrite — caller decides what to do.
+  if (/^ACTP_KEY_PASSWORD\s*=/m.test(content)) return true;
+  if (content.length > 0 && !content.endsWith('\n')) content += '\n';
+  content += `ACTP_KEY_PASSWORD=${password}\n`;
+  try {
+    fs.writeFileSync(envPath, content, { mode: 0o600 });
+  } catch {
+    return false;
+  }
+  try {
+    fs.chmodSync(envPath, 0o600);
+  } catch {
+    /* best-effort on platforms that don't honour POSIX modes */
+  }
+  return true;
+}
+
+/**
+ * Ensure that `process.env.ACTP_KEY_PASSWORD` is set before keystore
+ * generation runs.
+ *
+ * Resolution order:
+ *  1. If `process.env.ACTP_KEY_PASSWORD` is already a non-empty string, use it.
+ *  2. Otherwise, read from `<dir>/.env`.
+ *  3. Otherwise, generate a fresh 32-char password, persist it to
+ *     `<dir>/.env` (chmod 0o600), and add `.env` to `<dir>/.gitignore`.
+ *
+ * Only the *fingerprint* is ever written to `output`; the raw password is
+ * never logged.
+ */
+export function ensureKeyPassword(dir: string, output: Output): EnsureKeyPasswordResult {
+  // 1. process.env already populated → take it.
+  const fromEnv = process.env.ACTP_KEY_PASSWORD;
+  if (typeof fromEnv === 'string' && fromEnv.length > 0) {
+    return {
+      source: 'env',
+      wroteToDisk: false,
+      fingerprint: fingerprintPassword(fromEnv),
+    };
+  }
+
+  const envPath = path.join(dir, '.env');
+  const gitignorePath = path.join(dir, '.gitignore');
+
+  // 2. Try .env.
+  const fromDotenv = readKeyPasswordFromDotenv(envPath);
+  if (fromDotenv) {
+    process.env.ACTP_KEY_PASSWORD = fromDotenv;
+    const fingerprint = fingerprintPassword(fromDotenv);
+    output.print('');
+    output.print(`Loaded ACTP_KEY_PASSWORD from .env (fingerprint: ${fingerprint})`);
+    return {
+      source: 'dotenv',
+      wroteToDisk: false,
+      fingerprint,
+      envFilePath: envPath,
+    };
+  }
+
+  // 3. Generate.
+  const password = generateStrongPassword();
+  const wroteToDisk = writeKeyPasswordToDotenv(envPath, password);
+  appendDotenvToGitignore(gitignorePath);
+  process.env.ACTP_KEY_PASSWORD = password;
+  const fingerprint = fingerprintPassword(password);
+
+  output.print('');
+  if (wroteToDisk) {
+    output.print('Auto-generated ACTP_KEY_PASSWORD (32 random chars) and wrote it to .env.');
+  } else {
+    output.warning(
+      `Could not write .env at ${envPath} — auto-generated ACTP_KEY_PASSWORD kept in process.env only.`,
+    );
+  }
+  output.print(`Fingerprint (SHA-256 first 12 hex): ${fingerprint}`);
+  output.print('Back this up — you need it to decrypt your keystore.');
+
+  return {
+    source: 'generated',
+    wroteToDisk,
+    fingerprint,
+    envFilePath: envPath,
+  };
+}
+
+// ============================================================================
 // Command Definition
 // ============================================================================
 
@@ -235,6 +447,10 @@ async function runInit(options: InitOptions, output: Output, cmd?: Command): Pro
       address = '0x' + crypto.randomBytes(20).toString('hex');
       output.info(`Generated mock address: ${address}`);
     } else {
+      // FIX-3: ensure ACTP_KEY_PASSWORD is set BEFORE we mint the keystore.
+      // Resolution order is env → .env → generate-and-persist.
+      ensureKeyPassword(projectRoot, output);
+
       // Generate a real wallet with encrypted keystore
       const actpDir = getActpDir(projectRoot);
       fs.mkdirSync(actpDir, { recursive: true });

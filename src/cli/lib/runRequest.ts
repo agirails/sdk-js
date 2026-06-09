@@ -45,8 +45,43 @@ import { ACTPClient } from '../../ACTPClient';
 import { resolvePrivateKey } from '../../wallet/keystore';
 import { TransactionState } from '../../runtime/types/MockState';
 import { Logger } from '../../utils/Logger';
+import {
+  CANONICAL_EMPTY_BYTES32,
+  DeliverySetupBuilder,
+  DeliveryEnvelopeBuilder,
+  generateEphemeralKeyPair,
+  type DeliveryChannel,
+  type DeliveryError,
+  type DeliveryEnvelopeWireV1,
+  type DeliveryPrivacy,
+  type DeliverySubscription,
+} from '../../delivery';
 
 export type RequestNetwork = 'mock' | 'testnet' | 'mainnet';
+
+// ============================================================================
+// Time helpers (single seam — do NOT inline wall-clock primitives elsewhere)
+// ============================================================================
+//
+// AIP-16 Phase 2e discipline: every wall-clock or monotonic-time read in this
+// module flows through these helpers. Tests inject deterministic clocks via
+// the helpers in `setupBuilder` / `envelopeBuilder`; this module's own timing
+// (envelope grace period, elapsed bookkeeping) sticks to these two named seams
+// so a future test harness can swap them without grepping for literals.
+//
+// `secondsNow()` — integer Unix seconds, used wherever EIP-712 `uint64`
+//   timestamps or display-friendly elapsed values are needed.
+// `monoMillisNow()` — monotonic milliseconds, used for in-process timers and
+//   elapsed-budget checks. Backed by `Date.now()` (Node lacks `process.hrtime`
+//   in browser builds, and we don't need sub-ms resolution here).
+
+function secondsNow(): number {
+  return Math.floor(Date.now() / 1000);
+}
+
+function monoMillisNow(): number {
+  return Date.now();
+}
 
 export interface RunRequestOptions {
   /** Provider — checksummed or lowercase Ethereum address. */
@@ -77,6 +112,91 @@ export interface RunRequestOptions {
   stateDirectory?: string;
   /** Called for every state transition the requester observes. */
   onTransition?: (state: TransactionState, txId: string, ts: Date) => void;
+
+  // --------------------------------------------------------------------------
+  // AIP-16 Phase 2e — Delivery Surface (opt-in, all optional)
+  // --------------------------------------------------------------------------
+
+  /**
+   * Delivery channel for AIP-16 setup POST + envelope subscription.
+   *
+   * When omitted, runRequest behaves exactly as before — no setup is posted,
+   * no envelope subscription runs, and `payload` falls back to the legacy
+   * `tx.deliveryProof` parsing path. Tests and pre-AIP-16 deployments are
+   * unaffected.
+   *
+   * When provided AND `expectedKernelAddress` + `expectedChainId` are also
+   * supplied, runRequest:
+   *  1. signs and POSTs a `DeliverySetupWireV1` between createTransaction
+   *     and linkEscrow,
+   *  2. subscribes to envelopes in parallel with state polling,
+   *  3. populates `RunRequestResult.payload` from the decrypted (or parsed)
+   *     envelope body once one arrives.
+   */
+  deliveryChannel?: DeliveryChannel;
+
+  /**
+   * Trusted ACTP kernel address for EIP-712 setup/envelope binding.
+   *
+   * Required (alongside `deliveryChannel` + `expectedChainId`) to enable
+   * the AIP-16 delivery flow. Used as the EIP-712 `verifyingContract`
+   * domain anchor and as the envelope-verifier allowlist anchor.
+   */
+  expectedKernelAddress?: string;
+
+  /**
+   * Trusted EVM chain id for the AIP-16 delivery binding (e.g. 84532 for
+   * Base Sepolia, 8453 for Base mainnet).
+   *
+   * Required (alongside `deliveryChannel` + `expectedKernelAddress`) to
+   * enable the AIP-16 delivery flow.
+   */
+  expectedChainId?: number;
+
+  /**
+   * Grace period (in milliseconds) to keep the envelope subscription open
+   * AFTER the transaction reaches DELIVERED. Default 30_000 (30s).
+   *
+   * Settlement is NEVER blocked by the wait — if the envelope arrives
+   * before DELIVERED, `payload` is populated and the subscription closes
+   * early. If the grace period elapses with no envelope, runRequest
+   * proceeds with `payload = undefined` and `deliveryError.code =
+   * 'envelope_missing'` set (informational; not fatal).
+   */
+  envelopeWaitMs?: number;
+
+  /**
+   * Privacy posture requested in the buyer setup. Default `"public"`.
+   *
+   * `"public"`: setup carries `buyerEphemeralPubkey = CANONICAL_EMPTY_BYTES32`;
+   *   envelope body is plaintext UTF-8 JSON (`public-v1` scheme); no
+   *   ephemeral keypair is generated.
+   *
+   * `"encrypted"`: an ephemeral X25519 keypair is generated for this
+   *   call; the public key is embedded in the signed setup; the private
+   *   key is held in this closure ONLY (never persisted, never returned)
+   *   and used to decrypt the envelope body once it arrives.
+   */
+  deliveryPrivacy?: DeliveryPrivacy;
+
+  /**
+   * CoinbaseSmartWallet factory nonce used to derive the buyer's
+   * `requesterAddress` from the EOA `signerAddress`. Default `0` (the
+   * first wallet per owner).
+   *
+   * H4 fix (AIP-16 Phase 3 HIGH) — high-level surface. Buyers whose
+   * Smart Wallet was deployed at a non-zero factory nonce MUST pass that
+   * nonce here so the AIP-16 server-side derivation lands on the correct
+   * address. Omitting it (or passing `0`) reproduces the legacy behavior
+   * and yields byte-identical signing for the vast majority of callers
+   * (auto-wallet deploys at nonce=0).
+   *
+   * Threaded into {@link DeliverySetupBuilder.build}. Negative or
+   * non-integer values are rejected by the builder with
+   * `BUILDER_INVALID_SMART_WALLET_NONCE` (surfaces as `setup_post_failed`
+   * `deliveryError` here — settlement still proceeds).
+   */
+  smartWalletNonce?: number;
 }
 
 export class QuoteTimeoutError extends Error {
@@ -127,6 +247,21 @@ export interface RunRequestResult {
    *   - network is 'mock' (no real chain ⇒ no real receipt to publish)
    */
   receiptUrl: string | null;
+
+  /**
+   * Structured non-fatal delivery error if any AIP-16 step failed.
+   *
+   * Set when:
+   *  - the setup POST timed out or failed (`setup_post_failed`),
+   *  - the envelope grace period elapsed with no envelope (`envelope_missing`),
+   *  - envelope decryption / parsing failed (`envelope_decrypt_failed`).
+   *
+   * NEVER set when the delivery channel was not provided (AIP-16 was off).
+   * Settlement is never blocked by these failures — the channel is a
+   * convenience layer, not a fund-flow gate. Callers MAY surface this
+   * error in CLI output to help users diagnose channel/relay issues.
+   */
+  deliveryError?: DeliveryError;
 }
 
 const TERMINAL_FAILURE: TransactionState[] = ['CANCELLED', 'DISPUTED'];
@@ -222,7 +357,7 @@ export async function runRequest(opts: RunRequestOptions): Promise<RunRequestRes
   //    when AutoWallet is active, or the EOA otherwise.
   //    `amount` is the human-readable USDC string (parseAmount handles
   //    units internally); do NOT pass amountWei here.
-  const startedAt = Date.now();
+  const startedAt = monoMillisNow();
   const txId = await client.standard.createTransaction({
     provider: providerAddress,
     amount: opts.amount,
@@ -231,6 +366,173 @@ export async function runRequest(opts: RunRequestOptions): Promise<RunRequestRes
     serviceDescription: serviceHash, // PRD §5.6
   });
   opts.onTransition?.('INITIATED', txId, new Date());
+
+  // ----------------------------------------------------------------------
+  // 7a. AIP-16 Phase 2e — Delivery surface: setup POST + envelope subscribe
+  // ----------------------------------------------------------------------
+  //
+  // Conditions for AIP-16 activation in this call:
+  //   - caller passed `deliveryChannel`
+  //   - caller passed `expectedKernelAddress`
+  //   - caller passed `expectedChainId`
+  //   - caller passed a `privateKey` (we need a Signer for the EIP-712
+  //     setup signature — Smart Wallet mode is not yet wired here; if a
+  //     caller lacks a raw signer, the delivery surface is skipped and
+  //     legacy `tx.deliveryProof` decoding is the only payload path).
+  //
+  // Failure of either the setup POST OR the envelope subscription is
+  // STRICTLY non-fatal: settlement always proceeds. Errors are captured
+  // into `deliveryError` for caller visibility.
+  const deliveryEnabled =
+    !!opts.deliveryChannel &&
+    !!opts.expectedKernelAddress &&
+    typeof opts.expectedChainId === 'number' &&
+    !!privateKey;
+
+  // Closure-scoped delivery state. Buyer ephemeral private key is held
+  // ONLY in this closure and is never logged, returned, or persisted.
+  let deliveryError: DeliveryError | undefined;
+  let envelopePayload: unknown = undefined;
+  let envelopePayloadResolved = false;
+  let envelopeSubscription: DeliverySubscription | undefined;
+  let buyerEphemeralPrivKey: Uint8Array | undefined;
+  let deliveryScheme: DeliveryPrivacy | undefined;
+  const txIdHex = txId as `0x${string}`;
+
+  if (deliveryEnabled) {
+    const privacy: DeliveryPrivacy = opts.deliveryPrivacy ?? 'public';
+    deliveryScheme = privacy;
+    const channel = opts.deliveryChannel as DeliveryChannel;
+    const kernelAddr = opts.expectedKernelAddress as `0x${string}`;
+    const chainId = opts.expectedChainId as number;
+
+    // Generate ephemeral keypair only for encrypted privacy. Public uses
+    // CANONICAL_EMPTY_BYTES32 (EIP-712 has no "absent field" notion).
+    let buyerEphemeralPubkey: `0x${string}` = CANONICAL_EMPTY_BYTES32;
+    if (privacy === 'encrypted') {
+      try {
+        const kp = generateEphemeralKeyPair();
+        buyerEphemeralPubkey = kp.publicKeyHex;
+        buyerEphemeralPrivKey = kp.privateKey;
+      } catch (err) {
+        deliveryError = {
+          code: 'crypto_keygen_failed',
+          message: err instanceof Error ? err.message : String(err),
+        };
+      }
+    }
+
+    // Proceed with setup only if keygen (if attempted) succeeded.
+    if (!deliveryError) {
+      try {
+        const signer = new Wallet(privateKey as string);
+        const signerAddress = getAddress(signer.address) as `0x${string}`;
+        // `requesterAddress` here is the on-chain participant address. We
+        // pass `client.info.address` so smart-wallet flows put the SW
+        // address into the signed payload, while EOA flows put the EOA.
+        const requesterOnChain = getAddress(client.info.address) as `0x${string}`;
+
+        const builder = new DeliverySetupBuilder(signer);
+        const { wire: setupWire } = await builder.build({
+          txId: txIdHex,
+          chainId,
+          kernelAddress: kernelAddr,
+          requesterAddress: requesterOnChain,
+          signerAddress,
+          buyerEphemeralPubkey,
+          expectedPrivacy: privacy,
+          // H4 (AIP-16 Phase 3): thread caller-supplied Smart Wallet
+          // factory nonce. Defaults to 0 to preserve byte-identical
+          // signing for the common nonce=0 case.
+          smartWalletNonce: opts.smartWalletNonce ?? 0,
+        });
+
+        // Non-blocking POST: race against a 3s timeout. Timeout means we
+        // proceed with state polling and let the envelope subscription
+        // catch up if the setup eventually lands on the relay.
+        const SETUP_POST_TIMEOUT_MS = 3_000;
+        const postPromise = channel.publishSetup(setupWire);
+        let timeoutId: ReturnType<typeof setTimeout> | undefined;
+        const timeoutPromise = new Promise<'timeout'>((resolve) => {
+          timeoutId = setTimeout(() => resolve('timeout'), SETUP_POST_TIMEOUT_MS);
+        });
+        try {
+          const outcome = await Promise.race([
+            postPromise.then(() => 'ok' as const),
+            timeoutPromise,
+          ]);
+          if (outcome === 'timeout') {
+            deliveryError = {
+              code: 'setup_post_failed',
+              message: `Delivery setup POST exceeded ${SETUP_POST_TIMEOUT_MS}ms; proceeding without setup.`,
+              details: { txId },
+            };
+            logger.warn('Delivery setup POST timed out; proceeding', {
+              txId,
+              timeoutMs: SETUP_POST_TIMEOUT_MS,
+            });
+          }
+        } catch (err) {
+          deliveryError = {
+            code: 'setup_post_failed',
+            message: err instanceof Error ? err.message : String(err),
+            details: { txId },
+          };
+          logger.warn('Delivery setup POST failed; proceeding', {
+            txId,
+            err: err instanceof Error ? err.message : String(err),
+          });
+        } finally {
+          if (timeoutId) clearTimeout(timeoutId);
+        }
+      } catch (err) {
+        // Builder-side failure (signer/address mismatch, canonical-empty
+        // rule violation, etc.). Treat as setup_post_failed semantically:
+        // the buyer's intent to use the delivery surface did not land.
+        deliveryError = {
+          code: 'setup_post_failed',
+          message: err instanceof Error ? err.message : String(err),
+          details: { txId, stage: 'build' },
+        };
+        logger.warn('Delivery setup build failed; proceeding', {
+          txId,
+          err: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    // Envelope subscription: parallel to the state-polling loop. The
+    // callback only stores the first envelope it sees; the channel's
+    // dedup-after-verify discipline (and the `getEnvelopes` snapshot
+    // poll in the grace period below) handle any race against pollForJobs
+    // re-delivery on the provider side. We tolerate subscription errors
+    // here: if the channel cannot subscribe, we fall through to the
+    // legacy `tx.deliveryProof` payload path.
+    try {
+      envelopeSubscription = await channel.subscribeEnvelopes(
+        txIdHex,
+        (env: DeliveryEnvelopeWireV1) => {
+          // Always keep the FIRST envelope seen — later ones are
+          // either dupes (dedup) or out-of-order retries. Mutating
+          // the holder is sync and side-effect-free wrt settlement.
+          if (envelopePayloadResolved) return;
+          envelopePayloadResolved = true;
+          // Decode lazily: we only parse/decrypt once we know it's
+          // the one we'll surface. Parse happens after DELIVERED so
+          // we don't burn cycles for a tx that aborts mid-flight.
+          // Stash the wire object onto the holder via a transient
+          // closure variable shared with the post-DELIVERED block.
+          envelopePayload = env; // wire, decoded later
+        },
+      );
+    } catch (err) {
+      // Non-fatal — settlement still proceeds.
+      logger.warn('Delivery envelope subscription failed; proceeding', {
+        txId,
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
 
   // 7b. linkEscrow → COMMITTED.
   //     ACTPKernel.linkEscrow requires `msg.sender == txn.requester`
@@ -297,8 +599,101 @@ export async function runRequest(opts: RunRequestOptions): Promise<RunRequestRes
   }
 
   // 10. Decode delivery payload, if present.
+  //
+  // Precedence (DELIVERED → "what bytes does the buyer actually surface?"):
+  //   1. AIP-16 envelope payload (when delivery surface was active and an
+  //      envelope landed within the grace period). Preferred — it's the
+  //      cryptographically-bound, scheme-aware payload.
+  //   2. Legacy `tx.deliveryProof` parse. Backward-compat path; covers all
+  //      pre-AIP-16 providers (including Sentinel pre-Phase 2f).
   const tx = await client.runtime.getTransaction(txId);
-  const payload = tx?.deliveryProof ? safeParse(tx.deliveryProof) : undefined;
+  let payload: unknown = undefined;
+
+  if (deliveryEnabled) {
+    // Bounded grace period after DELIVERED to let the channel deliver the
+    // envelope. NEVER blocks settlement: even if the wait elapses with no
+    // envelope, we proceed with the legacy payload (or none).
+    const envelopeWaitMs = opts.envelopeWaitMs ?? 30_000;
+    const ENVELOPE_POLL_MS = 250;
+    const graceStart = monoMillisNow();
+    // If the subscription already fired during state polling, this loop
+    // exits immediately on the first iteration.
+    while (!envelopePayloadResolved && monoMillisNow() - graceStart < envelopeWaitMs) {
+      // Belt-and-suspenders: some channel implementations (mock + relay)
+      // expose `getEnvelopes` so we can snapshot in case the subscription
+      // missed a write that arrived between subscribe and now.
+      if (opts.deliveryChannel?.getEnvelopes) {
+        try {
+          const snap = await opts.deliveryChannel.getEnvelopes(txIdHex);
+          if (snap.length > 0 && !envelopePayloadResolved) {
+            envelopePayloadResolved = true;
+            envelopePayload = snap[0];
+            break;
+          }
+        } catch {
+          // Ignore — subscription path is still active.
+        }
+      }
+      await sleep(ENVELOPE_POLL_MS);
+    }
+
+    // Decode the (wire) envelope into a payload, OR fall back.
+    if (envelopePayloadResolved && envelopePayload) {
+      const wire = envelopePayload as DeliveryEnvelopeWireV1;
+      try {
+        if (
+          wire.signed?.scheme === 'x25519-aes256gcm-v1' &&
+          buyerEphemeralPrivKey
+        ) {
+          payload = await DeliveryEnvelopeBuilder.decryptPayload(
+            wire,
+            buyerEphemeralPrivKey,
+          );
+        } else {
+          // public-v1: body is hex-encoded UTF-8 JSON OR plaintext JSON
+          // (depending on relay vs mock channel). Try parsing as JSON
+          // directly first; if the body is hex-prefixed, decode then parse.
+          const body = wire.body;
+          if (typeof body === 'string' && body.startsWith('0x')) {
+            const { bytesFromHex } = await import('../../delivery/crypto');
+            const bytes = bytesFromHex(body);
+            const decoder = new TextDecoder('utf-8', { fatal: true });
+            payload = JSON.parse(decoder.decode(bytes));
+          } else if (typeof body === 'string') {
+            payload = JSON.parse(body);
+          } else {
+            payload = body;
+          }
+        }
+      } catch (err) {
+        // Decryption / parse failure is non-fatal — settlement still runs.
+        deliveryError = {
+          code: 'envelope_decrypt_failed',
+          message: err instanceof Error ? err.message : String(err),
+          details: { txId, scheme: deliveryScheme },
+        };
+        logger.warn('Delivery envelope decode failed; proceeding', {
+          txId,
+          err: err instanceof Error ? err.message : String(err),
+        });
+      }
+    } else if (!deliveryError) {
+      // Grace period elapsed with no envelope and no prior error. Mark
+      // informational `envelope_missing` so the caller can surface a hint.
+      deliveryError = {
+        code: 'envelope_missing',
+        message: `No envelope received within ${envelopeWaitMs}ms grace period`,
+        details: { txId, waitedMs: envelopeWaitMs },
+      };
+    }
+  }
+
+  // Legacy fallback: only consult `tx.deliveryProof` when the AIP-16 path
+  // did NOT produce a payload. This keeps Sentinel + pre-AIP-16 callers
+  // on the same code path they had before.
+  if (payload === undefined) {
+    payload = tx?.deliveryProof ? safeParse(tx.deliveryProof) : undefined;
+  }
 
   // 11. Requester-immediate settle. ACTPKernel allows DELIVERED → SETTLED
   //     by the requester without waiting for the dispute window
@@ -367,7 +762,7 @@ export async function runRequest(opts: RunRequestOptions): Promise<RunRequestRes
         netWei: netWeiBig.toString(),
         serviceHash,
         service: normalizedService,
-        durationMs: Date.now() - startedAt,
+        durationMs: monoMillisNow() - startedAt,
       });
       receiptUrl = push.receiptUrl;
     } catch (err) {
@@ -379,13 +774,29 @@ export async function runRequest(opts: RunRequestOptions): Promise<RunRequestRes
     }
   }
 
+  // Close the envelope subscription before returning. Idempotent per the
+  // DeliverySubscription contract; safe to call even if we never bound one.
+  if (envelopeSubscription) {
+    try {
+      await envelopeSubscription.close();
+    } catch (err) {
+      // Subscription teardown failure is purely cosmetic — the subscriber
+      // callback already won't fire (we have the payload or we don't).
+      logger.warn('Delivery envelope subscription close failed', {
+        txId,
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
   return {
     txId,
     finalState,
-    elapsedMs: Date.now() - startedAt,
+    elapsedMs: monoMillisNow() - startedAt,
     payload,
     settled,
     receiptUrl,
+    deliveryError,
   };
 }
 
@@ -413,7 +824,7 @@ function humanAmountToUSDCWei(amount: string): string {
 
 function resolveDeadline(deadline?: string | number): number {
   if (deadline === undefined) {
-    return Math.floor(Date.now() / 1000) + 3600;
+    return secondsNow() + 3600;
   }
   if (typeof deadline === 'number') {
     // Sanity check: any value past year-3000 in seconds is implausible and
@@ -444,8 +855,8 @@ async function waitForStateChange(
   timeoutMs: number,
   onTick: (state: TransactionState) => void
 ): Promise<boolean> {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
+  const start = monoMillisNow();
+  while (monoMillisNow() - start < timeoutMs) {
     const tx = await client.runtime.getTransaction(txId);
     if (!tx) {
       await sleep(POLL_INTERVAL_MS);
@@ -465,8 +876,8 @@ async function waitForTargetState(
   timeoutMs: number,
   onTick: (state: TransactionState) => void
 ): Promise<boolean> {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
+  const start = monoMillisNow();
+  while (monoMillisNow() - start < timeoutMs) {
     const tx = await client.runtime.getTransaction(txId);
     if (!tx) {
       await sleep(POLL_INTERVAL_MS);
