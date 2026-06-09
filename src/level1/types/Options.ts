@@ -5,6 +5,81 @@
  */
 
 import { Job } from './Job';
+import type { DeliveryMode, DeliveryPrivacy } from '../../delivery/types';
+
+/**
+ * AIP-16 delivery surface configuration for a service.
+ *
+ * Declares the transport `mode` (channel vs. none) and the privacy posture
+ * (`public` plaintext vs. `encrypted` X25519+AES-GCM) the provider will
+ * use when emitting the delivery envelope for jobs against this service.
+ *
+ * Attached to {@link ServiceConfig} as the optional `delivery` field. When
+ * omitted, the SDK uses {@link DEFAULT_DELIVERY_CONFIG} (channel + public),
+ * which preserves the pre-AIP-16 behavior on the wire: an envelope is
+ * posted to the relay but its body is plaintext UTF-8 JSON.
+ *
+ * The Agent.processJob hook branches on `mode`:
+ *  - `"channel"` → build + post a `DeliveryEnvelopeWireV1` between the
+ *    handler's result and `transitionState(DELIVERED)`.
+ *  - `"none"` → skip the envelope publish entirely (sentinel / smoke
+ *    flows where only the state machine is being exercised).
+ *
+ * The buyer's setup (`RunRequest`) signs `expectedPrivacy` separately
+ * (`encrypted` vs `public`); a misaligned provider scheme is rejected
+ * with `envelope_signer_role_mismatch` / privacy-policy violation.
+ *
+ * @see {@link DEFAULT_DELIVERY_CONFIG} for the default value.
+ */
+export interface DeliveryServiceConfig {
+  /** Transport / placement mode for the envelope. See {@link DeliveryMode}. */
+  mode: DeliveryMode;
+  /** Privacy posture for the envelope body. See {@link DeliveryPrivacy}. */
+  privacy: DeliveryPrivacy;
+}
+
+/**
+ * Backward-compatible default for {@link DeliveryServiceConfig}.
+ *
+ * Selected so that any service registered without an explicit `delivery`
+ * block behaves identically to the pre-AIP-16 SDK: an envelope is built
+ * and posted to the relay (`mode: "channel"`), and its body is plaintext
+ * UTF-8 JSON (`privacy: "public"`). This default is gated by the
+ * `ACTP_DELIVERY_CHANNEL=v1` feature flag at the call-site in
+ * `Agent.processJob`; with the flag off the hook is a no-op regardless
+ * of this config.
+ *
+ * @example
+ * ```typescript
+ * import { DEFAULT_DELIVERY_CONFIG } from '@agirails/sdk';
+ * const delivery = service.delivery ?? DEFAULT_DELIVERY_CONFIG;
+ * ```
+ */
+export const DEFAULT_DELIVERY_CONFIG: DeliveryServiceConfig = {
+  mode: 'channel',
+  privacy: 'public',
+};
+
+// ---------------------------------------------------------------------------
+// AIP-16 Phase 2e: extend the canonical ServiceConfig interface (defined in
+// `src/level1/Agent.ts`) with an optional `delivery` block via TypeScript
+// declaration merging. The merge is additive only — every existing field on
+// ServiceConfig is preserved verbatim. Consumers that do not supply a
+// `delivery` block fall back to DEFAULT_DELIVERY_CONFIG at the call-site.
+// ---------------------------------------------------------------------------
+declare module '../Agent' {
+  interface ServiceConfig {
+    /**
+     * AIP-16 delivery surface configuration for this service.
+     *
+     * Optional. When omitted the SDK uses {@link DEFAULT_DELIVERY_CONFIG}
+     * (channel + public), preserving pre-AIP-16 wire behavior. The hook
+     * itself is additionally gated by the `ACTP_DELIVERY_CHANNEL=v1`
+     * feature flag; with the flag off the field is read but not acted on.
+     */
+    delivery?: DeliveryServiceConfig;
+  }
+}
 
 /**
  * Wallet configuration options

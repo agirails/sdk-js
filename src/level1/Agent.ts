@@ -11,12 +11,13 @@ import { EventEmitter } from 'events';
 import * as path from 'path';
 import * as os from 'os';
 import * as fs from 'fs';
-import { ethers } from 'ethers';
+import { ethers, type Signer } from 'ethers';
 import { ACTPClient } from '../ACTPClient';
 import type { ProviderOrchestrator } from '../negotiation/ProviderOrchestrator';
 import { resolvePrivateKey } from '../wallet/keystore';
 import { Job, JobHandler, JobContext } from './types/Job';
 import { RequestOptions, RequestResult, NetworkOption } from './types/Options';
+import { DEFAULT_DELIVERY_CONFIG } from './types/Options';
 import { PricingStrategy } from './pricing/PricingStrategy';
 import { AgentLifecycleError, ServiceConfigError, ValidationError } from '../errors';
 import { validateServiceName, validatePath, LRUCache } from '../utils/security';
@@ -24,6 +25,8 @@ import { Logger, sdkLogger } from '../utils/Logger';
 import { ServiceHash } from '../utils/Helpers';
 import { Semaphore } from '../utils/Semaphore';
 import { ProofGenerator } from '../protocol/ProofGenerator';
+import { DeliveryEnvelopeBuilder } from '../delivery/envelopeBuilder';
+import type { DeliveryChannel } from '../delivery/channel';
 
 /**
  * Agent lifecycle states
@@ -167,6 +170,84 @@ export interface AgentConfig {
   logging?: {
     level?: 'debug' | 'info' | 'warn' | 'error';
   };
+
+  // ===========================================================================
+  // AIP-16 Phase 2e — Delivery surface (Agent.processJob hook)
+  // ===========================================================================
+  //
+  // All four fields below are OPTIONAL. The processJob delivery hook only
+  // activates when ALL of (deliveryChannel, deliverySigner, kernelAddress,
+  // chainId) are provided AND the `ACTP_DELIVERY_CHANNEL=v1` environment
+  // variable is set. Missing any one of them — the hook is a no-op and the
+  // pre-AIP-16 settlement path runs verbatim.
+  //
+  // This keeps the existing 2730+ test suite green: tests that construct an
+  // Agent without these fields see exactly the prior behavior.
+
+  /**
+   * AIP-16 delivery channel transport. When provided together with
+   * {@link deliverySigner}, {@link kernelAddress}, and {@link chainId},
+   * `Agent.processJob` will (after the handler returns and before the
+   * `transitionState(DELIVERED)` hop) build a `DeliveryEnvelopeWireV1` for
+   * the handler result and publish it on this channel.
+   *
+   * Pass a {@link MockDeliveryChannel} for tests / in-process flows or a
+   * {@link RelayDeliveryChannel} for production HTTP relay transport.
+   *
+   * Optional. When omitted (or any sibling field below is omitted) the
+   * hook is a no-op. Channel publish failures are logged and swallowed —
+   * they MUST NOT block the on-chain settlement path.
+   */
+  deliveryChannel?: DeliveryChannel;
+
+  /**
+   * EOA signer used to sign delivery envelopes (AIP-16 EIP-712 payload).
+   *
+   * For smart-wallet flows this is the underlying EOA — not the smart-
+   * wallet address. The envelope's `providerAddress` is the on-chain
+   * identity acting as the provider (e.g. this agent's `address`), and
+   * `signerAddress` is the EOA address derived from this signer.
+   *
+   * Optional. When omitted the delivery hook is a no-op.
+   */
+  deliverySigner?: Signer;
+
+  /**
+   * ACTP kernel contract address on {@link chainId}. Used as the EIP-712
+   * `verifyingContract` for the envelope domain.
+   *
+   * Optional. When omitted the delivery hook is a no-op.
+   */
+  kernelAddress?: string;
+
+  /**
+   * EVM chain id for the kernel (e.g. 8453 Base mainnet, 84532 Base
+   * Sepolia). Used in both the EIP-712 domain and the signed envelope
+   * payload.
+   *
+   * Optional. When omitted the delivery hook is a no-op.
+   */
+  chainId?: number;
+
+  /**
+   * CoinbaseSmartWallet factory nonce used to derive this agent's
+   * (provider's) on-chain `providerAddress` from the EOA backing
+   * {@link deliverySigner}. Defaults to `0` (the first wallet per owner).
+   *
+   * H4 fix (AIP-16 Phase 3 HIGH) — high-level surface. Providers whose
+   * Smart Wallet was deployed at a non-zero factory nonce MUST pass that
+   * nonce here so the AIP-16 server-side derivation lands on the correct
+   * address. Omitting it (or passing `0`) reproduces the legacy behavior
+   * and yields byte-identical signing for the vast majority of providers
+   * (auto-wallet deploys at nonce=0).
+   *
+   * Threaded into {@link DeliveryEnvelopeBuilder.buildPublic} and
+   * {@link DeliveryEnvelopeBuilder.buildEncrypted}. Negative or
+   * non-integer values cause the builder to throw
+   * `BUILDER_INVALID_SMART_WALLET_NONCE`, which the `processJob` hook
+   * logs at `warn` and swallows — settlement is unaffected.
+   */
+  smartWalletNonce?: number;
 }
 
 /**
@@ -340,6 +421,43 @@ export class Agent extends EventEmitter {
   private logger: Logger;
 
   /**
+   * AIP-16 Phase 2e — delivery channel transport. Captured from
+   * {@link AgentConfig.deliveryChannel} at construction time. Read by
+   * the `processJob` delivery hook. `undefined` disables the hook.
+   */
+  private readonly deliveryChannel?: DeliveryChannel;
+
+  /**
+   * AIP-16 Phase 2e — EOA signer for delivery envelopes. Captured from
+   * {@link AgentConfig.deliverySigner} at construction time. Read by
+   * the `processJob` delivery hook. `undefined` disables the hook.
+   */
+  private readonly deliverySigner?: Signer;
+
+  /**
+   * AIP-16 Phase 2e — kernel address for the EIP-712 verifying contract.
+   * Captured from {@link AgentConfig.kernelAddress}. `undefined` disables
+   * the hook.
+   */
+  private readonly kernelAddress?: string;
+
+  /**
+   * AIP-16 Phase 2e — chain id for the EIP-712 domain. Captured from
+   * {@link AgentConfig.chainId}. `undefined` disables the hook.
+   */
+  private readonly chainId?: number;
+
+  /**
+   * AIP-16 Phase 3 (H4 fix) — CoinbaseSmartWallet factory nonce used to
+   * derive `providerAddress` from `signerAddress` server-side. Captured
+   * from {@link AgentConfig.smartWalletNonce}. Defaults to `0` when the
+   * caller omits the field at construction.
+   *
+   * Threaded into every envelope build inside `maybePublishDeliveryEnvelope`.
+   */
+  private readonly smartWalletNonce?: number;
+
+  /**
    * Creates a new Agent instance
    *
    * @param config - Agent configuration
@@ -387,6 +505,19 @@ export class Agent extends EventEmitter {
     const maxConcurrency = config.behavior?.concurrency || 10;
     this.concurrencySemaphore = new Semaphore(maxConcurrency);
     this.logger.debug('Initialized concurrency semaphore', { maxConcurrency });
+
+    // AIP-16 Phase 2e — capture optional delivery hook dependencies. The
+    // hook activates only when ALL four are present AND the
+    // `ACTP_DELIVERY_CHANNEL=v1` env flag is set; otherwise it is a
+    // no-op and the legacy settlement path runs verbatim.
+    this.deliveryChannel = config.deliveryChannel;
+    this.deliverySigner = config.deliverySigner;
+    this.kernelAddress = config.kernelAddress;
+    this.chainId = config.chainId;
+    // H4 (AIP-16 Phase 3) — capture optional Smart Wallet factory nonce.
+    // Defaults to undefined → `this.smartWalletNonce ?? 0` at the build
+    // call sites preserves byte-identical signing for pre-H4 callers.
+    this.smartWalletNonce = config.smartWalletNonce;
   }
 
   // =========================================================================
@@ -1539,6 +1670,35 @@ export class Agent extends EventEmitter {
         result, // Include original result for convenience
       });
 
+      // ---------------------------------------------------------------------
+      // AIP-16 Phase 2e — Delivery envelope hook
+      // ---------------------------------------------------------------------
+      //
+      // Build + publish a DeliveryEnvelopeWireV1 between the handler result
+      // and the on-chain `transitionState(DELIVERED)` hop. Strictly opt-in:
+      //
+      //   * Gated by `ACTP_DELIVERY_CHANNEL=v1` env flag (off in tests by
+      //     default; flipped on once Sentinel migrates in Phase 2f).
+      //   * Requires ALL four constructor fields: deliveryChannel,
+      //     deliverySigner, kernelAddress, chainId.
+      //   * Service config opts in via `delivery.mode === "channel"`
+      //     (default for backward compatibility — see
+      //     DEFAULT_DELIVERY_CONFIG).
+      //
+      // Idempotency: pollForJobs can re-deliver the same job. We read the
+      // current on-chain state and only publish when it is still
+      // `COMMITTED`. After we have transitioned to IN_PROGRESS the
+      // envelope has already been (or is being) published — a second
+      // call would just produce a redundant envelope. A no-op here keeps
+      // the surface stable.
+      //
+      // Failure handling: channel publish failures are logged and SWALLOWED.
+      // The on-chain settlement path is the source of truth for state
+      // transitions; an envelope publish failure must NEVER block
+      // `transitionState(DELIVERED)`. The provider may republish later or
+      // the buyer may fall back to the on-chain `deliveryProof`.
+      await this.maybePublishDeliveryEnvelope(job, result);
+
       // Transition transaction through IN_PROGRESS → DELIVERED states
       if (this._client) {
         // MockRuntime exposes its in-memory state directly so the agent can
@@ -1677,6 +1837,248 @@ export class Agent extends EventEmitter {
     } finally {
       // Security: Always release semaphore permit
       this.concurrencySemaphore.release();
+    }
+  }
+
+  /**
+   * AIP-16 Phase 2e — Publish a `DeliveryEnvelopeWireV1` for `job` on the
+   * configured delivery channel, between handler completion and the
+   * on-chain `transitionState(DELIVERED)` hop.
+   *
+   * Behavior:
+   *  * Returns immediately (no-op) unless ALL of the following hold:
+   *      - `process.env.ACTP_DELIVERY_CHANNEL === 'v1'`
+   *      - `this.deliveryChannel`, `this.deliverySigner`,
+   *        `this.kernelAddress`, and `this.chainId` are all present
+   *      - the service's `delivery.mode === 'channel'` (default per
+   *        {@link DEFAULT_DELIVERY_CONFIG})
+   *      - the on-chain tx state is `COMMITTED` (idempotency guard
+   *        against poll re-delivery)
+   *  * For `delivery.privacy === 'encrypted'`: requires the buyer's
+   *    setup to already be visible on the channel (otherwise the
+   *    encrypted path cannot derive the shared secret); when missing
+   *    the call logs a warning and returns without publishing.
+   *  * Channel publish failures are caught, logged at `warn`, and
+   *    swallowed. They MUST NOT throw out of this method.
+   *  * Any unexpected failure (signer error, builder error, etc.) is
+   *    caught and logged. The on-chain settlement path continues
+   *    unaffected.
+   *
+   * The hook is a single seam — every wall-clock read inside the
+   * envelope builder flows through `secondsNow()` per the timing-
+   * discipline rule.
+   *
+   * @param job The job whose handler just returned. Its `service` field
+   *   selects the {@link DeliveryServiceConfig}.
+   * @param result The handler's return value. JSON-serialized into the
+   *   envelope body (UTF-8 for `public-v1`, AES-GCM ciphertext for
+   *   `x25519-aes256gcm-v1`).
+   */
+  private async maybePublishDeliveryEnvelope(
+    job: Job,
+    result: unknown,
+  ): Promise<void> {
+    // --- Feature flag gate ---
+    //
+    // The flag is read on every call (rather than at construction time)
+    // so test suites can flip it per-test without re-constructing the
+    // agent. Sentinel migration in Phase 2f will set it process-wide.
+    if (process.env.ACTP_DELIVERY_CHANNEL !== 'v1') {
+      return;
+    }
+
+    // --- Constructor-side dependency gate ---
+    //
+    // Pre-AIP-16 callers do not pass these fields. Missing any one of
+    // them disables the hook entirely — the agent behaves exactly like
+    // the prior SDK.
+    if (
+      !this.deliveryChannel ||
+      !this.deliverySigner ||
+      !this.kernelAddress ||
+      typeof this.chainId !== 'number'
+    ) {
+      return;
+    }
+
+    // --- Service config gate ---
+    //
+    // Read the per-service delivery config; fall back to the canonical
+    // default (channel + public) so a service that does NOT specify
+    // `delivery` still uses the channel mode. Sentinel + smoke flows
+    // that want to skip the envelope set `delivery.mode = 'none'`.
+    const service = this.services.get(job.service);
+    const deliveryCfg = service?.config.delivery ?? DEFAULT_DELIVERY_CONFIG;
+    if (deliveryCfg.mode !== 'channel') {
+      return;
+    }
+
+    // --- Idempotency: current tx state MUST be COMMITTED ---
+    //
+    // pollForJobs may re-deliver the same job (e.g. orphan-recovery
+    // path). When the tx has already advanced past COMMITTED, an
+    // envelope publish at this point would either duplicate an
+    // already-posted envelope or arrive after the buyer has stopped
+    // listening — neither is useful. Best-effort read; if the runtime
+    // cannot answer, skip the publish (the next poll's settlement path
+    // will still run).
+    try {
+      const currentTx = await this._client?.runtime
+        .getTransaction(job.id)
+        .catch(() => null);
+      if (!currentTx || currentTx.state !== 'COMMITTED') {
+        this.logger.debug(
+          'AIP-16: skipping envelope publish (tx not in COMMITTED)',
+          { jobId: job.id, state: currentTx?.state },
+        );
+        return;
+      }
+    } catch (stateErr) {
+      // A failure to *read* the state is non-fatal. Log + bail rather
+      // than risk a duplicate publish.
+      this.logger.warn(
+        'AIP-16: failed to read tx state before envelope publish; skipping hook',
+        {
+          jobId: job.id,
+          error: stateErr instanceof Error ? stateErr.message : String(stateErr),
+        },
+      );
+      return;
+    }
+
+    // --- Resolve addresses ---
+    //
+    // providerAddress is the on-chain identity acting as the provider
+    // (this agent). signerAddress is the EOA backing this.deliverySigner.
+    // Smart-wallet flows pass a distinct provider address; non-smart-
+    // wallet flows have providerAddress === signerAddress. The SDK does
+    // NOT derive one from the other — both are sourced explicitly.
+    let signerAddress: string;
+    try {
+      signerAddress = await this.deliverySigner.getAddress();
+    } catch (signerErr) {
+      this.logger.warn(
+        'AIP-16: deliverySigner.getAddress() failed; skipping envelope publish',
+        {
+          jobId: job.id,
+          error: signerErr instanceof Error ? signerErr.message : String(signerErr),
+        },
+      );
+      return;
+    }
+
+    // Default providerAddress: the agent's on-chain address (this.address).
+    // For smart-wallet flows where providerAddress != signerAddress the
+    // caller should override via the deliverySigner-side address — but
+    // for the common single-EOA case the agent address IS the signer.
+    const providerAddress = (this.address || signerAddress) as `0x${string}`;
+    if (
+      !providerAddress ||
+      !providerAddress.startsWith('0x') ||
+      providerAddress.length !== 42
+    ) {
+      this.logger.warn(
+        'AIP-16: unable to resolve providerAddress; skipping envelope publish',
+        { jobId: job.id, providerAddress },
+      );
+      return;
+    }
+
+    // --- Build + publish ---
+    //
+    // The whole block is wrapped in a try/catch: per the contract,
+    // channel publish failures and builder errors NEVER throw out of
+    // this hook. They are logged at `warn` and swallowed so the
+    // on-chain settlement path continues unaffected.
+    try {
+      const builder = new DeliveryEnvelopeBuilder(this.deliverySigner);
+      const txIdHex = job.id as `0x${string}`;
+      const kernelHex = this.kernelAddress as `0x${string}`;
+      const signerHex = signerAddress as `0x${string}`;
+
+      if (deliveryCfg.privacy === 'encrypted') {
+        // Encrypted path requires the buyer's setup (carrying their
+        // ephemeral X25519 pubkey). If the channel cannot enumerate
+        // prior setups, or no setup has been posted yet, we cannot
+        // derive the shared secret — log and skip. The buyer will
+        // either re-post setup or fall back to on-chain dispute.
+        if (!this.deliveryChannel.getSetups) {
+          this.logger.warn(
+            'AIP-16: encrypted service requires channel.getSetups; skipping envelope publish',
+            { jobId: job.id },
+          );
+          return;
+        }
+
+        const setups = await this.deliveryChannel
+          .getSetups(txIdHex)
+          .catch(() => [] as unknown[]);
+        // `setups[0]` is the canonical first setup. The dedup-after-
+        // verify discipline on the channel side guarantees order
+        // stability across multiple poll cycles.
+        const setup = (setups as Array<{
+          signed?: { buyerEphemeralPubkey?: `0x${string}` };
+        }>)[0];
+        const buyerPubkey = setup?.signed?.buyerEphemeralPubkey;
+        if (!buyerPubkey) {
+          this.logger.warn(
+            'AIP-16: encrypted service has no setup on channel; skipping envelope publish',
+            { jobId: job.id, setupsFound: setups.length },
+          );
+          return;
+        }
+
+        const { wire } = await builder.buildEncrypted({
+          txId: txIdHex,
+          chainId: this.chainId,
+          kernelAddress: kernelHex,
+          providerAddress,
+          signerAddress: signerHex,
+          payload: result,
+          buyerEphemeralPubkey: buyerPubkey,
+          // H4 (AIP-16 Phase 3): thread the constructor-supplied Smart
+          // Wallet factory nonce. Defaults to 0 → byte-identical signing
+          // vs. pre-H4 SDK builds.
+          smartWalletNonce: this.smartWalletNonce ?? 0,
+        });
+        await this.deliveryChannel.publishEnvelope(wire);
+        this.logger.info('AIP-16: encrypted envelope published', {
+          jobId: job.id,
+          scheme: wire.signed.scheme,
+        });
+      } else {
+        // Public scheme — no setup lookup required. The body travels
+        // as plaintext UTF-8 JSON; verification on the buyer side is
+        // signature + payloadHash binding only.
+        const { wire } = await builder.buildPublic({
+          txId: txIdHex,
+          chainId: this.chainId,
+          kernelAddress: kernelHex,
+          providerAddress,
+          signerAddress: signerHex,
+          payload: result,
+          // H4 (AIP-16 Phase 3): thread the constructor-supplied Smart
+          // Wallet factory nonce. Defaults to 0 → byte-identical signing
+          // vs. pre-H4 SDK builds.
+          smartWalletNonce: this.smartWalletNonce ?? 0,
+        });
+        await this.deliveryChannel.publishEnvelope(wire);
+        this.logger.info('AIP-16: public envelope published', {
+          jobId: job.id,
+          scheme: wire.signed.scheme,
+        });
+      }
+    } catch (publishErr) {
+      // CRITICAL: must NOT re-throw. Settlement is the source of truth;
+      // the envelope is an optimization on top. Log at `warn` so the
+      // operator sees the problem without an outage signal.
+      this.logger.warn(
+        'AIP-16: envelope publish failed; settlement continues',
+        {
+          jobId: job.id,
+          error: publishErr instanceof Error ? publishErr.message : String(publishErr),
+        },
+      );
     }
   }
 
