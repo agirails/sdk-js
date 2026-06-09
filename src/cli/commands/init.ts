@@ -25,6 +25,7 @@ import {
 import { Output, ExitCode, fmt } from '../utils/output';
 import { generateWallet, computeSmartWalletInit } from '../utils/wallet';
 import { MockStateManager } from '../../runtime/MockStateManager';
+import { generateSlug } from '../../config/slugUtils';
 
 // ============================================================================
 // FIX-3: ACTP_KEY_PASSWORD auto-generation
@@ -478,6 +479,41 @@ async function runInit(options: InitOptions, output: Output, cmd?: Command): Pro
     );
   }
 
+  // AIP-18 DEC-4: scaffold a minimal pay-only {slug}.md when the user
+  // initialized with `--intent pay` and no identity file already exists.
+  // Without it `actp publish` bails ("No file to publish") and the buyer
+  // never gets the gas-sponsorship buyer-link marker (DEC-8) → falls back
+  // to EOA → needs ETH → defeats the entire point of pay-only onboarding.
+  // Skipped for mock mode (no real wallet, no buyer-link semantics) and
+  // when an identity file was already discovered in scanning above.
+  const resolvedIntentForId =
+    (options.intent || (mdConfig?.intent as string | undefined) || 'earn');
+  if (
+    resolvedIntentForId === 'pay' &&
+    !identityFilename &&
+    mode !== 'mock'
+  ) {
+    try {
+      const agentName =
+        (mdConfig?.name ? String(mdConfig.name) : null) ||
+        path.basename(projectRoot);
+      identityFilename = generateBuyerIdentityFile({
+        projectRoot,
+        name: agentName,
+        walletAddress: address,
+        mode,
+        output,
+      });
+    } catch (e) {
+      // Best-effort. The user can still run `actp publish <path>` manually
+      // with a hand-written file; we don't want init to fail because of a
+      // scaffold write error (e.g. read-only fs).
+      output.warning(
+        `Could not generate buyer identity file: ${(e as Error).message}`
+      );
+    }
+  }
+
   // Create configuration
   const config: CLIConfig = {
     mode,
@@ -661,9 +697,149 @@ async function offerPostInitTest(options: InitOptions, output: Output): Promise<
   }
 
   if (shouldRun) {
+    // AIP-18 DEC-3/DEC-4/DEC-8: a fresh pay-only init wrote a {slug}.md but
+    // has NOT yet linked the buyer or minted test USDC. Running test
+    // straight away would hit the EOA fallback (no buyer-link.json) and
+    // fail with INSUFFICIENT_FUNDS. Auto-chain publish first so the
+    // buyer-link gate fires and 1k test USDC is minted, then run the test.
+    // This makes `actp init --mode testnet --intent pay --test` a single
+    // end-to-end command that ends in a settled escrow.
+    try {
+      const { resolveIdentityPath: resolveIdentity } = await import('../utils/config');
+      const identityPath = resolveIdentity();
+      if (identityPath) {
+        const { parseAgirailsMdV4 } = await import('../../config/agirailsmdV4');
+        const v4 = parseAgirailsMdV4(fs.readFileSync(identityPath, 'utf-8'));
+        if (v4.intent === 'pay') {
+          const { runPublish } = await import('./publish');
+          output.print('');
+          output.print('→ Linking buyer profile (skips registry, mints 1k test USDC if needed)…');
+          await runPublish('', {}, output);
+        }
+      }
+    } catch (e) {
+      // Publish errors here are non-fatal — the test may still succeed if
+      // the buyer is already linked from a prior run, and printing a stack
+      // trace would mask the real problem. Surface a brief warning and
+      // proceed to runTest, which has its own error reporting.
+      output.warning(
+        `Pre-test publish step failed: ${(e as Error).message}. Continuing to test…`
+      );
+    }
+
     const { runTest } = await import('./test');
     await runTest(output);
   }
+}
+
+// ============================================================================
+// AIP-18: Pay-only buyer identity file generation
+// ============================================================================
+
+/**
+ * Input for generateBuyerIdentityFile().
+ *
+ * - `projectRoot`: cwd of the init invocation; the file is written here.
+ * - `name`: human-readable agent name; defaults to project basename.
+ * - `walletAddress`: Smart Wallet address (auto wallet) or EOA address;
+ *   recorded as `wallet:` so the publish link goes to the right address.
+ * - `mode`: testnet/mainnet — written to the `network:` field.
+ * - `output`: for logging the write.
+ */
+interface BuyerIdentityFileInput {
+  projectRoot: string;
+  name: string;
+  walletAddress: string;
+  mode: Exclude<CLIMode, 'mock'>;
+  output: Output;
+}
+
+/**
+ * AIP-18 DEC-4: `actp init --intent pay` writes a private buyer identity
+ * file so the downstream `actp publish` flow has an input to read.
+ *
+ * Without this file `resolveIdentityPath()` returns null → `actp publish`
+ * bails with "No file to publish" → the buyer-link.json marker is never
+ * written → ACTPClient's auto-wallet gate falls back to the EOA path →
+ * the buyer needs ETH to send a transaction (defeats DEC-8 gasless).
+ *
+ * The generated file is the minimal valid V4 schema for a pay-only agent:
+ * `name`, `intent: pay`, and a non-empty `servicesNeeded` (mandated by the
+ * parser at agirailsmdV4.ts:180). Default `servicesNeeded = ['onboarding']`
+ * matches the deployed Sentinel agent so `actp test` works out-of-box.
+ *
+ * `budget` lives in the file but is stripped from any hash that leaves
+ * the machine via `PUBLISH_METADATA_KEYS` in the publish proxy; the
+ * publish flow's pay-only branch also short-circuits before any upload.
+ * So the file is local-and-private even though committable.
+ *
+ * Returns the basename of the generated file, suitable for storing in
+ * `.actp/config.json` as the `identity:` pointer.
+ */
+export function generateBuyerIdentityFile(input: BuyerIdentityFileInput): string {
+  const { projectRoot, name, walletAddress, mode, output } = input;
+
+  const slug = generateSlug(name) || 'buyer';
+  const filename = `${slug}.md`;
+  const filePath = path.join(projectRoot, filename);
+
+  // Don't clobber an existing identity file. The caller (runInit) already
+  // gates this on `!identityFilename`, but a defensive check here avoids
+  // a race window if a file was created between resolveIdentityPath and
+  // this write.
+  if (fs.existsSync(filePath)) {
+    return filename;
+  }
+
+  const networkField = mode === 'testnet' ? 'testnet' : 'mainnet';
+  const content = `---
+name: ${name}
+slug: ${slug}
+intent: pay
+servicesNeeded:
+  - onboarding
+network: ${networkField}
+budget: 10
+wallet: "${walletAddress.toLowerCase()}"
+---
+
+# ${name}
+
+Pay-only buyer agent. Discovers and requests services from providers on the AGIRAILS network.
+
+## Budget
+
+Default budget per request: 10 USDC. Edit \`budget:\` above to change.
+
+## What this buyer needs
+
+Edit \`servicesNeeded:\` above to list the capabilities you want to purchase.
+The default \`onboarding\` matches the deployed Sentinel agent — running
+\`actp test\` from this directory will buy a sample reflection from Sentinel
+on Base Sepolia.
+
+## Privacy
+
+\`budget\` stays on disk. The publish flow strips it from any artifact that
+leaves the machine (publish proxy hashing skips it, on-chain registration
+is skipped entirely for pay-only). You can safely commit this file; only
+the wallet address and slug become public on agirails.app.
+`;
+
+  // Atomic write — rename keeps fs in a consistent state under interrupt.
+  const tempFile = `${filePath}.tmp`;
+  try {
+    fs.writeFileSync(tempFile, content, 'utf-8');
+    fs.renameSync(tempFile, filePath);
+  } catch (error) {
+    if (fs.existsSync(tempFile)) {
+      try { fs.unlinkSync(tempFile); } catch { /* ignore */ }
+    }
+    throw error;
+  }
+
+  output.success(`Generated buyer identity: ${filename}`);
+  return filename;
 }
 
 // ============================================================================

@@ -142,7 +142,19 @@ interface PublishCommandOptions {
   dryRun?: boolean;
 }
 
-async function runPublish(
+/**
+ * Run the publish flow programmatically.
+ *
+ * Exported so `actp init --intent pay --test` can chain `publish → test`
+ * in a single command (AIP-18 buyer onboarding wow flow). External
+ * consumers should still prefer `actp publish` for normal use.
+ *
+ * @param filePath - Path to {slug}.md, or '' to auto-resolve via
+ *                   resolveIdentityPath / fallback to ./AGIRAILS.md.
+ * @param options  - Same options the CLI command accepts.
+ * @param output   - Output sink (controls json/quiet/human modes).
+ */
+export async function runPublish(
   filePath: string,
   options: PublishCommandOptions,
   output: Output
