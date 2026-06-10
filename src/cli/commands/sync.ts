@@ -77,8 +77,25 @@ async function runSync(filePath: string, options: SyncCommandOptions, output: Ou
     process.exit(ExitCode.INVALID_INPUT);
   }
 
-  // Agent address via keystore (same resolution as `actp diff`).
+  // Agent address.
+  //
+  // Resolution order (matches `actp diff` / `actp pull`):
+  //   1. --address flag
+  //   2. config.address from .actp/config.json — for `wallet: 'auto'`
+  //      this is the Smart Wallet address that AgentRegistry has indexed.
+  //      Using the EOA signer here returns 0x0 on-chain and surfaces a
+  //      false "Pending chain sync" alarm on the public profile.
+  //   3. EOA derived from the resolved private key.
   let agentAddress = options.address;
+  if (!agentAddress) {
+    try {
+      const { loadConfig } = await import('../utils/config');
+      const cfg = loadConfig();
+      if (cfg.address) agentAddress = cfg.address;
+    } catch {
+      // Config missing — fall through to keystore EOA.
+    }
+  }
   if (!agentAddress) {
     const { resolvePrivateKey } = await import('../../wallet/keystore');
     const networkTier = options.network === 'base-mainnet' ? 'mainnet' : 'testnet';

@@ -107,8 +107,28 @@ async function runDiff(
     // Not a parseable v4 buyer file — fall through to the normal on-chain diff.
   }
 
-  // Determine agent address via AIP-13 keystore resolution
+  // Determine agent address.
+  //
+  // Resolution order (matches `actp pull`):
+  //   1. --address flag (explicit override)
+  //   2. config.address from .actp/config.json — for `wallet: 'auto'`
+  //      this is the Smart Wallet address, which is the identity
+  //      AgentRegistry has indexed (publish runs through Paymaster as
+  //      msg.sender = Smart Wallet). Reading on-chain hash for the EOA
+  //      signer in that flow returns 0x0 and surfaces a false
+  //      "Pending chain sync" alarm.
+  //   3. EOA derived from the resolved private key (legacy single-wallet
+  //      flows where signer == on-chain identity).
   let agentAddress = options.address;
+  if (!agentAddress) {
+    try {
+      const { loadConfig } = await import('../utils/config');
+      const cfg = loadConfig();
+      if (cfg.address) agentAddress = cfg.address;
+    } catch {
+      // Config missing — fall through to keystore EOA.
+    }
+  }
   if (!agentAddress) {
     const { resolvePrivateKey } = await import('../../wallet/keystore');
     const networkTier = options.network === 'base-mainnet' ? 'mainnet' : 'testnet';
