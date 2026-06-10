@@ -1070,12 +1070,42 @@ async function activateOnTestnet(
     erc8004IdentityRegistry: networkConfig.contracts.erc8004IdentityRegistry,
   });
 
-  // Always mint test USDC on testnet (SPEC: "always")
-  const mintCalls = buildTestnetMintBatch(
-    networkConfig.contracts.usdc,
-    smartWalletAddress,
-    '1000000000', // 1000 USDC
-  );
+  // Mint test USDC on testnet — but only on FIRST activation. Re-activation
+  // (re-publish / sync after a frontmatter edit) must not keep topping up
+  // the wallet: every sync would add another 1,000 USDC and Damir's
+  // Sentinel Auditor saw the balance climb 1k → 2k → 3k → 4k just from
+  // renaming the agent on the web UI. Mirrors the idempotency check in
+  // `mintTestnetUsdcForBuyer` below.
+  //
+  // The check is best-effort — a `balanceOf` failure (RPC blip, contract
+  // not deployed on a fork) falls through to "mint anyway" so first-run
+  // onboarding still gets its USDC. Net cost of a false-positive top-up
+  // is 1,000 test USDC on testnet only.
+  let shouldMint = true;
+  try {
+    const usdc = new ethers.Contract(
+      networkConfig.contracts.usdc,
+      ['function balanceOf(address) view returns (uint256)'],
+      provider,
+    );
+    const bal: bigint = await usdc.balanceOf(smartWalletAddress);
+    if (bal > 0n) {
+      shouldMint = false;
+      output.info(
+        `Skipping test-USDC mint — wallet already holds ${ethers.formatUnits(bal, 6)} USDC.`
+      );
+    }
+  } catch {
+    // Fall through — mint by default.
+  }
+
+  const mintCalls = shouldMint
+    ? buildTestnetMintBatch(
+        networkConfig.contracts.usdc,
+        smartWalletAddress,
+        '1000000000', // 1000 USDC
+      )
+    : [];
 
   const allCalls = [...activationCalls, ...mintCalls];
   const txRequests = allCalls.map((c) => ({
@@ -1091,7 +1121,9 @@ async function activateOnTestnet(
     throw new Error(`Testnet activation UserOp failed: ${receipt.hash}`);
   }
 
-  output.success('Minted 1,000 test USDC to Smart Wallet');
+  if (shouldMint) {
+    output.success('Minted 1,000 test USDC to Smart Wallet');
+  }
   return { txHash: receipt.hash, smartWalletAddress };
 }
 
