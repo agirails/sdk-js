@@ -254,6 +254,21 @@ export interface ReceiptDataV3 {
    * fixed-clock function so the rendered "Time" row is byte-stable.
    */
   nowFn?: () => Date;
+  /**
+   * Receipt perspective — drives the copy direction.
+   *  * `'buyer'`    — local agent is the requester/payer. Header says
+   *                   "paid", From=your-agent, To=counterparty, reflection
+   *                   block labels "Service delivered" with the
+   *                   counterparty's name. Used by `actp test` where the
+   *                   local agent always pays Sentinel for an onboarding
+   *                   reflection.
+   *  * `'provider'` — local agent is the provider/payee (legacy default).
+   *                   Header says "earned", From=counterparty, To=your-agent,
+   *                   reflection block label stays "Reflection".
+   * Defaults to `'provider'` for backward compatibility with the existing
+   * V3 fixtures.
+   */
+  perspective?: 'buyer' | 'provider';
 }
 
 /** Short-form Ethereum address: `0x123456...abcd`. */
@@ -336,15 +351,19 @@ export function renderReceiptV3(data: ReceiptDataV3, output: Output): void {
     ? ((Number(fee) / Number(data.amountWei)) * 100).toFixed(0)
     : '0';
 
-  // Resolve display labels for From/To. The From line shows the
-  // counterparty (the other side of the trade). When the caller leaves it
-  // unset, we fall back to a truncated requester address; when both are
-  // missing we render the sentinel string "requester-agent" so the line
-  // stays grammatical instead of empty.
-  const fromLabel: string =
+  // Perspective drives direction. Buyer view (the local agent paid the
+  // counterparty for a service) puts the agent on the From line; provider
+  // view (legacy default) puts the counterparty on the From line.
+  const isBuyer = data.perspective === 'buyer';
+  // 'requester-agent' is the legacy sentinel string preserved for
+  // framedReceipt fixtures that pass neither counterparty nor requester
+  // (test.framedReceipt.test.ts:446). Buyer view still uses the same
+  // counterparty-label resolver — just swapped onto the To line.
+  const counterpartyLabel =
     data.counterparty ??
     (data.requester ? shortAddr(data.requester) : 'requester-agent');
-  const toLabel = data.agent;
+  const fromLabel: string = isBuyer ? data.agent : counterpartyLabel;
+  const toLabel: string = isBuyer ? counterpartyLabel : data.agent;
 
   // ----- JSON mode -----
   if (output.mode === 'json') {
@@ -405,13 +424,17 @@ export function renderReceiptV3(data: ReceiptDataV3, output: Output): void {
 
   const horiz = fmt.cyan('═'.repeat(outerWidth + 2));
 
-  // Header + tagline — variant by network.
+  // Header + tagline — variant by network AND perspective. Buyer copy
+  // (the local agent paid for the test reflection) reads "made its first
+  // payment"; provider copy keeps the legacy "earned" wording.
   const headerText = isMainnet
     ? 'FIRST MAINNET SETTLEMENT'
     : 'FIRST TRANSACTION RECEIPT';
   const taglineLine1 = isMainnet
     ? 'This is real money. On a real blockchain.'
-    : 'Your agent just earned its first payment.';
+    : isBuyer
+      ? 'Your agent just made its first payment.'
+      : 'Your agent just earned its first payment.';
   const taglineLine2 = isMainnet
     ? 'Your agent is in the economy.'
     : 'Autonomously. Trustlessly. In under 60 seconds.';
@@ -421,7 +444,20 @@ export function renderReceiptV3(data: ReceiptDataV3, output: Output): void {
   outerEmpty();
   outerLine(`${fmt.cyan('◬')}  ${fmt.bold(headerText)}`);
   outerEmpty();
-  outerLine(`${fmt.bold(data.agent)} earned ${fmt.green(fmt.bold(formatUsdc(net)))}`);
+  // Hero amount line — direction-aware.
+  //   Buyer:    `your-agent paid $10.00 USDC`     (gross, the actual outflow)
+  //   Provider: `your-agent earned $9.90 USDC`   (net after 1% protocol fee)
+  // Buyers care about what left their wallet; providers care about what
+  // landed in theirs after the fee.
+  if (isBuyer) {
+    outerLine(
+      `${fmt.bold(data.agent)} paid ${fmt.green(fmt.bold(formatUsdc(data.amountWei)))}`
+    );
+  } else {
+    outerLine(
+      `${fmt.bold(data.agent)} earned ${fmt.green(fmt.bold(formatUsdc(net)))}`
+    );
+  }
   outerEmpty();
 
   // Inner card top
@@ -458,11 +494,25 @@ export function renderReceiptV3(data: ReceiptDataV3, output: Output): void {
     `${fmt.cyan('║')}   ${fmt.dim('└' + '─'.repeat(innerWidth + 2) + '┘')}      ${fmt.cyan('║')}`
   );
 
-  // Reflection block — only when truthy non-empty string. Wrapping keeps
-  // the line bounded by the outer frame.
+  // Reflection / service-delivered block. The text content is the payload
+  // the provider returned (Sentinel's curated reflection in the wow flow).
+  // Label is direction-aware so buyers see what they got for their money:
+  //   Buyer:    `Service delivered  (from Sentinel)`  → the oneliner
+  //   Provider: `Reflection`                          → legacy label
+  // Wrapping keeps the line bounded by the outer frame.
   if (typeof data.reflection === 'string' && data.reflection.length > 0) {
     outerEmpty();
-    outerLine(`${fmt.label('Reflection')}`);
+    if (isBuyer) {
+      // Only annotate the source when we have a concrete counterparty
+      // name. The 'requester-agent' fallback is a placeholder, not a
+      // real counterparty, so we suppress it from the label suffix.
+      const providedBy = counterpartyLabel && counterpartyLabel !== 'requester-agent'
+        ? `  ${fmt.dim(`(from ${counterpartyLabel})`)}`
+        : '';
+      outerLine(`${fmt.label('Service delivered')}${providedBy}`);
+    } else {
+      outerLine(`${fmt.label('Reflection')}`);
+    }
     // Indent text two spaces inside the outer frame for readability; the
     // wrap target is outerWidth-2 so the indent never overflows.
     const reflectionLines = wrapText(data.reflection, outerWidth - 2);

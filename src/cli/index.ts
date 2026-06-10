@@ -18,6 +18,23 @@ import { Command } from 'commander';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 
+// AIP-18 (4.6.2) — load `.env` from cwd before any command runs so the
+// auto-generated ACTP_KEY_PASSWORD that `actp init` writes is picked up
+// by every downstream command (publish, test, balance…) without the user
+// having to source or supply it inline. Idempotent: dotenv silently
+// skips keys that are already set in process.env (CI / explicit shell
+// exports win over .env), and a missing .env is a no-op. Wrapped in
+// try/catch so a malformed .env never blocks the CLI from starting.
+try {
+  // Lazy-load via require so a missing optional dep can't ESM-error here.
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const dotenv = require('dotenv');
+  dotenv.config({ path: join(process.cwd(), '.env'), override: false });
+} catch {
+  // Best-effort. Without dotenv every existing flow still works — the
+  // user just falls back to supplying secrets via the shell environment.
+}
+
 // Read version from package.json (works in both src and dist)
 function getVersion(): string {
   try {

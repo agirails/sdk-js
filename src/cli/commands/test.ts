@@ -264,7 +264,18 @@ async function runTest(output: Output): Promise<void> {
       {
         agent: 'your-agent',
         counterparty: 'Sentinel',
-        service: 'onboarding',
+        // In `actp test` the local agent always pays Sentinel for an
+        // onboarding reflection — regardless of whether the agent itself
+        // is buyer / earn / both in real use. Mark the receipt as buyer
+        // perspective so the frame reads "your-agent paid $10.00 USDC"
+        // (gross outflow) and labels the payload block "Service delivered
+        // (from Sentinel)" — matching what the user actually sees.
+        perspective: 'buyer',
+        // The `onboarding` keyword is the on-chain service tag (matches
+        // Sentinel's covenant). Tagged here as "Test onboarding" so the
+        // human-mode receipt makes sense to a buyer who has no idea why
+        // a security-auditor agent is requesting "onboarding".
+        service: 'Test onboarding (reflection)',
         amountWei: 10_000_000n,
         network: 'base-sepolia',
         txId: result.txId,
