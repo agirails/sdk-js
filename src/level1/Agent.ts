@@ -248,6 +248,20 @@ export interface AgentConfig {
    * logs at `warn` and swallows — settlement is unaffected.
    */
   smartWalletNonce?: number;
+
+  /**
+   * Render a ceremonial V3 framed receipt to stdout on the agent's first
+   * completed job ("FIRST TRANSACTION RECEIPT — your-agent earned …").
+   * Provides the wow moment for earn-side onboarding parallel to
+   * `actp test`'s buyer-side ceremony.
+   *
+   * Defaults to `true` on testnet/mainnet, suppressed on `mock` and when
+   * the env var `ACTP_NO_FIRST_JOB_RECEIPT=1` is set. Pass `false` to
+   * opt out unconditionally (CI / structured-logging deployments).
+   *
+   * Only renders ONCE per process — gated on `stats.jobsCompleted === 1`.
+   */
+  showFirstJobReceipt?: boolean;
 }
 
 /**
@@ -1779,6 +1793,52 @@ export class Agent extends EventEmitter {
       this._stats.successRate =
         this._stats.jobsCompleted / (this._stats.jobsCompleted + this._stats.jobsFailed);
       this._stats.totalEarned += job.budget;
+
+      // First-job ceremonial receipt (parallel to `actp test`'s buyer-side
+      // wow). Opt-out via config or ACTP_NO_FIRST_JOB_RECEIPT=1; suppressed
+      // on mock. Render is best-effort and silently swallowed on error so a
+      // render failure can never block job:completed event emission.
+      const showReceipt =
+        this.config.showFirstJobReceipt !== false &&
+        process.env.ACTP_NO_FIRST_JOB_RECEIPT !== '1' &&
+        (this.network === 'testnet' || this.network === 'mainnet') &&
+        this._stats.jobsCompleted === 1;
+      if (showReceipt) {
+        try {
+          const { renderReceiptV3 } = await import('../cli/commands/receipt');
+          const { Output } = await import('../cli/utils/output');
+          const networkLabel =
+            this.network === 'testnet' ? 'base-sepolia' : 'base-mainnet';
+          // Convert human-readable USDC budget ("0.05", "10") to 6-decimal
+          // base units. Falls back to 0n on a non-finite parse (degraded
+          // but non-crashing).
+          const amountWei = Number.isFinite(job.budget)
+            ? BigInt(Math.round(job.budget * 1_000_000))
+            : 0n;
+          const out = new Output('human');
+          out.print('');
+          renderReceiptV3(
+            {
+              agent: this.name,
+              // counterparty intentionally undefined for raw addresses —
+              // a 42-char hex would overflow the inner card. The renderer
+              // shortAddr-s `requester` for us when counterparty is unset.
+              perspective: 'provider',
+              service: job.service,
+              amountWei,
+              network: networkLabel,
+              txId: job.id,
+              timing: { totalMs: duration, escrowLockMs: 0, settlementMs: 0 },
+              requester: job.requester,
+            },
+            out,
+          );
+        } catch (err) {
+          this.logger.warn('First-job ceremonial receipt render failed', {
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
 
       // Emit events
       this.logger.info('Job completed', {

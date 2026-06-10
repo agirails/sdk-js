@@ -24,6 +24,9 @@ import {
   DeliveryTimeoutError,
   type RequestNetwork,
 } from '../lib/runRequest';
+import { renderReceiptV3 } from './receipt';
+import { RelayDeliveryChannel } from '../../delivery/RelayDeliveryChannel';
+import { getNetwork } from '../../config/networks';
 
 // ============================================================================
 // Command Definition
@@ -104,6 +107,12 @@ async function runRequestCommand(
   output: Output
 ): Promise<void> {
   // Resolve agirails.app slug to an address, mirroring `actp pay` UX.
+  // Capture the slug (if any) so the receipt can show a human-readable
+  // counterparty name instead of just the truncated address.
+  const slugMatch = providerArg.match(
+    /^(?:https?:\/\/)?(?:www\.)?agirails\.app\/a\/([a-z0-9_-]+)$/i
+  );
+  const counterpartySlug = slugMatch ? slugMatch[1].toLowerCase() : undefined;
   const provider = await resolveProvider(providerArg, output);
 
   const network = parseNetwork(options.network);
@@ -114,6 +123,26 @@ async function runRequestCommand(
   output.print(`  amount: ${amount}, network: ${network}, quote-timeout: ${quoteTimeoutMs}ms`);
   output.blank();
 
+  // AIP-16 wire-up (parity with `actp test`): give runRequest the delivery
+  // channel, kernel address, and chainId so it can post a setup envelope
+  // and pick up the provider's response envelope. Without these
+  // `deliveryEnabled` stays false and the channel path is skipped —
+  // identical to the pre-AIP-16 SDK. Public privacy by default; encrypted
+  // requires a buyer ephemeral keypair we don't surface on the CLI yet.
+  // Only wire on real networks; mock has no relay to talk to.
+  let deliveryChannel: RelayDeliveryChannel | undefined;
+  let expectedKernelAddress: `0x${string}` | undefined;
+  let expectedChainId: number | undefined;
+  if (network === 'testnet' || network === 'mainnet') {
+    const networkName = network === 'testnet' ? 'base-sepolia' : 'base-mainnet';
+    const cfg = getNetwork(networkName);
+    deliveryChannel = new RelayDeliveryChannel({
+      baseUrl: process.env.AGIRAILS_RELAY_URL || 'https://www.agirails.app',
+    });
+    expectedKernelAddress = cfg.contracts.actpKernel as `0x${string}`;
+    expectedChainId = cfg.chainId;
+  }
+
   const result = await runRequest({
     provider,
     amount,
@@ -123,6 +152,10 @@ async function runRequestCommand(
     quoteTimeoutMs,
     deliveryTimeoutMs,
     autoAccept: options.autoAccept ?? true,
+    deliveryChannel,
+    expectedKernelAddress,
+    expectedChainId,
+    deliveryPrivacy: 'public',
     onTransition: (state, txId, ts) => {
       // Human mode shows the live log line; quiet/json modes suppress it
       // (they only emit the final structured result).
@@ -138,14 +171,77 @@ async function runRequestCommand(
       elapsedMs: result.elapsedMs,
       settled: result.settled,
       payload: result.payload,
+      receiptUrl: result.receiptUrl,
     },
     { quietKey: 'txId' }
   );
 
-  if (result.payload && typeof result.payload === 'object' && 'reflection' in (result.payload as Record<string, unknown>)) {
+  // Extract a one-line "reflection / payload preview" string for the V3
+  // receipt's payload block. Falls back to JSON-stringified payload (max
+  // ~280 chars) when there is no `reflection` field, mirroring the
+  // human-friendly intent of `actp test`'s payload row.
+  let payloadPreview: string | undefined;
+  if (result.payload && typeof result.payload === 'object') {
+    const obj = result.payload as Record<string, unknown>;
+    if (typeof obj.reflection === 'string' && obj.reflection.length > 0) {
+      payloadPreview = obj.reflection;
+    } else {
+      try {
+        const json = JSON.stringify(obj);
+        payloadPreview = json.length > 280 ? json.slice(0, 277) + '...' : json;
+      } catch {
+        // Non-serializable payload — leave preview unset.
+      }
+    }
+  }
+
+  // V3 framed receipt — buyer perspective. We always render the ceremonial
+  // receipt for a settled request, regardless of whether the agent's own
+  // intent is buy / earn / both: in `actp request` the local agent is by
+  // definition the requester paying the provider for a service.
+  // Unsettled outcomes (DELIVERED-but-no-settle, timeouts) skip the frame
+  // and fall back to the legacy success/warning lines below.
+  if (output.mode === 'human' && result.settled && network !== 'mock') {
     output.blank();
-    output.success(`Reflection: ${(result.payload as { reflection: string }).reflection}`);
-  } else {
+    const networkLabel = network === 'testnet' ? 'base-sepolia' : 'base-mainnet';
+    // amount is the human-readable USDC string ("0.05", "10"); convert to
+    // 6-decimal wei. Strip leading $ if a user passed "$10".
+    const amountNum = Number(amount.replace(/^\$/, ''));
+    const amountWei = Number.isFinite(amountNum)
+      ? BigInt(Math.round(amountNum * 1_000_000))
+      : 0n;
+    renderReceiptV3(
+      {
+        agent: 'your-agent',
+        // Only pass `counterparty` when we have a human-readable slug —
+        // a raw 42-char hex address overflows the inner card width and
+        // breaks the frame. When unset, the renderer falls back to
+        // shortAddr(requester) which always fits.
+        counterparty: counterpartySlug,
+        perspective: 'buyer',
+        service: options.service,
+        amountWei,
+        network: networkLabel,
+        txId: result.txId,
+        timing: { totalMs: result.elapsedMs, escrowLockMs: 0, settlementMs: 0 },
+        reflection: payloadPreview,
+        receiptUrl: result.receiptUrl,
+        // `requester` here is the on-chain counterparty for shortAddr —
+        // the field name is provider-perspective-centric ("the requester
+        // from the receipt-author's POV"); for buyer perspective the
+        // counterparty IS the provider we paid.
+        requester: provider,
+      },
+      output
+    );
+  }
+
+  // Legacy success line — still useful in non-human modes and as a
+  // backstop when the V3 frame is suppressed (mock / unsettled).
+  if (payloadPreview) {
+    output.blank();
+    output.success(`Service delivered: ${payloadPreview.slice(0, 120)}`);
+  } else if (!result.settled || network === 'mock') {
     output.blank();
     output.success(`Settled in ${result.elapsedMs} ms`);
   }
