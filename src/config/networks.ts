@@ -21,6 +21,20 @@ const BASE_SEPOLIA_RPC_URL = process.env.BASE_SEPOLIA_RPC || 'https://sepolia.ba
 // cleanly. (Damir review report 2026-04-18, Issue B.)
 const BASE_MAINNET_RPC_URL = process.env.BASE_MAINNET_RPC || 'https://base-rpc.publicnode.com';
 
+/**
+ * True when the active network falls back to the bundled PUBLIC RPC (no
+ * BASE_SEPOLIA_RPC / BASE_MAINNET_RPC override). Public RPCs serve one-shot
+ * transactions fine but cap eth_getLogs (~2000 blocks) and garbage-collect
+ * long-lived filters — so a 24/7 provider listener that watches on-chain may
+ * silently miss jobs. Long-running listeners should warn on this.
+ */
+export function usingPublicRpc(network: string): boolean {
+  const n = network.toLowerCase();
+  if (n.includes('mock')) return false;
+  if (n.includes('mainnet')) return !process.env.BASE_MAINNET_RPC;
+  return !process.env.BASE_SEPOLIA_RPC; // testnet / base-sepolia / default
+}
+
 // Shared AA keys for out-of-the-box UX. These are PUBLIC keys — equivalent
 // to Firebase web apiKey or a Stripe publishable key. The actual security
 // boundary is enforced server-side by paymaster policies on the provider

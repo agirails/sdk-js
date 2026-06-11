@@ -23,7 +23,7 @@ import { readFileSync, existsSync } from 'fs';
 import { Wallet, JsonRpcProvider, type Signer } from 'ethers';
 import { Output, ExitCode } from '../utils/output';
 import { mapError } from '../utils/client';
-import { getNetwork } from '../../config/networks';
+import { getNetwork, usingPublicRpc } from '../../config/networks';
 import { BlockchainRuntime } from '../../runtime/BlockchainRuntime';
 import { MockRuntime } from '../../runtime/MockRuntime';
 import { MockStateManager } from '../../runtime/MockStateManager';
@@ -145,6 +145,18 @@ async function runAgent(options: AgentOptions, output: Output): Promise<void> {
   output.print('Watching on-chain for INITIATED txs + auto-quoting per policy.');
   output.print('Counter-offers from buyers auto-handled per counter_strategy.');
   output.print('');
+
+  // A 24/7 on-chain listener needs a real RPC. Public endpoints serve one-shot
+  // transactions fine but cap eth_getLogs (~2000 blocks) and drop long-lived
+  // filters, so this loop may silently miss jobs. Warn once, clearly.
+  if (!options.mock && !options.rpc && usingPublicRpc(options.network)) {
+    const rpcEnv = options.network.includes('mainnet') ? 'BASE_MAINNET_RPC' : 'BASE_SEPOLIA_RPC';
+    output.warning(`⚠ Public RPC in use — no ${rpcEnv} (or --rpc) set.`);
+    output.warning('  One-shot transactions work, but this 24/7 listener may MISS jobs:');
+    output.warning('  public RPCs cap eth_getLogs (~2000 blocks) and drop long-lived filters.');
+    output.warning(`  Fix: set ${rpcEnv}=<your endpoint> (Alchemy/Infura/QuickNode free tier).`);
+    output.print('');
+  }
 
   // Watch on-chain for new INITIATED txs addressed to us, auto-quote.
   //
