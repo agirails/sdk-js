@@ -308,8 +308,18 @@ export async function runPublish(
             // a local equivalent inline (parent dir of the .md file).
             const slugCheckProjectRoot = resolve(resolvedPath, '..');
             const localSigner = await derivePotentialSigner(slugCheckProjectRoot);
+            // Gasless agents are owned on-chain by their Smart Wallet, not the
+            // EOA signer (the EOA only CONTROLS the wallet). The slug owner is
+            // the Smart Wallet, so match against it too — otherwise the EOA
+            // never equals the owner and every re-publish spuriously renames
+            // the agent's slug to "<slug>-2".
+            let localSmartWallet: string | undefined;
+            try { localSmartWallet = loadConfig(slugCheckProjectRoot).smartWallet?.toLowerCase(); } catch { /* best-effort */ }
             const ownerWallet = slugResult.owner.wallet.toLowerCase();
-            if (localSigner && localSigner.toLowerCase() === ownerWallet) {
+            const ownsSlug =
+              (!!localSigner && localSigner.toLowerCase() === ownerWallet) ||
+              (!!localSmartWallet && localSmartWallet === ownerWallet);
+            if (ownsSlug) {
               slugSpinner.stop(true);
               recovered = await maybeRecoverAgentId({
                 output,
@@ -324,10 +334,10 @@ export async function runPublish(
                   content = newContent;
                 },
               });
-            } else if (localSigner) {
+            } else if (localSigner || localSmartWallet) {
               output.warning(
                 `Slug "${v4Config.slug}" is owned by ${ownerWallet} ` +
-                  `(your wallet ${localSigner.toLowerCase()} differs).`
+                  `(your wallet ${localSmartWallet ?? localSigner!.toLowerCase()} differs).`
               );
             }
           }
