@@ -19,7 +19,7 @@
 import { keccak256, toUtf8Bytes, type Signer } from 'ethers';
 import { discoverAgents, DiscoverAgent, DiscoverParams } from '../api/agirailsApp';
 import { PolicyEngine, BuyerPolicy, QuoteOffer } from './PolicyEngine';
-import { DecisionEngine, CandidateStats } from './DecisionEngine';
+import { DecisionEngine, CandidateStats, type BuyerQuoteDecider } from './DecisionEngine';
 import { SessionStore } from './SessionStore';
 import { IACTPRuntime } from '../runtime/IACTPRuntime';
 import type { ACTPClient } from '../ACTPClient';
@@ -117,12 +117,19 @@ export interface BuyerNegotiationContext {
    * in tests.
    */
   negotiationChannel?: NegotiationChannel;
+  /**
+   * BYO-brain: override the per-quote accept/counter/reject decision. When
+   * omitted, the built-in DecisionEngine is used (zero behavior change). Only
+   * consulted on the channel negotiation path. Async-tolerant for LLM deciders.
+   */
+  decideQuote?: BuyerQuoteDecider;
 }
 
 export class BuyerOrchestrator {
   private policy: BuyerPolicy;
   private policyEngine: PolicyEngine;
   private decisionEngine: DecisionEngine;
+  private decider: BuyerQuoteDecider;
   private sessionStore: SessionStore;
   private runtime: IACTPRuntime;
   private requesterAddress: string;
@@ -189,6 +196,9 @@ export class BuyerOrchestrator {
     this.requesterAddress = requesterAddress;
     this.policyEngine = new PolicyEngine(policy, actpDir);
     this.decisionEngine = new DecisionEngine(policy.selection.weights);
+    // BYO-brain: default decider delegates to the built-in engine, so when
+    // negotiation.decideQuote is absent behavior is byte-for-byte identical.
+    this.decider = negotiation.decideQuote ?? ((q, p, r) => this.decisionEngine.evaluateQuote(q, p, r));
     this.sessionStore = new SessionStore(actpDir);
     this.negotiation = negotiation;
     this.client = client;
@@ -833,7 +843,7 @@ export class BuyerOrchestrator {
         hashSource = 'aip2';
       }
 
-      const evaluation = this.decisionEngine.evaluateQuote(currentQuote, this.policy, counterRound);
+      const evaluation = await this.decider(currentQuote, this.policy, counterRound);
 
       // ----- reject -----
       if (evaluation.action === 'reject') {

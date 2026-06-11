@@ -425,6 +425,35 @@ describe('BuyerOrchestrator — channel-driven (3.5.0)', () => {
     const tx = await runtime.getTransaction(txId);
     expect(tx!.state).toBe('CANCELLED');
   }, 15_000);
+
+  // ==========================================================================
+  // decideQuote — BYO-brain hook (injectable per-quote decision)
+  // ==========================================================================
+
+  describe('decideQuote (BYO-brain hook)', () => {
+    it('consults the injected decider instead of the built-in DecisionEngine', async () => {
+      await runtime.mintTokens(buyerWallet.address, '100000000');
+      const seen: string[] = [];
+      const orch = new BuyerOrchestrator(
+        makePolicy({ target_unit_price: { amount: 8, currency: 'USDC', unit: 'job' } }),
+        runtime, buyerWallet.address, testDir,
+        {
+          signer: buyerWallet, kernelAddress: KERNEL, chainId: CHAIN_ID, negotiationChannel: channel,
+          // The built-in engine would ACCEPT $7 (≤ $8 target). The injected brain vetoes.
+          decideQuote: (q) => { seen.push(q.quotedAmount); return { action: 'reject', reason: 'brain vetoes' }; },
+        },
+      );
+      const negPromise = orch.negotiate({ pollIntervalMs: 50 });
+      const txId = await awaitTxId();
+      await postProviderQuote(txId, '7000000'); // default path → accept; injected brain → reject
+
+      const result = await negPromise;
+      expect(seen).toContain('7000000');      // the decider WAS consulted
+      expect(result.success).toBe(false);      // and its reject drove the outcome
+      const tx = await runtime.getTransaction(txId);
+      expect(tx!.state).toBe('CANCELLED');     // did NOT commit, despite quote ≤ target
+    }, 10_000);
+  });
 });
 
 /**

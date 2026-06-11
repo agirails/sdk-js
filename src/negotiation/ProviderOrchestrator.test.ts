@@ -12,7 +12,7 @@ import * as path from 'path';
 import { Wallet, HDNodeWallet, keccak256, toUtf8Bytes } from 'ethers';
 import { MockRuntime } from '../runtime/MockRuntime';
 import { MockStateManager } from '../runtime/MockStateManager';
-import { ProviderOrchestrator } from './ProviderOrchestrator';
+import { ProviderOrchestrator, type CounterContext } from './ProviderOrchestrator';
 import { ProviderPolicy, IncomingRequest } from './ProviderPolicy';
 import { CounterOfferBuilder, CounterOfferMessage } from '../builders/CounterOfferBuilder';
 import { CounterAcceptMessage } from '../builders/CounterAcceptBuilder';
@@ -308,6 +308,57 @@ describe('ProviderOrchestrator — channel-driven (3.5.0)', () => {
       await orch.start();
       orch.stop();
       expect(() => orch.stop()).not.toThrow();
+    });
+  });
+
+  // ==========================================================================
+  // counterDecider — BYO-brain hook (injectable decision; verify stays mandatory)
+  // ==========================================================================
+
+  describe('counterDecider (BYO-brain hook)', () => {
+    async function signedCounter(
+      txId: string, quoteAmount: string, counterAmount: string,
+    ): Promise<CounterOfferMessage> {
+      return new CounterOfferBuilder(buyerWallet, new InMemoryNonceManager()).build({
+        txId, consumer: consumerDID, provider: providerDID,
+        quoteAmount, counterAmount, maxPrice: '10000000',
+        inReplyTo: '0x' + 'b'.repeat(64), chainId: CHAIN_ID, kernelAddress: KERNEL,
+      });
+    }
+
+    it('consults the injected decider instead of the built-in policy engine', async () => {
+      const calls: CounterContext[] = [];
+      const orch = new ProviderOrchestrator({
+        policy: basePolicy(), runtime, signer: providerWallet,
+        kernelAddress: KERNEL, chainId: CHAIN_ID, providerDID, negotiationChannel: channel,
+        counterDecider: (ctx) => { calls.push(ctx); return { action: 'accept', reason: 'stub says yes' }; },
+      });
+      const { txId } = await makeIncomingTx('5000000');
+      // $3 is BELOW the $5 floor — the built-in policy would reject/walk here.
+      const counter = await signedCounter(txId, '7000000', '3000000');
+
+      const decision = await orch.evaluateCounter(counter);
+
+      expect(decision).toEqual({ action: 'accept', reason: 'stub says yes' });
+      expect(calls).toHaveLength(1);
+      expect(calls[0].counter.counterAmount).toBe('3000000');
+      expect(calls[0].policy.pricing.min_acceptable.amount).toBe(5);
+    });
+
+    it('still verifies the counter signature BEFORE consulting the decider', async () => {
+      const decider = jest.fn(() => ({ action: 'accept' as const, reason: 'should never run' }));
+      const orch = new ProviderOrchestrator({
+        policy: basePolicy(), runtime, signer: providerWallet,
+        kernelAddress: KERNEL, chainId: CHAIN_ID, providerDID, negotiationChannel: channel,
+        counterDecider: decider,
+      });
+      const { txId } = await makeIncomingTx('5000000');
+      const counter = await signedCounter(txId, '7000000', '6000000');
+      // Tamper the amount after signing → the EIP-712 signature no longer matches.
+      const tampered = { ...counter, counterAmount: '1000000' };
+
+      await expect(orch.evaluateCounter(tampered)).rejects.toThrow();
+      expect(decider).not.toHaveBeenCalled();
     });
   });
 });

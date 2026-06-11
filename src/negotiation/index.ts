@@ -19,10 +19,10 @@ export type {
 export { verifyQuoteHashOnChain } from './verifyQuoteOnChain';
 export type { VerifySource, VerifyOnChainResult } from './verifyQuoteOnChain';
 
-export type { QuoteForEvaluation, QuoteEvaluation } from './DecisionEngine';
+export type { QuoteForEvaluation, QuoteEvaluation, BuyerQuoteDecider } from './DecisionEngine';
 
 export { ProviderPolicyEngine, parseTtl as parseProviderTtl } from './ProviderPolicy';
 export type { ProviderPolicy, ProviderPolicyViolation, ProviderPolicyResult, IncomingRequest } from './ProviderPolicy';
 
 export { ProviderOrchestrator } from './ProviderOrchestrator';
-export type { ProviderOrchestratorConfig, QuoteDecision, QuoteResult, CounterDecision } from './ProviderOrchestrator';
+export type { ProviderOrchestratorConfig, QuoteDecision, QuoteResult, CounterDecision, CounterContext, CounterDecider } from './ProviderOrchestrator';

@@ -83,6 +83,27 @@ export type QuoteEvaluation =
   | { action: 'counter'; amountBaseUnits: string; reason: string }
   | { action: 'reject'; reason: string };
 
+/**
+ * BYO-brain hook for the per-quote accept/counter/reject decision. Signature
+ * mirrors DecisionEngine.evaluateQuote so the built-in engine is a zero-adapter
+ * default; async-tolerant so an LLM decider can be dropped in.
+ *
+ * Contract the host (BuyerOrchestrator) relies on:
+ *  - 'counter'.amountBaseUnits MUST be a base-unit string, strictly <
+ *    quote.quotedAmount and >= 50_000 ($0.05 platform min), or
+ *    CounterOfferBuilder.build throws and the round errors out.
+ *  - 'accept' commits at quote.quotedAmount without re-checking affordability.
+ *
+ * Note: `quote.final_offer` is currently never set on channel quotes (the wire
+ * QuoteMessage carries no final_offer field), so a decider keying off it will
+ * not fire on the live negotiation path.
+ */
+export type BuyerQuoteDecider = (
+  quote: QuoteForEvaluation,
+  policy: BuyerPolicy,
+  roundsUsedSoFar: number,
+) => QuoteEvaluation | Promise<QuoteEvaluation>;
+
 // ============================================================================
 // Constants
 // ============================================================================

@@ -79,6 +79,12 @@ export interface ProviderOrchestratorConfig {
    * to its terminal Output.
    */
   log?: (level: 'info' | 'warn' | 'error', msg: string) => void;
+  /**
+   * BYO-brain: override the accept/reject/requote decision. When omitted, the
+   * built-in ProviderPolicyEngine is used (zero behavior change). Signature
+   * verification ALWAYS runs first regardless. Async-tolerant for LLM deciders.
+   */
+  counterDecider?: CounterDecider;
 }
 
 export type QuoteDecision =
@@ -102,6 +108,35 @@ export type CounterDecision =
   | { action: 'accept'; reason: string }
   | { action: 'reject'; reason: string }
   | { action: 'requote'; amountBaseUnits: string; reason: string };
+
+/**
+ * Context handed to a provider counter-decider. Surfaces everything the
+ * built-in ProviderPolicyEngine.evaluateCounter reads (floor = pricing
+ * .min_acceptable, counter_strategy, concede_pct, max_requotes all live on
+ * `policy`) plus the per-tx baseline, so a BYO decider isn't blind. The counter
+ * is ALREADY signature/band/expiry verified before the decider runs.
+ */
+export interface CounterContext {
+  /** Verified incoming counter (counter.counterAmount = buyer's bid). */
+  counter: CounterOfferMessage;
+  /** Provider's most recent quote amount for this tx (base units). */
+  lastQuoteAmountBaseUnits: string;
+  /** Re-quotes already sent this tx (0 on first counter). */
+  requotesUsed: number;
+  /** Provider policy (floor, counter_strategy, concede_pct, max_requotes). */
+  policy: ProviderPolicy;
+}
+
+/**
+ * BYO-brain hook for the accept/reject/requote decision. Async-tolerant.
+ * Verification is NOT part of the hook — it always runs before the decider.
+ * Contract: a 'requote'.amountBaseUnits MUST be a valid quote amount (>= the
+ * provider floor), else quoteBuilder.build throws deep in the re-quote path
+ * (caught by start()'s handler try/catch).
+ */
+export type CounterDecider = (
+  ctx: CounterContext,
+) => CounterDecision | Promise<CounterDecision>;
 
 /** Per-tx state the orchestrator tracks while listening on the channel. */
 interface TxState {
@@ -131,6 +166,7 @@ export class ProviderOrchestrator {
   private readonly counterVerifier: CounterOfferBuilder;
   private readonly counterAcceptBuilder: CounterAcceptBuilder;
   private readonly log: NonNullable<ProviderOrchestratorConfig['log']>;
+  private readonly counterDecider?: CounterDecider;
 
   /** Per-tx state for the multi-round counter listener. */
   private readonly txStates = new Map<string, TxState>();
@@ -148,6 +184,7 @@ export class ProviderOrchestrator {
     this.nonceManager = cfg.nonceManager ?? new InMemoryNonceManager();
     this.negotiationChannel = cfg.negotiationChannel;
     this.log = cfg.log ?? (() => undefined);
+    this.counterDecider = cfg.counterDecider;
     this.quoteBuilder = new QuoteBuilder(this.signer, this.nonceManager);
     this.counterVerifier = new CounterOfferBuilder(); // verify-only
     this.counterAcceptBuilder = new CounterAcceptBuilder(this.signer, this.nonceManager);
@@ -303,8 +340,20 @@ export class ProviderOrchestrator {
     lastQuoteAmountBaseUnits?: string,
     requotesUsed = 0,
   ): Promise<CounterDecision> {
-    await this.counterVerifier.verify(counter, this.kernelAddress);
+    await this.counterVerifier.verify(counter, this.kernelAddress); // always runs — verify is mandatory
     const lastAmount = lastQuoteAmountBaseUnits ?? counter.quoteAmount;
+
+    // BYO-brain: a custom decider replaces ONLY the decision (verify above
+    // still ran). When absent, the built-in policy engine runs verbatim.
+    if (this.counterDecider) {
+      return await this.counterDecider({
+        counter,
+        lastQuoteAmountBaseUnits: lastAmount,
+        requotesUsed,
+        policy: this.policy,
+      });
+    }
+
     const verdict = this.policyEngine.evaluateCounter(counter.counterAmount, lastAmount, requotesUsed);
     if (verdict.decision === 'requote') {
       return { action: 'requote', amountBaseUnits: verdict.amountBaseUnits!, reason: verdict.reason };

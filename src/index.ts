@@ -187,6 +187,8 @@ export type {
   QuoteDecision,
   QuoteResult,
   CounterDecision,
+  CounterContext,
+  CounterDecider,
 } from './negotiation/ProviderOrchestrator';
 export type {
   ProviderPolicy,
@@ -218,6 +220,7 @@ export type {
   ScoredCandidate,
   QuoteForEvaluation,
   QuoteEvaluation,
+  BuyerQuoteDecider,
 } from './negotiation/DecisionEngine';
 export { verifyQuoteHashOnChain } from './negotiation/verifyQuoteOnChain';
 export type {
