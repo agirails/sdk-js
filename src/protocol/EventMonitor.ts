@@ -1,4 +1,4 @@
-import { Contract, EventLog } from 'ethers';
+import { Contract, EventLog, Log } from 'ethers';
 import { State, Transaction } from '../types';
 
 /**
@@ -123,9 +123,17 @@ export class EventMonitor {
         ? this.kernelContract.filters.TransactionCreated(null, address, null) // Match requester (2nd indexed param)
         : this.kernelContract.filters.TransactionCreated(null, null, address); // Match provider (3rd indexed param)
 
-    const events = range
-      ? await this.kernelContract.queryFilter(filter, range.fromBlock, range.toBlock)
-      : await this.kernelContract.queryFilter(filter);
+    // RPCs cap eth_getLogs block ranges (≈2000 on standard tiers, far less on
+    // throttled keys). When the caller bounds the scan to a numeric window,
+    // query it in ADAPTIVE CHUNKS that split on a range-limit error — so the
+    // catch-up sweep works on ANY RPC instead of throwing and (one level up)
+    // crashing the agent. Shared by every consumer that reaches here.
+    const events =
+      range && typeof range.fromBlock === 'number' && typeof range.toBlock === 'number'
+        ? await this.queryFilterChunked(filter, range.fromBlock, range.toBlock)
+        : range
+          ? await this.kernelContract.queryFilter(filter, range.fromBlock, range.toBlock)
+          : await this.kernelContract.queryFilter(filter);
 
     return Promise.all(
       events.map(async (event) => {
@@ -162,6 +170,39 @@ export class EventMonitor {
           logIndex: eventLog.index,
         };
       })
+    );
+  }
+
+  /**
+   * queryFilter over [fromBlock, toBlock], splitting the window in half and
+   * retrying whenever the RPC rejects the range as too large. Adapts to ANY
+   * provider's eth_getLogs cap (10, 2000, …) with no hardcoded chunk size. A
+   * single-block window that still fails is a genuine error — rethrown.
+   */
+  private async queryFilterChunked(
+    filter: Parameters<Contract['queryFilter']>[0],
+    fromBlock: number,
+    toBlock: number
+  ): Promise<(EventLog | Log)[]> {
+    try {
+      return await this.kernelContract.queryFilter(filter, fromBlock, toBlock);
+    } catch (err) {
+      if (fromBlock >= toBlock || !EventMonitor.isBlockRangeError(err)) throw err;
+      const mid = Math.floor((fromBlock + toBlock) / 2);
+      const lower = await this.queryFilterChunked(filter, fromBlock, mid);
+      const upper = await this.queryFilterChunked(filter, mid + 1, toBlock);
+      return [...lower, ...upper];
+    }
+  }
+
+  /** Heuristic: does this error mean the eth_getLogs block range was too large? */
+  private static isBlockRangeError(err: unknown): boolean {
+    const m = (err instanceof Error ? err.message : String(err)).toLowerCase();
+    return (
+      m.includes('block range') || m.includes('range is too') || m.includes('range too') ||
+      m.includes('up to a') || m.includes('more than') || m.includes('response size') ||
+      m.includes('query timeout') || m.includes('limit exceeded') ||
+      m.includes('-32600') || m.includes('-32005')
     );
   }
 

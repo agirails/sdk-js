@@ -413,6 +413,49 @@ describe('EventMonitor', () => {
   });
 
   // ============================================================================
+  // Adaptive getLogs chunking
+  // ============================================================================
+
+  describe('getTransactionHistory() — adaptive getLogs chunking', () => {
+    it('splits the block range and retries when the RPC rejects it as too large', async () => {
+      const mockKernel = createMockContract();
+      const monitor = new EventMonitor(mockKernel as any, createMockContract() as any);
+
+      const RANGE_ERR = new Error(
+        'Under the Free tier plan, you can make eth_getLogs requests with up to a 10 block range'
+      );
+      // Reject any window wider than 10 blocks; the only event lives at block 5.
+      mockKernel.queryFilter.mockImplementation(async (_f: any, from: number, to: number) => {
+        if (to - from > 10) throw RANGE_ERR;
+        return from <= 5 && 5 <= to ? [{ args: { transactionId: '0xtx5' }, blockNumber: 5, index: 0 }] : [];
+      });
+      mockKernel.getTransaction.mockResolvedValue({
+        transactionId: '0xtx5', requester: '0xr', provider: '0xp', amount: 1n, state: 0,
+        createdAt: 1n, updatedAt: 1n, deadline: 9n, disputeWindow: 1n,
+        escrowContract: '0xe', escrowId: '0x1', serviceHash: '0x3', attestationUID: '0x4',
+        metadata: null, platformFeeBpsLocked: 100n,
+      });
+
+      const result = await monitor.getTransactionHistory('0xp', 'provider', { fromBlock: 0, toBlock: 100 });
+
+      expect(mockKernel.queryFilter.mock.calls.length).toBeGreaterThan(1); // it actually split
+      expect(result).toHaveLength(1);
+      expect(result[0].txId).toBe('0xtx5');
+    });
+
+    it('rethrows a non-range error without splitting', async () => {
+      const mockKernel = createMockContract();
+      const monitor = new EventMonitor(mockKernel as any, createMockContract() as any);
+      mockKernel.queryFilter.mockRejectedValue(new Error('connection refused'));
+
+      await expect(
+        monitor.getTransactionHistory('0xp', 'provider', { fromBlock: 0, toBlock: 100 })
+      ).rejects.toThrow('connection refused');
+      expect(mockKernel.queryFilter.mock.calls.length).toBe(1); // no split on a non-range error
+    });
+  });
+
+  // ============================================================================
   // onTransactionCreated Tests
   // ============================================================================
 

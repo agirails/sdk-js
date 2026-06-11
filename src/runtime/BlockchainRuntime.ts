@@ -722,7 +722,7 @@ export class BlockchainRuntime implements IACTPRuntime {
     const history = await this.events.getTransactionHistory(
       provider,
       'provider',
-      { fromBlock, toBlock: 'latest' }
+      { fromBlock, toBlock: currentBlock } // numeric bounds → EventMonitor can chunk getLogs to the RPC's cap
     );
 
     const recentFirst = [...history].sort((a, b) => {

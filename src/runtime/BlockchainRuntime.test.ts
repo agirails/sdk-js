@@ -442,15 +442,16 @@ describe('BlockchainRuntime', () => {
       expect(result).toEqual([]);
     });
 
-    it('passes bounded fromBlock = currentBlock − sweepBlockWindow to EventMonitor', async () => {
+    it('passes numeric bounds [currentBlock − sweepBlockWindow, currentBlock] to EventMonitor', async () => {
       const historySpy = jest
         .spyOn((runtime as any).events, 'getTransactionHistory')
         .mockResolvedValue([]);
       await runtime.getTransactionsByProvider(PROVIDER);
+      // Numeric toBlock (not 'latest') so EventMonitor can adaptively chunk getLogs to the RPC cap.
       expect(historySpy).toHaveBeenCalledWith(
         PROVIDER,
         'provider',
-        { fromBlock: 10_000 - 7200, toBlock: 'latest' }
+        { fromBlock: 10_000 - 7200, toBlock: 10_000 }
       );
     });
 
