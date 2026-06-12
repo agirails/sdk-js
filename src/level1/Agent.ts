@@ -598,7 +598,7 @@ export class Agent extends EventEmitter {
       this.stopPolling();
       this.unsubscribe();
       this._status = 'stopped';
-      this.emit('error', error);
+      this.safeEmitError(error);
       throw error;
     }
   }
@@ -700,7 +700,7 @@ export class Agent extends EventEmitter {
     this.jobSubscriptionCleanup = runtime.subscribeProviderJobs(
       this.address,
       (tx) => {
-        this.handleIncomingTransaction(tx).catch((err) => this.emit('error', err));
+        this.handleIncomingTransaction(tx).catch((err) => this.safeEmitError(err));
       }
     );
     this.logger.info('Subscribed to on-chain TransactionCreated events', {
@@ -993,7 +993,7 @@ export class Agent extends EventEmitter {
     const pollingInterval = 5000; // 5 seconds
     this.pollingIntervalId = setInterval(() => {
       this.pollForJobs().catch((error) => {
-        this.emit('error', error);
+        this.safeEmitError(error);
       });
     }, pollingInterval);
   }
@@ -1005,6 +1005,22 @@ export class Agent extends EventEmitter {
     if (this.pollingIntervalId) {
       clearInterval(this.pollingIntervalId);
       this.pollingIntervalId = undefined;
+    }
+  }
+
+  /**
+   * Emit an 'error' event only when a consumer is listening; otherwise log it.
+   * A long-running provider agent must NOT crash the process on a transient or
+   * per-job failure just because no 'error' listener was attached — Node throws
+   * on an unhandled 'error' event. Poll/job errors are retried on the next
+   * cycle, so swallowing-to-log here keeps the daemon alive; callers that DO
+   * attach an 'error' listener still receive every error unchanged.
+   */
+  private safeEmitError(error: unknown): void {
+    if (this.listenerCount('error') > 0) {
+      this.emit('error', error);
+    } else {
+      this.logger.error('Agent error (no error listener attached; not crashing)', {}, error as Error);
     }
   }
 
@@ -1077,7 +1093,7 @@ export class Agent extends EventEmitter {
     } catch (error) {
       // Polling error - will retry on next interval
       this.logger.error('Polling error', {}, error as Error);
-      this.emit('error', error);
+      this.safeEmitError(error);
     }
   }
 
@@ -1202,11 +1218,11 @@ export class Agent extends EventEmitter {
       // Process the job asynchronously (don't await — handler runs out-of-band).
       this.processJob(job, serviceHandler.handler).catch((error) => {
         this.logger.error('Job processing failed', { jobId: job.id }, error as Error);
-        this.emit('error', error);
+        this.safeEmitError(error);
       });
     } catch (error) {
       this.logger.error('Error processing pending job', { txId: tx.id }, error as Error);
-      this.emit('error', error);
+      this.safeEmitError(error);
     } finally {
       this.processingLocks.delete(tx.id);
     }

@@ -1208,4 +1208,22 @@ describe('Agent', () => {
       await expect(badAgent.start()).rejects.toThrow();
     });
   });
+
+  describe('safeEmitError (crash resilience)', () => {
+    it('does NOT throw when emitting an error with no listener attached', () => {
+      // Node EventEmitter throws on an unhandled 'error' event; a long-running
+      // agent must not die on a transient poll/job failure when no listener.
+      const agent = new Agent({ name: 'Resilient', network: 'mock' });
+      expect(() => (agent as any).safeEmitError(new Error('transient poll error'))).not.toThrow();
+    });
+
+    it('delivers the error to a registered error listener', () => {
+      const agent = new Agent({ name: 'Listened', network: 'mock' });
+      const seen: unknown[] = [];
+      agent.on('error', (e) => seen.push(e));
+      const err = new Error('boom');
+      (agent as any).safeEmitError(err);
+      expect(seen).toEqual([err]);
+    });
+  });
 });
