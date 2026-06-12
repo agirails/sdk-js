@@ -1226,4 +1226,22 @@ describe('Agent', () => {
       expect(seen).toEqual([err]);
     });
   });
+
+  describe('bounded job retry', () => {
+    it('stops retrying a repeatedly-failing job after MAX_JOB_ATTEMPTS', async () => {
+      const agent = new Agent({ name: 'BoundedRetry', network: 'mock' }) as any;
+      const job = {
+        id: '0xRetryJob', service: 'svc', budget: 10,
+        requester: '0x' + 'a'.repeat(40), input: {}, metadata: {},
+      };
+      const failing = async () => { throw new Error('handler fails deterministically (bad input)'); };
+
+      await agent.processJob(job, failing); // attempt 1
+      expect(agent.processedJobs.has(job.id)).toBe(false); // still retryable
+      await agent.processJob(job, failing); // attempt 2
+      expect(agent.processedJobs.has(job.id)).toBe(false);
+      await agent.processJob(job, failing); // attempt 3 → give up
+      expect(agent.processedJobs.has(job.id)).toBe(true);  // marked processed; polling won't retry forever
+    });
+  });
 });

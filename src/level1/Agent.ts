@@ -373,6 +373,16 @@ export class Agent extends EventEmitter {
   private processedJobs = new LRUCache<string, boolean>(10000);
 
   /**
+   * Per-job failure counter for bounded retry. A non-kernel failure (e.g. the
+   * user's handler throwing on bad input) is retried as if transient; after
+   * MAX_JOB_ATTEMPTS recurrences it is treated as effectively permanent and
+   * marked processed, so polling does not retry it forever. In-memory → resets
+   * on restart (same blast radius as the permanent-failure skip set).
+   */
+  private jobAttempts = new LRUCache<string, number>(10000);
+  private static readonly MAX_JOB_ATTEMPTS = 3;
+
+  /**
    * Processing locks (for atomic locking)
    *
    *Security: Mutex for job processing.
@@ -1799,6 +1809,7 @@ export class Agent extends EventEmitter {
 
       // Security: Remove from active jobs on SUCCESS
       this.activeJobs.delete(job.id);
+      this.jobAttempts.delete(job.id);
 
       // Update stats
       this._stats.jobsCompleted++;
@@ -1908,7 +1919,23 @@ export class Agent extends EventEmitter {
           { jobId: job.id, reason: errorMessage.slice(0, 200) }
         );
       } else {
-        this.processedJobs.delete(job.id);
+        // Transient by default — retry on the next poll. But a non-kernel
+        // failure that keeps recurring (e.g. the handler throwing on bad input)
+        // is effectively permanent; after MAX_JOB_ATTEMPTS, stop retrying so we
+        // don't spin every poll cycle. The buyer stays protected by escrow
+        // (dispute / deadline refunds).
+        const attempts = (this.jobAttempts.get(job.id) ?? 0) + 1;
+        if (attempts >= Agent.MAX_JOB_ATTEMPTS) {
+          this.processedJobs.set(job.id, true);
+          this.jobAttempts.delete(job.id);
+          this.logger.warn(
+            'Job failed repeatedly — marking processed after max attempts so polling does not retry forever',
+            { jobId: job.id, attempts, reason: errorMessage.slice(0, 200) }
+          );
+        } else {
+          this.jobAttempts.set(job.id, attempts);
+          this.processedJobs.delete(job.id);
+        }
       }
       this._stats.jobsFailed++;
       this._stats.successRate =
