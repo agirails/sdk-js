@@ -169,8 +169,15 @@ export class BlockchainRuntime implements IACTPRuntime {
     // should pass a higher value (see MIGRATION-4.0 bullets 5+6).
     this.provider.pollingInterval = config.pollingInterval ?? 1000;
 
-    // PRD §5.2: bounded catch-up sweep. Default ~4 h on Base L2.
-    this.sweepBlockWindow = config.sweepBlockWindow ?? 7200;
+    // PRD §5.2: bounded catch-up sweep. Default ~4 h on Base L2. Operators on a
+    // restrictive RPC (small eth_getLogs cap) can override via the
+    // ACTP_SWEEP_BLOCK_WINDOW env var. Precedence: explicit config > env > default.
+    // Keep it comfortably above the poll cadence so a gap between polls can't
+    // skip past a job's creation block.
+    const envWindowRaw = process.env.ACTP_SWEEP_BLOCK_WINDOW;
+    const envWindow = envWindowRaw ? Number(envWindowRaw) : NaN;
+    this.sweepBlockWindow =
+      config.sweepBlockWindow ?? (Number.isInteger(envWindow) && envWindow > 0 ? envWindow : 7200);
 
     // PRD §5.2: WSS transport is declared in the config shape but not yet
     // implemented. Fail loud at construction time rather than silently

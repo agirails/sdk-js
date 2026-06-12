@@ -455,6 +455,30 @@ describe('BlockchainRuntime', () => {
       );
     });
 
+    it('honors ACTP_SWEEP_BLOCK_WINDOW env override; explicit config still wins', async () => {
+      const prev = process.env.ACTP_SWEEP_BLOCK_WINDOW;
+      const sweepFromBlock = async (rt: BlockchainRuntime): Promise<number> => {
+        await rt.initialize();
+        const spy = jest.spyOn((rt as any).events, 'getTransactionHistory').mockResolvedValue([]);
+        await rt.getTransactionsByProvider(PROVIDER);
+        return (spy.mock.calls[0][2] as { fromBlock: number }).fromBlock;
+      };
+      const base = { network: 'base-sepolia' as const, signer: mockSigner, provider: mockProvider };
+      try {
+        process.env.ACTP_SWEEP_BLOCK_WINDOW = '500';
+        expect(await sweepFromBlock(new BlockchainRuntime(base))).toBe(10_000 - 500); // env honored
+
+        // explicit config wins over the env var
+        expect(await sweepFromBlock(new BlockchainRuntime({ ...base, sweepBlockWindow: 300 }))).toBe(10_000 - 300);
+
+        process.env.ACTP_SWEEP_BLOCK_WINDOW = 'not-a-number';
+        expect(await sweepFromBlock(new BlockchainRuntime(base))).toBe(10_000 - 7200); // invalid → default
+      } finally {
+        if (prev === undefined) delete process.env.ACTP_SWEEP_BLOCK_WINDOW;
+        else process.env.ACTP_SWEEP_BLOCK_WINDOW = prev;
+      }
+    });
+
     it('hydrates each candidate, applies state filter, and returns oldest-first', async () => {
       jest.spyOn((runtime as any).events, 'getTransactionHistory').mockResolvedValue([
         { txId: '0xaaa', state: 0, blockNumber: 9_990, logIndex: 0 }, // oldest INITIATED
