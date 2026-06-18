@@ -331,6 +331,20 @@ describe('Agent', () => {
       expect((empty as any).findServiceHandler(tx)).toBeUndefined();
     });
 
+    it('MISSING/non-string serviceHash with a sole handler also routes (raw-pay variant)', () => {
+      // Some runtimes surface a raw pay with no serviceHash field at all (not
+      // even ZeroHash). The sole-handler fallback treats absent === ZeroHash,
+      // matching the agent-side monkeypatch this fix replaces.
+      const solo = new Agent({ name: 'SoloAgent2' });
+      const onboarding: JobHandler = async (job) => job.input;
+      solo.provide('onboarding', onboarding);
+
+      // no serviceHash key, empty description
+      expect((solo as any).findServiceHandler({ serviceDescription: '' })?.config.name).toBe('onboarding');
+      // non-string serviceHash (e.g. null) → also treated as no routable hash
+      expect((solo as any).findServiceHandler({ serviceHash: null, serviceDescription: '' })?.config.name).toBe('onboarding');
+    });
+
     it('returns undefined when no handler is registered for the hash', () => {
       const tx = {
         serviceHash: keccak256(toUtf8Bytes('unregistered-service')),
@@ -465,13 +479,54 @@ describe('Agent', () => {
       expect(filtered).not.toHaveBeenCalled();
     });
 
-    it('a throwing job:declined listener never breaks the decision (returns false)', async () => {
+    it('a SYNC throwing job:declined listener never breaks the decision (returns false)', async () => {
       const agent = new Agent({ name: 'A' });
       agent.provide({ name: 'audit', filter: { minBudget: 5 } }, async (j) => j.input);
       agent.on('job:declined', () => { throw new Error('listener boom'); });
 
       // Must not throw out of shouldAutoAccept; decision is still a clean false.
       await expect((agent as any).shouldAutoAccept(makeTx({ amount: '3000000' }))).resolves.toBe(false);
+    });
+
+    it('an ASYNC rejecting job:declined listener never breaks the decision (no unhandled rejection)', async () => {
+      const agent = new Agent({ name: 'A' });
+      agent.provide({ name: 'audit', filter: { minBudget: 5 } }, async (j) => j.input);
+      // An async listener that rejects would, with a plain EventEmitter.emit,
+      // surface as an unhandledRejection. The manual rawListeners dispatch must
+      // swallow it.
+      const unhandled = jest.fn();
+      process.on('unhandledRejection', unhandled);
+      agent.on('job:declined', async () => { throw new Error('async listener boom'); });
+
+      await expect((agent as any).shouldAutoAccept(makeTx({ amount: '3000000' }))).resolves.toBe(false);
+      // Let any (incorrectly-)floated rejection settle, then assert none fired.
+      await new Promise((r) => setTimeout(r, 20));
+      process.off('unhandledRejection', unhandled);
+      expect(unhandled).not.toHaveBeenCalled();
+    });
+
+    it('emits job:filtered (auto_accept_callback) when the autoAccept callback returns false', async () => {
+      const agent = new Agent({ name: 'A', behavior: { autoAccept: async () => false } });
+      agent.provide({ name: 'audit' }, async (j) => j.input);
+      const filtered = jest.fn();
+      agent.on('job:filtered', filtered);
+
+      const accepted = await (agent as any).shouldAutoAccept(makeTx({ amount: '10000000' }));
+      expect(accepted).toBe(false);
+      expect(filtered).toHaveBeenCalledTimes(1);
+      expect(filtered.mock.calls[0][1].reason).toBe('auto_accept_callback');
+    });
+
+    it('emits job:filtered (auto_accept_disabled) when autoAccept is the blanket false', async () => {
+      const agent = new Agent({ name: 'A', behavior: { autoAccept: false } });
+      agent.provide({ name: 'audit' }, async (j) => j.input);
+      const filtered = jest.fn();
+      agent.on('job:filtered', filtered);
+
+      const accepted = await (agent as any).shouldAutoAccept(makeTx({ amount: '10000000' }));
+      expect(accepted).toBe(false);
+      expect(filtered).toHaveBeenCalledTimes(1);
+      expect(filtered.mock.calls[0][1].reason).toBe('auto_accept_disabled');
     });
   });
 
