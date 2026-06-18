@@ -115,7 +115,7 @@ describeAnvilSuite('PRD §8.2 cases 5–7 — routing edges', () => {
     }
   }, 45_000);
 
-  it("case 6 — ZeroHash (Level 0 pay semantics): agent skips, no handler dispatched", async () => {
+  it("case 6 — ZeroHash (raw-pay) with a SOLE handler: routes to it", async () => {
     const providerSigner = await provisionSlot(anvil, 0);
     const requesterSigner = await provisionSlot(anvil, 1);
     await mintUsdc(requesterSigner, requesterSigner.address, usdc('0.05'));
@@ -136,7 +136,81 @@ describeAnvilSuite('PRD §8.2 cases 5–7 — routing edges', () => {
       get: () => providerSigner.address,
       configurable: true,
     });
+    // Exactly ONE registered handler — the unambiguous raw-pay case.
     agent.provide('onboarding', async () => {
+      handlerFires();
+      return { reflection: 'sole-handler-fired' };
+    });
+    (agent as any)._status = 'running';
+    (agent as any).subscribeIfBlockchain();
+
+    try {
+      const requesterRuntime = new BlockchainRuntime({
+        network: 'base-sepolia',
+        signer: requesterSigner,
+        provider: anvil.provider,
+        pollingInterval: 500,
+      });
+      await requesterRuntime.initialize();
+
+      // ZeroHash serviceHash = the Level 0 `actp pay` (raw-pay) shape. With
+      // exactly one registered handler the SDK now routes it to that sole
+      // handler instead of silently dropping it.
+      await requesterRuntime.createTransaction({
+        provider: providerSigner.address,
+        requester: requesterSigner.address,
+        amount: usdc('0.05').toString(),
+        deadline: Math.floor(Date.now() / 1000) + 3600,
+        disputeWindow: 3601,
+        serviceDescription: ZeroHash,
+      });
+
+      const jobReceived = jest.fn();
+      agent.on('job:received', jobReceived);
+
+      await new Promise((r) => setTimeout(r, 1_500));
+      await (agent as any).pollForJobs();
+      await new Promise((r) => setTimeout(r, 500));
+
+      expect(handlerFires).toHaveBeenCalled();
+    } finally {
+      try {
+        await agent.stop().catch(() => undefined);
+      } catch {
+        /* ignore */
+      }
+    }
+  }, 45_000);
+
+  it("case 6b — ZeroHash with 2+ handlers: ambiguous, NOT dispatched", async () => {
+    const providerSigner = await provisionSlot(anvil, 0);
+    const requesterSigner = await provisionSlot(anvil, 1);
+    await mintUsdc(requesterSigner, requesterSigner.address, usdc('0.05'));
+
+    const providerRuntime = new BlockchainRuntime({
+      network: 'base-sepolia',
+      signer: providerSigner,
+      provider: anvil.provider,
+      pollingInterval: 500,
+      sweepBlockWindow: 200,
+    });
+    await providerRuntime.initialize();
+
+    const handlerFires = jest.fn();
+    const agent = new Agent({ name: 'ZeroHashMultiAgent', network: 'testnet' });
+    (agent as any)._client = { runtime: providerRuntime };
+    Object.defineProperty(agent, 'address', {
+      get: () => providerSigner.address,
+      configurable: true,
+    });
+    // TWO registered handlers — ZeroHash routing is ambiguous, so the
+    // sole-handler fallback must NOT fire; the job is dropped (unchanged
+    // pre-fix behavior for the multi-handler case).
+    agent.provide('onboarding', async () => {
+      handlerFires();
+      return { reflection: 'should-not-fire' };
+    });
+    agent.provide('research', async () => {
       handlerFires();
       return { reflection: 'should-not-fire' };
     });
@@ -152,9 +226,6 @@ describeAnvilSuite('PRD §8.2 cases 5–7 — routing edges', () => {
       });
       await requesterRuntime.initialize();
 
-      // BlockchainRuntime.validateServiceHash passes through bytes32
-      // values unchanged. ZeroHash represents the Level 0 `actp pay`
-      // shape — the request reaches chain, but no handler routing.
       await requesterRuntime.createTransaction({
         provider: providerSigner.address,
         requester: requesterSigner.address,

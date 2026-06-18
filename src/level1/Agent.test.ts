@@ -296,9 +296,10 @@ describe('Agent', () => {
       expect(result.config.name).toBe('echo');
     });
 
-    it('skips hash branch for ZeroHash (Level 0 pay semantics)', () => {
-      // ZeroHash means a `pay` call — no INITIATED job, no handler dispatch.
-      // With an empty serviceDescription the string fallback also misses.
+    it('ZeroHash with 2+ handlers is ambiguous → not routed (raw-pay fallback declines)', () => {
+      // This agent has two handlers (translate + echo). A raw-pay ZeroHash tx
+      // cannot be unambiguously routed, so the sole-handler fallback declines
+      // and the empty serviceDescription string fallback also misses.
       const tx = {
         serviceHash: ZeroHash,
         serviceDescription: '',
@@ -306,6 +307,28 @@ describe('Agent', () => {
 
       const result = (agent as any).findServiceHandler(tx);
       expect(result).toBeUndefined();
+    });
+
+    it('ZeroHash with exactly ONE handler routes to that sole handler (raw-pay)', () => {
+      // Level 0 `client.pay(provider, amount)` carries serviceHash = ZeroHash
+      // and no serviceDescription. With a single registered service the
+      // routing is unambiguous → the sole handler receives the job.
+      const solo = new Agent({ name: 'SoloAgent' });
+      const onboarding: JobHandler = async (job) => job.input;
+      solo.provide('onboarding', onboarding);
+
+      const tx = { serviceHash: ZeroHash, serviceDescription: '' };
+      const result = (solo as any).findServiceHandler(tx);
+
+      expect(result).toBeDefined();
+      expect(result.config.name).toBe('onboarding');
+      expect(result.handler).toBe(onboarding);
+    });
+
+    it('ZeroHash with ZERO handlers returns undefined (nothing to route to)', () => {
+      const empty = new Agent({ name: 'EmptyAgent' });
+      const tx = { serviceHash: ZeroHash, serviceDescription: '' };
+      expect((empty as any).findServiceHandler(tx)).toBeUndefined();
     });
 
     it('returns undefined when no handler is registered for the hash', () => {
@@ -346,6 +369,109 @@ describe('Agent', () => {
       const expectedHash = keccak256(toUtf8Bytes('translate')).toLowerCase();
       expect((agent as any).handlersByHash.has(expectedHash)).toBe(true);
       expect((agent as any).services.has('translate')).toBe(true);
+    });
+  });
+
+  // ============================================================================
+  // Decline / filter events (job:declined economic, job:filtered policy)
+  // ============================================================================
+
+  describe('job:declined / job:filtered events', () => {
+    // tx.amount is USDC base-units (6 decimals): "3000000" === $3.00.
+    const makeTx = (over: Record<string, unknown> = {}) => ({
+      id: 'tx-1',
+      requester: '0xRequester',
+      amount: '3000000',
+      serviceHash: keccak256(toUtf8Bytes('audit')),
+      serviceDescription: '',
+      ...over,
+    });
+
+    it('emits job:declined (budget_below_minimum) when amount < minBudget', async () => {
+      const agent = new Agent({ name: 'A' });
+      agent.provide({ name: 'audit', filter: { minBudget: 5, maxBudget: 100 } }, async (j) => j.input);
+      const declined = jest.fn();
+      const filtered = jest.fn();
+      agent.on('job:declined', declined);
+      agent.on('job:filtered', filtered);
+
+      const accepted = await (agent as any).shouldAutoAccept(makeTx({ amount: '3000000' })); // $3 < $5
+      expect(accepted).toBe(false);
+      expect(filtered).not.toHaveBeenCalled();
+      expect(declined).toHaveBeenCalledTimes(1);
+      const [job, detail] = declined.mock.calls[0];
+      expect(detail.reason).toBe('budget_below_minimum');
+      expect(detail.minBudget).toBe(5);
+      expect(detail.jobId).toBe('tx-1');
+      expect(detail.requester).toBe('0xRequester');
+      expect(detail.amount).toBe(3);
+      expect(job.service).toBe('audit');
+    });
+
+    it('emits job:declined (budget_above_maximum) when amount > maxBudget', async () => {
+      const agent = new Agent({ name: 'A' });
+      agent.provide({ name: 'audit', filter: { minBudget: 5, maxBudget: 100 } }, async (j) => j.input);
+      const declined = jest.fn();
+      agent.on('job:declined', declined);
+
+      const accepted = await (agent as any).shouldAutoAccept(makeTx({ amount: '200000000' })); // $200 > $100
+      expect(accepted).toBe(false);
+      expect(declined).toHaveBeenCalledTimes(1);
+      expect(declined.mock.calls[0][1].reason).toBe('budget_above_maximum');
+      expect(declined.mock.calls[0][1].maxBudget).toBe(100);
+    });
+
+    it('emits job:filtered (custom_filter) when a custom predicate declines', async () => {
+      const agent = new Agent({ name: 'A' });
+      agent.provide({ name: 'audit', filter: { custom: async () => false } }, async (j) => j.input);
+      const declined = jest.fn();
+      const filtered = jest.fn();
+      agent.on('job:declined', declined);
+      agent.on('job:filtered', filtered);
+
+      const accepted = await (agent as any).shouldAutoAccept(makeTx());
+      expect(accepted).toBe(false);
+      expect(declined).not.toHaveBeenCalled();
+      expect(filtered).toHaveBeenCalledTimes(1);
+      const detail = filtered.mock.calls[0][1];
+      expect(detail.reason).toBe('custom_filter');
+      expect(detail.filter).toBe('custom');
+      expect(detail.jobId).toBe('tx-1');
+    });
+
+    it('emits job:filtered (function_filter) when a legacy function filter declines', async () => {
+      const agent = new Agent({ name: 'A' });
+      agent.provide({ name: 'audit', filter: (_job: Job) => false }, async (j) => j.input);
+      const filtered = jest.fn();
+      agent.on('job:filtered', filtered);
+
+      const accepted = await (agent as any).shouldAutoAccept(makeTx());
+      expect(accepted).toBe(false);
+      expect(filtered).toHaveBeenCalledTimes(1);
+      expect(filtered.mock.calls[0][1].reason).toBe('function_filter');
+      expect(filtered.mock.calls[0][1].filter).toBe('legacy_function');
+    });
+
+    it('does NOT emit decline/filter events when filters pass', async () => {
+      const agent = new Agent({ name: 'A', behavior: { autoAccept: true } });
+      agent.provide({ name: 'audit', filter: { minBudget: 1, maxBudget: 100 } }, async (j) => j.input);
+      const declined = jest.fn();
+      const filtered = jest.fn();
+      agent.on('job:declined', declined);
+      agent.on('job:filtered', filtered);
+
+      await (agent as any).shouldAutoAccept(makeTx({ amount: '10000000' })); // $10, in band
+      expect(declined).not.toHaveBeenCalled();
+      expect(filtered).not.toHaveBeenCalled();
+    });
+
+    it('a throwing job:declined listener never breaks the decision (returns false)', async () => {
+      const agent = new Agent({ name: 'A' });
+      agent.provide({ name: 'audit', filter: { minBudget: 5 } }, async (j) => j.input);
+      agent.on('job:declined', () => { throw new Error('listener boom'); });
+
+      // Must not throw out of shouldAutoAccept; decision is still a clean false.
+      await expect((agent as any).shouldAutoAccept(makeTx({ amount: '3000000' }))).resolves.toBe(false);
     });
   });
 

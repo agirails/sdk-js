@@ -1247,7 +1247,10 @@ export class Agent extends EventEmitter {
    * Dispatch order:
    *   PRIMARY (PRD §5.4 — on-chain Layer B):
    *     Match by `tx.serviceHash` against the `handlersByHash` map.
-   *     Skips ZeroHash (Level 0 `pay` semantics — no handler routing).
+   *   ZEROHASH SOLE-HANDLER FALLBACK (raw-pay routing):
+   *     When `serviceHash === ZeroHash` and exactly one handler is
+   *     registered, route to it (Level 0 `pay` to a single-service
+   *     provider). 0 or 2+ handlers → fall through (ambiguous, not routed).
    *   FALLBACK (preserves MockRuntime test fixtures + legacy clients):
    *     5-step `serviceDescription` dispatch — JSON / legacy /
    *     hash-only / string exact match.
@@ -1261,6 +1264,33 @@ export class Agent extends EventEmitter {
     if (hash && hash !== ethers.ZeroHash.toLowerCase()) {
       const byHash = this.handlersByHash.get(hash);
       if (byHash) return byHash;
+    }
+
+    // ZeroHash sole-handler fallback (raw-pay routing).
+    //
+    // A Level 0 `client.pay(provider, amount)` creates an on-chain tx with
+    // `serviceHash === ZeroHash` and no `serviceDescription`. Before this
+    // branch such a tx fell through to the string dispatch below, found
+    // nothing, and was silently dropped — the requester paid a single-service
+    // provider but the job never ran (it stayed COMMITTED forever).
+    //
+    // When the serviceHash is ZeroHash AND the agent has EXACTLY ONE
+    // registered handler, the routing is unambiguous: the payer sent money to
+    // this provider without naming a service, and there is only one service it
+    // could mean. Route to that sole handler.
+    //
+    // Guards (deliberately conservative — never guess):
+    //   * 0 handlers  → fall through, returns undefined (unchanged).
+    //   * 2+ handlers → ambiguous, fall through, returns undefined (unchanged).
+    //   * exactly 1   → route, with a warn-level log so operators can see
+    //                   raw-pay activations in production.
+    const isZeroHash = !hash || hash === ethers.ZeroHash.toLowerCase();
+    if (isZeroHash && this.handlersByHash.size === 1) {
+      this.logger.warn(
+        'ZeroHash (raw-pay) tx routed to the sole registered handler',
+        { txId: tx?.id }
+      );
+      return this.handlersByHash.values().next().value;
     }
 
     // FALLBACK: existing 5-step string dispatch.
@@ -1364,6 +1394,10 @@ export class Agent extends EventEmitter {
             budget,
             minBudget: filter.minBudget,
           });
+          this.emitJobDecision('job:declined', tx, serviceHandler, {
+            reason: 'budget_below_minimum',
+            minBudget: filter.minBudget,
+          });
           return false;
         }
 
@@ -1372,6 +1406,10 @@ export class Agent extends EventEmitter {
           this.logger.debug('Job rejected: budget above maximum', {
             txId: tx.id,
             budget,
+            maxBudget: filter.maxBudget,
+          });
+          this.emitJobDecision('job:declined', tx, serviceHandler, {
+            reason: 'budget_above_maximum',
             maxBudget: filter.maxBudget,
           });
           return false;
@@ -1383,6 +1421,10 @@ export class Agent extends EventEmitter {
           const customResult = await filter.custom(job);
           if (!customResult) {
             this.logger.debug('Job rejected: custom filter declined', { txId: tx.id });
+            this.emitJobDecision('job:filtered', tx, serviceHandler, {
+              reason: 'custom_filter',
+              filter: 'custom',
+            });
             return false;
           }
         }
@@ -1393,6 +1435,10 @@ export class Agent extends EventEmitter {
         const filterResult = filter(job);
         if (!filterResult) {
           this.logger.debug('Job rejected: filter function declined', { txId: tx.id });
+          this.emitJobDecision('job:filtered', tx, serviceHandler, {
+            reason: 'function_filter',
+            filter: 'legacy_function',
+          });
           return false;
         }
       }
@@ -1421,6 +1467,10 @@ export class Agent extends EventEmitter {
           this.logger.info('Job rejected by pricing strategy', {
             txId: tx.id,
             reason: calculation.reason,
+          });
+          this.emitJobDecision('job:declined', tx, serviceHandler, {
+            reason: 'pricing_rejected',
+            detail: calculation.reason,
           });
           return false;
         }
@@ -1548,6 +1598,49 @@ export class Agent extends EventEmitter {
    * callback path before this commit, MockRuntime-only test fixtures),
    * fall back to the legacy `extractServiceName` so behavior is unchanged.
    */
+  /**
+   * Emit a `job:declined` (economic) or `job:filtered` (policy) event when a
+   * polled job is rejected before acceptance.
+   *
+   * Before this, both rejection classes were swallowed into a single debug log
+   * inside {@link shouldAutoAccept}, so a provider could only see "a job was
+   * rejected" by parsing logs — consumers (e.g. Sentinel) had to monkeypatch
+   * the agent to count declines. These events surface the decision with a
+   * machine-readable `reason`.
+   *
+   * Semantics:
+   *   - `job:declined`  — economic: budget/price out of band. The agent would
+   *                       take it at a different price.
+   *   - `job:filtered`  — policy: a custom predicate / rate-limit / legacy
+   *                       filter rejected it. Price is irrelevant.
+   *
+   * Payload (second arg; first arg is the {@link Job} like other job:* events):
+   *   `{ jobId, requester, amount, reason, ...extra }`
+   *
+   * Best-effort: wrapped in try/catch so a throwing listener can NEVER break
+   * the accept/decline decision path (which would wrongly drop or take a job).
+   */
+  private emitJobDecision(
+    event: 'job:declined' | 'job:filtered',
+    tx: any,
+    serviceHandler: { config: ServiceConfig; handler: JobHandler } | undefined,
+    detail: { reason: string } & Record<string, unknown>
+  ): void {
+    try {
+      const job = serviceHandler
+        ? this.createJobFromTransaction(tx, serviceHandler)
+        : undefined;
+      this.emit(event, job, {
+        jobId: tx?.id,
+        requester: tx?.requester,
+        amount: this.convertAmountToNumber(tx?.amount),
+        ...detail,
+      });
+    } catch {
+      /* event emission is best-effort — never let it affect the decision */
+    }
+  }
+
   private createJobFromTransaction(
     tx: any,
     matched?: { config: ServiceConfig; handler: JobHandler }
