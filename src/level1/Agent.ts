@@ -1247,7 +1247,10 @@ export class Agent extends EventEmitter {
    * Dispatch order:
    *   PRIMARY (PRD §5.4 — on-chain Layer B):
    *     Match by `tx.serviceHash` against the `handlersByHash` map.
-   *     Skips ZeroHash (Level 0 `pay` semantics — no handler routing).
+   *   ZEROHASH SOLE-HANDLER FALLBACK (raw-pay routing):
+   *     When `serviceHash === ZeroHash` and exactly one handler is
+   *     registered, route to it (Level 0 `pay` to a single-service
+   *     provider). 0 or 2+ handlers → fall through (ambiguous, not routed).
    *   FALLBACK (preserves MockRuntime test fixtures + legacy clients):
    *     5-step `serviceDescription` dispatch — JSON / legacy /
    *     hash-only / string exact match.
@@ -1261,6 +1264,38 @@ export class Agent extends EventEmitter {
     if (hash && hash !== ethers.ZeroHash.toLowerCase()) {
       const byHash = this.handlersByHash.get(hash);
       if (byHash) return byHash;
+    }
+
+    // ZeroHash / missing-hash sole-handler fallback (raw-pay routing).
+    //
+    // A Level 0 `client.pay(provider, amount)` creates an on-chain tx with
+    // `serviceHash === ZeroHash` and no `serviceDescription`. Before this
+    // branch such a tx fell through to the string dispatch below, found
+    // nothing, and was silently dropped — the requester paid a single-service
+    // provider but the job never ran (it stayed COMMITTED forever).
+    //
+    // `noRoutableHash` is true when the hash is the literal ZeroHash OR when it
+    // is absent / non-string (some runtimes surface a raw pay with no
+    // serviceHash field at all). Both are the same "payer named no service"
+    // case. This deliberately matches the behavior of the agent-side monkeypatch
+    // this fix replaces (Sentinel used `!hash || hash === ZeroHash`), so an
+    // agent that drops its monkeypatch sees byte-identical routing.
+    //
+    // When there is no routable hash AND the agent has EXACTLY ONE registered
+    // handler, the routing is unambiguous — route to that sole handler.
+    //
+    // Guards (deliberately conservative — never guess):
+    //   * 0 handlers  → fall through, returns undefined (unchanged).
+    //   * 2+ handlers → ambiguous, fall through, returns undefined (unchanged).
+    //   * exactly 1   → route, with a warn-level log so operators can see
+    //                   raw-pay activations in production.
+    const noRoutableHash = !hash || hash === ethers.ZeroHash.toLowerCase();
+    if (noRoutableHash && this.handlersByHash.size === 1) {
+      this.logger.warn(
+        'ZeroHash (raw-pay) tx routed to the sole registered handler',
+        { txId: tx?.id }
+      );
+      return this.handlersByHash.values().next().value;
     }
 
     // FALLBACK: existing 5-step string dispatch.
@@ -1364,6 +1399,10 @@ export class Agent extends EventEmitter {
             budget,
             minBudget: filter.minBudget,
           });
+          this.emitJobDecision('job:declined', tx, serviceHandler, {
+            reason: 'budget_below_minimum',
+            minBudget: filter.minBudget,
+          });
           return false;
         }
 
@@ -1372,6 +1411,10 @@ export class Agent extends EventEmitter {
           this.logger.debug('Job rejected: budget above maximum', {
             txId: tx.id,
             budget,
+            maxBudget: filter.maxBudget,
+          });
+          this.emitJobDecision('job:declined', tx, serviceHandler, {
+            reason: 'budget_above_maximum',
             maxBudget: filter.maxBudget,
           });
           return false;
@@ -1383,6 +1426,10 @@ export class Agent extends EventEmitter {
           const customResult = await filter.custom(job);
           if (!customResult) {
             this.logger.debug('Job rejected: custom filter declined', { txId: tx.id });
+            this.emitJobDecision('job:filtered', tx, serviceHandler, {
+              reason: 'custom_filter',
+              filter: 'custom',
+            });
             return false;
           }
         }
@@ -1393,6 +1440,10 @@ export class Agent extends EventEmitter {
         const filterResult = filter(job);
         if (!filterResult) {
           this.logger.debug('Job rejected: filter function declined', { txId: tx.id });
+          this.emitJobDecision('job:filtered', tx, serviceHandler, {
+            reason: 'function_filter',
+            filter: 'legacy_function',
+          });
           return false;
         }
       }
@@ -1421,6 +1472,10 @@ export class Agent extends EventEmitter {
           this.logger.info('Job rejected by pricing strategy', {
             txId: tx.id,
             reason: calculation.reason,
+          });
+          this.emitJobDecision('job:declined', tx, serviceHandler, {
+            reason: 'pricing_rejected',
+            detail: calculation.reason,
           });
           return false;
         }
@@ -1511,6 +1566,10 @@ export class Agent extends EventEmitter {
       } catch (error) {
         // If pricing calculation fails, reject the job for safety
         this.logger.error('Pricing calculation failed, rejecting job', { txId: tx.id }, error as Error);
+        this.emitJobDecision('job:declined', tx, serviceHandler, {
+          reason: 'pricing_error',
+          detail: error instanceof Error ? error.message : String(error),
+        });
         return false;
       }
     }
@@ -1522,18 +1581,37 @@ export class Agent extends EventEmitter {
       return true;
     }
 
+    // Blanket opt-out: the agent is not auto-accepting anything. This is a mode,
+    // not a per-job judgement, but we still surface it so a consumer counting
+    // "every job we didn't take" (e.g. Sentinel's decline counter) sees it.
     if (autoAccept === false) {
+      this.emitJobDecision('job:filtered', tx, serviceHandler, {
+        reason: 'auto_accept_disabled',
+        filter: 'auto_accept',
+      });
       return false;
     }
 
-    // It's a function - evaluate it
+    // It's a function - evaluate it (per-job programmatic gate).
     if (typeof autoAccept === 'function') {
       const job = this.createJobFromTransaction(tx, serviceHandler);
-      return await autoAccept(job);
+      const decision = await autoAccept(job);
+      if (!decision) {
+        this.emitJobDecision('job:filtered', tx, serviceHandler, {
+          reason: 'auto_accept_callback',
+          filter: 'auto_accept',
+        });
+      }
+      return decision;
     }
 
     return false;
   }
+
+  // NOTE: the pricing "counter-offer" path is intentionally NOT a decline/filter
+  // event — there the agent RESPONDED with a signed counter price (a QUOTED
+  // transition), it did not refuse the job. Emitting a decline there would
+  // mislabel a negotiation as a rejection.
 
   /**
    * Create Job object from MockTransaction.
@@ -1548,6 +1626,70 @@ export class Agent extends EventEmitter {
    * callback path before this commit, MockRuntime-only test fixtures),
    * fall back to the legacy `extractServiceName` so behavior is unchanged.
    */
+  /**
+   * Emit a `job:declined` (economic) or `job:filtered` (policy) event when a
+   * polled job is rejected before acceptance.
+   *
+   * Before this, both rejection classes were swallowed into a single debug log
+   * inside {@link shouldAutoAccept}, so a provider could only see "a job was
+   * rejected" by parsing logs — consumers (e.g. Sentinel) had to monkeypatch
+   * the agent to count declines. These events surface the decision with a
+   * machine-readable `reason`.
+   *
+   * Semantics:
+   *   - `job:declined`  — economic: budget/price out of band. The agent would
+   *                       take it at a different price.
+   *   - `job:filtered`  — policy: a custom predicate / rate-limit / legacy
+   *                       filter rejected it. Price is irrelevant.
+   *
+   * Payload (second arg; first arg is the {@link Job} like other job:* events):
+   *   `{ jobId, requester, amount, reason, ...extra }`
+   *
+   * Best-effort: wrapped in try/catch so a throwing listener can NEVER break
+   * the accept/decline decision path (which would wrongly drop or take a job).
+   */
+  private emitJobDecision(
+    event: 'job:declined' | 'job:filtered',
+    tx: any,
+    serviceHandler: { config: ServiceConfig; handler: JobHandler } | undefined,
+    detail: { reason: string } & Record<string, unknown>
+  ): void {
+    // These two events fire MID-DECISION (right before `shouldAutoAccept`
+    // returns), so a misbehaving listener must never affect the accept/decline
+    // outcome — neither by a synchronous throw nor by a rejected Promise from
+    // an `async` listener (which a plain EventEmitter.emit would surface as an
+    // unhandledRejection and could crash a long-running agent).
+    //
+    // We therefore dispatch manually over `rawListeners` (which preserves
+    // `once()` self-removal semantics) and swallow BOTH failure modes:
+    //   * sync throw   → caught by the try/catch around the call
+    //   * async reject → caught via `.catch()` on the returned thenable
+    let job: Job | undefined;
+    try {
+      job = serviceHandler ? this.createJobFromTransaction(tx, serviceHandler) : undefined;
+    } catch {
+      job = undefined;
+    }
+    const payload = {
+      jobId: tx?.id,
+      requester: tx?.requester,
+      amount: this.convertAmountToNumber(tx?.amount),
+      ...detail,
+    };
+    for (const listener of this.rawListeners(event)) {
+      try {
+        const result = (listener as (...args: unknown[]) => unknown)(job, payload);
+        if (result && typeof (result as { then?: unknown }).then === 'function') {
+          (result as Promise<unknown>).catch(() => {
+            /* async listener rejection — never propagates past the decision */
+          });
+        }
+      } catch {
+        /* sync listener throw — swallowed; the decision continues unaffected */
+      }
+    }
+  }
+
   private createJobFromTransaction(
     tx: any,
     matched?: { config: ServiceConfig; handler: JobHandler }

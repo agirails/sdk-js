@@ -103,6 +103,13 @@ export interface PushReceiptResult {
   receiptId: string | null;
   /** True when the server confirmed on-chain match before minting. */
   verifiedOnChain: boolean;
+  /**
+   * Why the push failed, when it did (`post_failed:<status> <error>: <detail>`
+   * or `prepare_failed:<status>`), else undefined. A missing-field 400 and an
+   * on-chain 422 both surface as a null URL — without this, the reason is lost
+   * and the two are indistinguishable to the caller.
+   */
+  reason?: string;
 }
 
 export async function pushReceiptOnSettled(args: PushReceiptArgs): Promise<PushReceiptResult> {
@@ -182,13 +189,23 @@ export async function pushReceiptOnSettled(args: PushReceiptArgs): Promise<PushR
 
     if (!postRes.ok) {
       // Common failure modes documented for SDK error handler:
+      //   400 — invalid/missing field in the POST body (SDK bug — e.g. an
+      //         omitted durationMs; the body's `error` names the field)
       //   401 — signature / signer / nonce invalid (likely SDK bug)
       //   403 — role / address mismatch (SDK is signing as wrong wallet)
       //   404 — agent not registered (buyer-side fresh-wallet path; expected,
       //         caller should still log the txId for indexer fallback)
       //   422 — on_chain_verification_failed (RPC desync; transient — retry)
       //   429 — rate limited (back off)
-      throw new Error(`post_failed:${postRes.status}`);
+      // Read the server's {error, detail} so the reason rides up on the thrown
+      // Error instead of collapsing to a bare status code.
+      const detail = await postRes
+        .json()
+        .then((b: { error?: string; detail?: string }) =>
+          [b.error, b.detail].filter(Boolean).join(": "),
+        )
+        .catch(() => "");
+      throw new Error(`post_failed:${postRes.status}${detail ? ` ${detail}` : ""}`);
     }
     const body = (await postRes.json()) as {
       id?: string;
@@ -201,11 +218,17 @@ export async function pushReceiptOnSettled(args: PushReceiptArgs): Promise<PushR
       receiptId: body.id ?? null,
       verifiedOnChain: !!body.verified_on_chain,
     };
-  } catch {
-    // Receipt POST failure is non-fatal — settlement already happened on-chain.
-    // Indexer cron at /api/cron/index-stats backfills receipt rows within ~5min.
-    // Surface null so the CLI knows not to print a URL.
-    return { receiptUrl: null, receiptId: null, verifiedOnChain: false };
+  } catch (err) {
+    // Receipt POST failure is non-fatal — settlement already happened on-chain,
+    // and the indexer cron at /api/cron/index-stats backfills rows within ~5min.
+    // But DON'T swallow the reason: a 400 (missing field) and a 422 (RPC desync)
+    // both surface as a null URL, and conflating them has cost real debug time.
+    // Carry it on `reason` and warn so callers/operators can see WHY it failed.
+    const reason = err instanceof Error ? err.message : String(err);
+    if (typeof console !== "undefined" && console.warn) {
+      console.warn(`[receipts] push failed (non-fatal): ${reason}`);
+    }
+    return { receiptUrl: null, receiptId: null, verifiedOnChain: false, reason };
   }
 }
 
