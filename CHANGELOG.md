@@ -1,5 +1,18 @@
 # Changelog
 
+## [4.8.1] — 2026-06-19
+
+### Added
+
+- **`pollingInterval` config option** on `Agent` (level1) and
+  `ACTPClient.create` — threaded into `BlockchainRuntime`, which assigns it
+  to `provider.pollingInterval`. Lets long-running daemons widen the ethers
+  block-poll cadence (default 1000 ms / 1s) to cut `eth_blockNumber` /
+  `eth_getLogs` RPC load — and therefore the compute-unit burn on a metered
+  RPC (Alchemy / Infura / QuickNode). Backward compatible: omitting it
+  preserves the prior 1s default. Always-on agents on a free-tier RPC should
+  set `pollingInterval: 5000–8000`.
+
 ## [4.1.1] — 2026-06-04
 
 ### Changed

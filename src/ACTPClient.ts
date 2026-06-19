@@ -356,6 +356,22 @@ export interface ACTPClientConfig {
   rpcUrl?: string;
 
   /**
+   * Optional: ethers provider polling interval in milliseconds for live
+   * block / event polling on 'testnet' and 'mainnet'. Not used in 'mock' mode.
+   *
+   * Threaded into {@link BlockchainRuntime}, which assigns it to
+   * `provider.pollingInterval`. Lower values tighten event latency but
+   * multiply `eth_blockNumber` / `eth_getLogs` RPC calls — a long-running
+   * process on a metered RPC (Alchemy / Infura / QuickNode) burns compute
+   * units proportionally. Defaults to 1000 (1s) when omitted (PRD §5.2).
+   * Always-on daemons on a free-tier RPC should raise this to 5000–8000.
+   *
+   * @default 1000
+   * @example pollingInterval: 6000 // 6s — ~6× fewer block polls than default
+   */
+  pollingInterval?: number;
+
+  /**
    * Optional: Contract address overrides.
    *
    * Override default deployed contract addresses.
@@ -1030,6 +1046,7 @@ export class ACTPClient {
             easConfig: config.easConfig,
             requireAttestation,
             stateDirectory: config.stateDirectory,
+            pollingInterval: config.pollingInterval,
           });
 
           // Initialize async components

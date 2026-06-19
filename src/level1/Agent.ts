@@ -128,6 +128,21 @@ export interface AgentConfig {
   rpcUrl?: string;
 
   /**
+   * ethers provider polling interval in milliseconds for live on-chain
+   * event / block polling (testnet / mainnet only; ignored in 'mock').
+   *
+   * Lower values tighten job-pickup latency but multiply the agent's
+   * `eth_blockNumber` / `eth_getLogs` RPC load — a long-running provider on
+   * a metered RPC (Alchemy / Infura / QuickNode free tier) burns compute
+   * units proportionally. Defaults to the SDK runtime default (1000 ms / 1s).
+   * Always-on daemons should raise this to 5000–8000.
+   *
+   * @default 1000
+   * @example pollingInterval: 6000
+   */
+  pollingInterval?: number;
+
+  /**
    * State directory (mock mode only)
    */
   stateDirectory?: string;
@@ -594,6 +609,7 @@ export class Agent extends EventEmitter {
         stateDirectory: this.config.stateDirectory,
         privateKey: await this.getPrivateKey(),
         rpcUrl,
+        pollingInterval: this.config.pollingInterval,
       });
 
       this.startPolling();
