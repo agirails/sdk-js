@@ -1,5 +1,47 @@
 # Changelog
 
+## [4.9.0] — 2026-06-21
+
+### Fixed
+
+- **Unified CLI network resolution (F-2 — real-money footgun).** The CLI
+  resolved the transacting network three inconsistent ways: `actp request`
+  used `--network` (hardcoded default `testnet`) and ignored both
+  `.actp/config.json` mode and `ACTP_NETWORK`; `actp pay` / `tx` / `mint` /
+  `balance` / … used `config.mode` (default `mock`), had no `--network` flag,
+  and also ignored `ACTP_NETWORK`; and `ACTP_NETWORK` — advertised in
+  `.env.example` as the network selector — was honored nowhere. A second
+  agent caught a near-miss where `--network testnet` was accepted but the
+  command would have transacted on the mainnet-configured chain. All
+  value-moving commands now resolve through a single `resolveNetwork()` with
+  one precedence ladder — `--network` flag > `ACTP_NETWORK` > `config.mode` >
+  `testnet` — and print the resolved network plus its source. `ACTP_NETWORK`
+  is now honored everywhere.
+
+### Security
+
+- **Mainnet escalation guard.** A `--network` flag or `ACTP_NETWORK` may
+  freely *downgrade* to testnet/mock, but the resolver will **never** resolve
+  to `mainnet` unless `config.mode === 'mainnet'`. A transient flag or env var
+  can no longer escalate a non-mainnet config to real funds — moving to
+  mainnet requires `actp config --mode mainnet` first. The command fails
+  closed (throws before any payment) on a mainnet-over-non-mainnet request.
+
+### Changed
+
+- **`actp request` default network.** Previously always `testnet` regardless
+  of config; now honors `ACTP_NETWORK` / `config.mode` when `--network` is
+  omitted (still falls back to `testnet` when nothing is set). Scripts that
+  relied on the implicit `testnet` default while running under a non-testnet
+  config should pass `--network testnet` explicitly.
+
+### Added
+
+- **`--network` flag on `actp pay`** (mock | testnet | mainnet), resolved
+  through the same ladder. `tx` / `mint` / `balance` / etc. inherit the
+  unified resolution + mainnet guard via `createClient` even without an
+  explicit flag.
+
 ## [4.8.1] — 2026-06-19
 
 ### Added

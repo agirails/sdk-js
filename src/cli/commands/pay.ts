@@ -10,6 +10,7 @@
 import { Command } from 'commander';
 import { Output, ExitCode } from '../utils/output';
 import { createClient, mapError } from '../utils/client';
+import { resolveNetwork, describeNetwork } from '../utils/network';
 import { discoverAgents } from '../../api/agirailsApp';
 
 // ============================================================================
@@ -28,6 +29,7 @@ export function createPayCommand(): Command {
     // no quote/accept negotiation. Callers who want hashed service routing
     // belong on `actp request --service <name>`.
     .option('--service <name>', '(rejected — see actp request for Level 1 flow)')
+    .option('--network <network>', 'Network: mock | testnet | mainnet (default: ACTP_NETWORK or config mode)')
     .option('--json', 'Output as JSON')
     .option('-q, --quiet', 'Output only the transaction ID')
     .action(async (to, amount, options) => {
@@ -59,6 +61,7 @@ interface PayOptions {
   deadline: string;
   disputeWindow: string;
   service?: string;
+  network?: string;
 }
 
 /**
@@ -99,6 +102,12 @@ async function runPay(
     process.exit(EX_USAGE);
   }
 
+  // F-2: resolve the network up front (flag > ACTP_NETWORK > config mode) and
+  // surface its source. Throws loudly here — before any slug lookup or
+  // payment — if mainnet is requested via flag/env over a non-mainnet config.
+  const resolved = resolveNetwork(options.network);
+  output.print(`  network: ${describeNetwork(resolved)}`);
+
   // Resolve slug URLs (e.g. agirails.app/a/arha) to wallet addresses
   const slugMatch = to.match(/^(?:https?:\/\/)?(?:www\.)?agirails\.app\/a\/([a-z0-9_-]+)$/i);
   if (slugMatch) {
@@ -125,8 +134,9 @@ async function runPay(
   const spinner = output.spinner('Creating payment...');
 
   try {
-    // Create client
-    const client = await createClient();
+    // Create client (network resolved above; pass the flag through so the
+    // client's own resolution + mainnet guard agree with what we printed).
+    const client = await createClient(process.cwd(), { network: options.network });
 
     // Parse options
     let deadline: string | number = options.deadline;

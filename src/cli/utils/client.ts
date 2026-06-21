@@ -12,6 +12,7 @@
 import * as os from 'os';
 import { ACTPClient, ACTPClientConfig } from '../../ACTPClient';
 import { loadConfig } from './config';
+import { resolveNetwork } from './network';
 
 // ============================================================================
 // Security: Path Sanitization
@@ -49,10 +50,18 @@ function sanitizePath(fullPath: string): string {
  * @throws Error if config invalid or client creation fails
  */
 export async function createClient(
-  projectRoot: string = process.cwd()
+  projectRoot: string = process.cwd(),
+  opts?: { network?: string }
 ): Promise<ACTPClient> {
   // Load configuration
   const config = loadConfig(projectRoot);
+
+  // F-2: resolve the effective network through the single resolver
+  // (--network flag > ACTP_NETWORK > config.mode) instead of blindly
+  // trusting config.mode. This honors ACTP_NETWORK for every value-moving
+  // command and enforces the hybrid mainnet guard (a flag/env can never
+  // escalate to mainnet over a non-mainnet config).
+  const { network } = resolveNetwork(opts?.network, projectRoot);
 
   // NOTE: We intentionally do NOT call validateConfigForMode() here.
   // ACTPClient.create() handles keystore resolution (AIP-13) and provides
@@ -61,7 +70,7 @@ export async function createClient(
 
   // Build client config
   const clientConfig: ACTPClientConfig = {
-    mode: config.mode,
+    mode: network,
     requesterAddress: config.address,
     stateDirectory: projectRoot,
     wallet: config.wallet === 'auto' ? 'auto' : undefined,

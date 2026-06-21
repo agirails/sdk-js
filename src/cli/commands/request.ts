@@ -17,12 +17,12 @@
 import { Command } from 'commander';
 import { Output, ExitCode } from '../utils/output';
 import { mapError } from '../utils/client';
+import { resolveNetwork, describeNetwork } from '../utils/network';
 import { discoverAgents } from '../../api/agirailsApp';
 import {
   runRequest,
   QuoteTimeoutError,
   DeliveryTimeoutError,
-  type RequestNetwork,
 } from '../lib/runRequest';
 import { renderReceiptV3 } from './receipt';
 import { RelayDeliveryChannel } from '../../delivery/RelayDeliveryChannel';
@@ -39,7 +39,7 @@ export function createRequestCommand(): Command {
     .argument('<amount>', 'Amount to escrow (e.g., "0.05" USDC)')
     .requiredOption('--service <name>', 'Service name; on-chain key is keccak256(toUtf8Bytes(name))')
     .option('--deadline <iso-or-unix>', 'Job deadline as ISO 8601 or unix seconds', '')
-    .option('--network <network>', 'Target network: mock | testnet | mainnet', 'testnet')
+    .option('--network <network>', 'Target network: mock | testnet | mainnet (default: ACTP_NETWORK or config mode, else testnet)')
     .option('--quote-timeout <ms>', 'Max wait for INITIATED → QUOTED (or beyond), in ms', '30000')
     .option('--delivery-timeout <ms>', 'Max wait for DELIVERED, in ms', '300000')
     // Commander idiom: declaring `--no-auto-accept` makes options.autoAccept
@@ -115,12 +115,16 @@ async function runRequestCommand(
   const counterpartySlug = slugMatch ? slugMatch[1].toLowerCase() : undefined;
   const provider = await resolveProvider(providerArg, output);
 
-  const network = parseNetwork(options.network);
+  // F-2: unified resolution (flag > ACTP_NETWORK > config mode). Replaces the
+  // old hardcoded `testnet` default that silently ignored config/env. Throws
+  // loudly if mainnet is requested via flag/env over a non-mainnet config.
+  const resolved = resolveNetwork(options.network);
+  const network = resolved.network;
   const quoteTimeoutMs = parsePositiveInt(options.quoteTimeout, 30_000, '--quote-timeout');
   const deliveryTimeoutMs = parsePositiveInt(options.deliveryTimeout, 300_000, '--delivery-timeout');
 
   output.print(`→ Requesting ${options.service} from ${provider}`);
-  output.print(`  amount: ${amount}, network: ${network}, quote-timeout: ${quoteTimeoutMs}ms`);
+  output.print(`  amount: ${amount}, network: ${describeNetwork(resolved)}, quote-timeout: ${quoteTimeoutMs}ms`);
   output.blank();
 
   // AIP-16 wire-up (parity with `actp test`): give runRequest the delivery
@@ -267,12 +271,6 @@ async function resolveProvider(input: string, output: Output): Promise<string> {
     spinner.stop(false);
     throw err;
   }
-}
-
-function parseNetwork(raw?: string): RequestNetwork {
-  const value = (raw ?? 'testnet').toLowerCase();
-  if (value === 'mock' || value === 'testnet' || value === 'mainnet') return value;
-  throw new Error(`Invalid --network: "${raw}". Expected mock, testnet, or mainnet.`);
 }
 
 // Exported for unit testing — the CLI surface is a thin commander wrapper,
