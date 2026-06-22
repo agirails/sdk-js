@@ -54,6 +54,7 @@ import { UnifiedPayParams, UnifiedPayResult } from './types/adapter';
 import { EASHelper, EASConfig } from './protocol/EASHelper';
 import { ERC8004Bridge } from './erc8004/ERC8004Bridge';
 import { ReputationReporter } from './erc8004/ReputationReporter';
+import { DisputeClient } from './dispute/DisputeClient';
 import { ERC8004Network } from './types/erc8004';
 import { getNetwork } from './config/networks';
 import { IWalletProvider } from './wallet/IWalletProvider';
@@ -564,6 +565,23 @@ export class ACTPClient {
   public readonly easHelper?: EASHelper;
 
   /**
+   * AIP-14b three-tier dispute facade (PRD P2-9).
+   *
+   * Present (defined) ONLY when the dispute contract addresses
+   * (`bondEscalation` / `compositeMediator` / `umaOptimisticOracleV3`) are
+   * configured for the network — i.e. once the dispute stack is deployed
+   * (testnet in Phase 6, mainnet later). It is `undefined` on mock mode and on
+   * networks where the addresses are still null, so existing flows are
+   * unaffected. Composes BondEscalation + CompositeMediator + EvaluatorClient +
+   * UMAHelper + DisputeSplitIndexer behind one object; see
+   * {@link DisputeClient}.
+   *
+   * For the legacy single-shot kernel path see `ACTPKernel.raiseDispute` /
+   * `resolveDispute` (their JSDoc steers here).
+   */
+  public readonly dispute?: DisputeClient;
+
+  /**
    * Adapter registry for managing available adapters.
    *
    * Used internally by the router but exposed for custom adapter registration.
@@ -671,10 +689,12 @@ export class ACTPClient {
     agentRegistryAddress?: string,
     networkId?: string,
     erc8004IdentityRegistryAddress?: string,
+    disputeClient?: DisputeClient,
   ) {
     this.runtime = runtime;
     this.info = info;
     this.easHelper = easHelper;
+    this.dispute = disputeClient;
     this.reputationReporter = reputationReporter;
     this.walletProvider = walletProvider;
     this.contractAddresses = contractAddresses;
@@ -784,6 +804,10 @@ export class ACTPClient {
     let registryAddr: string | undefined;
     let networkId: string | undefined;
     let erc8004IdentityAddr: string | undefined;
+    // AIP-14b dispute facade (PRD P2-9). Built only when the dispute contract
+    // addresses are configured for the network (Phase 6+); stays undefined
+    // otherwise so mock mode and pre-deployment networks are unaffected.
+    let disputeClient: DisputeClient | undefined;
 
     // If custom runtime provided, use it directly
     if (config.runtime) {
@@ -1074,6 +1098,29 @@ export class ACTPClient {
             signer,
           });
 
+          // AIP-14b DISPUTE FACADE (PRD P2-9): wire client.dispute ONLY when the
+          // dispute contracts are configured for this network. Addresses are null
+          // until Phase 6 (testnet) / later (mainnet), so on undeployed networks
+          // this stays undefined and existing flows are unchanged. Best-effort —
+          // a wiring failure must never block create().
+          const disputeContracts = networkConfig.contracts;
+          if (disputeContracts.bondEscalation && disputeContracts.compositeMediator) {
+            try {
+              disputeClient = new DisputeClient({
+                signer,
+                provider,
+                bondEscalationAddress: disputeContracts.bondEscalation,
+                compositeMediatorAddress: disputeContracts.compositeMediator,
+                umaOptimisticOracleV3Address: disputeContracts.umaOptimisticOracleV3,
+                usdcAddress: config.contracts?.usdc ?? networkConfig.contracts.usdc,
+              });
+            } catch (e) {
+              sdkLogger.warn('DisputeClient wiring skipped', {
+                error: e instanceof Error ? e.message : String(e),
+              });
+            }
+          }
+
           // AIP-12: Contract addresses for AA batched payments
           contractAddresses = {
             usdc: config.contracts?.usdc ?? networkConfig.contracts.usdc,
@@ -1129,7 +1176,7 @@ export class ACTPClient {
       runtime, normalizedAddress, info, easHelper,
       erc8004Bridge, reputationReporter, walletProvider, contractAddresses,
       lazyScenario, lazyPending, registryAddr, networkId,
-      erc8004IdentityAddr,
+      erc8004IdentityAddr, disputeClient,
     );
     client.pendingIsStale = pendingIsStale;
 

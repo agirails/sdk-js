@@ -1,0 +1,31 @@
+{
+  "_comment": "Cross-SDK GOLDEN EIP-712 vector for AIP-14b AIRuling. Frozen source of truth: Protocol/actp-kernel/test/EncodingCanonical.t.sol. Both TS (sdk-js) and Python (python-sdk-v2) MUST reproduce digest EXACTLY. This file is committed byte-identically into both SDK trees; a parity test asserts the two copies match.",
+  "domain": {
+    "name": "ACTPDisputeEvaluator",
+    "version": "1",
+    "chainId": 8453,
+    "verifyingContract": "0x3c68CC8dFe901c7e89eC9f738F9a81709E6e7737"
+  },
+  "ruling": {
+    "disputeId": "0x5d1b4b905dcd2f7b6de02f87bd74002a10bcb4294a0707c94981b282f8216546",
+    "ruling": 1,
+    "confidence": 9500,
+    "splitBps": 0,
+    "timestamp": 1700000000,
+    "reasoningHash": "0x88a38f2db5ac668e2543bbdb0c4c02390b9072aacdb46f2664435ce4376136dc",
+    "bundleHash": "0x3f3fab64c884d7a542f43eda4f4b29da96d3b562adfd3ec82f13ed4f649f67eb"
+  },
+  "expected": {
+    "domainSeparator": "0x49c919619319169442e048297d8b8dc2f0c6a78b8601c78a39656bc2b3b25db8",
+    "structHash": "0x819e81f3ec882e0f9c6dc718e9cd9bcbc857c2c59f3074164ee219c2b25c12a9",
+    "digest": "0x9b477852dd1ddad0105ca5e2a320c6ca72105215985b53878ae12b49eb34e365"
+  },
+  "contracts": {
+    "_comment": "Network-config keys for the 3 dispute contracts (undefined until deployed). Keys MUST match TS NetworkConfig.contracts and Py ContractAddresses (camelCase wire form).",
+    "keys": [
+      "bondEscalation",
+      "compositeMediator",
+      "umaOptimisticOracleV3"
+    ]
+  }
+}

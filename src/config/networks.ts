@@ -91,6 +91,12 @@ export interface NetworkConfig {
      */
     x402Relay?: string;
     erc8004IdentityRegistry?: string; // ERC-8004 Identity Registry (canonical CREATE2)
+    // AIP-14b three-tier dispute system (P2-2). Undefined until the dispute
+    // stack is deployed: testnet lands in Phase 6, mainnet later. Keys match
+    // the Python SDK ContractAddresses (parity).
+    bondEscalation?: string; // BondEscalation (Tier-1 bonded escalation + AIRuling verifier)
+    compositeMediator?: string; // CompositeMediator (canonical 0/1/2 ruling → fund routing)
+    umaOptimisticOracleV3?: string; // UMA OptimisticOracleV3 (Tier-2 optimistic oracle)
   };
   eas: {
     deliverySchemaUID: string; // AIP-4 delivery proof schema
@@ -268,7 +274,10 @@ export function getNetwork(network: string): NetworkConfig {
       identityRegistry: config.contracts.identityRegistry,
       archiveTreasury: config.contracts.archiveTreasury,
       x402Relay: config.contracts.x402Relay,
-      erc8004IdentityRegistry: config.contracts.erc8004IdentityRegistry
+      erc8004IdentityRegistry: config.contracts.erc8004IdentityRegistry,
+      bondEscalation: config.contracts.bondEscalation,
+      compositeMediator: config.contracts.compositeMediator,
+      umaOptimisticOracleV3: config.contracts.umaOptimisticOracleV3
     },
     eas: {
       deliverySchemaUID: config.eas.deliverySchemaUID,

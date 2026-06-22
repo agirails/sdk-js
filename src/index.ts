@@ -273,6 +273,26 @@ export type {
   EconomicParams,
 } from './types';
 
+// Dispute (AIP-14b) — AIRuling EIP-712 signer (the evidence-bundle serializer
+// is exported further below under "Dispute — Evidence Bundle").
+// PARITY: mirrors python-sdk-v2 `agirails.types` (dispute) signing surface 1:1.
+export {
+  Ruling,
+  Tier,
+  AIRulingTypes,
+  RULING_TYPEHASH,
+  DOMAIN_TYPEHASH,
+  DISPUTE_EVALUATOR_DOMAIN_NAME,
+  DISPUTE_EVALUATOR_DOMAIN_VERSION,
+  disputeEvaluatorDomain,
+  computeRulingDigest,
+  computeRulingDomainSeparator,
+  computeRulingStructHash,
+  signRuling,
+  recoverRulingSigner,
+} from './types/dispute';
+export type { AIRuling, DisputeState } from './types/dispute';
+
 // Utils
 export { NonceManager, InMemoryNonceManager } from './utils/NonceManager';
 export { IReceivedNonceTracker, InMemoryReceivedNonceTracker } from './utils/ReceivedNonceTracker';
@@ -399,6 +419,169 @@ export type {
 export { ARCHIVE_BUNDLE_TYPE } from './storage/types';
 
 // =============================================================================
+// Dispute — Evidence Bundle canonical serializer (AIP-14b / PRD P2-3)
+// =============================================================================
+
+export {
+  // Serializer API (1:1 with the Python twin)
+  serializeBundle,
+  serializeBundleToString,
+  bundleHash,
+  computeBundleHash,
+  validateBundle,
+  assertSupportedVersion,
+  countBundleTokens,
+  enforceTokenCap,
+  setBundleTokenizer,
+  pinEvidenceBundle,
+  // Constants
+  EVIDENCE_BUNDLE_SCHEMA_VERSION,
+  SUPPORTED_BUNDLE_MAJOR,
+  MAX_BUNDLE_TOKENS,
+  // Errors (frozen names — schema §6)
+  BundleTooLargeError,
+  UnsupportedBundleVersionError,
+  InvalidBundleError,
+} from './dispute/EvidenceBundle';
+
+export type {
+  EvidenceBundle,
+  EvidenceBundleSpec,
+  EvidenceBundleDelivery,
+  EvidenceBundleDispute,
+  EvidenceBundleTimelineEvent,
+  EvidenceBundleReasoning,
+  PinEvidenceBundleResult,
+  EvidenceBundlePinner,
+  BundleTokenizer,
+} from './dispute/EvidenceBundle';
+
+// CompositeMediator read/event client + decoders (PRD P2-5; 1:1 with the Python twin).
+export {
+  CompositeMediator,
+  decodeDisputeSplitRecorded,
+  decodeResolutionProof,
+  computeSplitRate,
+} from './dispute/CompositeMediator';
+
+export type {
+  DisputeSplitRecorded,
+  DecodedResolutionProof,
+} from './dispute/CompositeMediator';
+
+// DisputeEvent union surfaced by EventMonitor (PRD P2-5).
+export type { DisputeEvent } from './protocol/EventMonitor';
+
+// =============================================================================
+// Dispute — BondEscalation client (AIP-14 §7.1 / PRD P2-4)
+// =============================================================================
+
+export {
+  BondEscalationClient,
+  // Constants (AIP-14 §7.4)
+  ESCALATION_INITIAL_BPS,
+  MIN_ESCALATION_BOND,
+  MAX_ESCALATION_BOND,
+  ESCALATION_MULTIPLIER,
+  BPS_DENOMINATOR,
+} from './dispute/BondEscalation';
+
+export type {
+  BondEscalationClientConfig,
+  IBondEscalationContract,
+} from './dispute/BondEscalation';
+
+// =============================================================================
+// Dispute — DisputeClient facade (AIP-14b §3/§9 / PRD P2-9)
+// PARITY: mirrors python-sdk-v2 `agirails.dispute.dispute_client` 1:1.
+// =============================================================================
+
+export {
+  DisputeClient,
+  decodeDisputeSubState,
+} from './dispute/DisputeClient';
+
+export type {
+  DisputeClientConfig,
+  DisputeSubState,
+  DisputeStatus,
+} from './dispute/DisputeClient';
+
+// =============================================================================
+// Dispute — UMA self-dispute DVM helper (AIP-14b §8.6 / PRD P2-7)
+// PARITY: mirrors python-sdk-v2 `agirails.dispute.uma_helper` 1:1.
+// =============================================================================
+
+export {
+  UMAHelper,
+  // Constants (AIP-14b §8.6 economics)
+  UMA_BOND,
+  SELF_DISPUTE_TOTAL,
+  SELF_DISPUTE_RECOVER,
+  SELF_DISPUTE_LOSS,
+} from './dispute/UMAHelper';
+
+export type {
+  UMAHelperConfig,
+  SelfDisputeCost,
+  IDisputeContract,
+  IERC20Contract,
+  IOptimisticOracleV3Contract,
+} from './dispute/UMAHelper';
+
+// =============================================================================
+// Reputation — DisputeSplitIndexer (AIP-14b §3.4/§3.5, OQ-11, INV-22 / PRD P2-8)
+// PARITY: mirrors python-sdk-v2 `agirails.reputation.dispute_split_indexer` 1:1.
+// =============================================================================
+
+export {
+  DisputeSplitIndexer,
+  isSplitKind,
+  outcomeFromSplitRecorded,
+} from './reputation/DisputeSplitIndexer';
+
+export type {
+  DisputeOutcome,
+  DisputeOutcomeKind,
+  SplitRateResult,
+  SplitRateBreakdown,
+} from './reputation/DisputeSplitIndexer';
+
+// =============================================================================
+// Dispute — off-chain EvaluatorClient (API-CONTRACT.md / AIP-14 §4.7 / PRD P2-6)
+// PARITY: mirrors python-sdk-v2 `agirails.dispute.evaluator_client` 1:1.
+// =============================================================================
+
+export {
+  EvaluatorClient,
+  verifyRulingSignatures,
+  selectThirdEvaluator,
+  EvaluatorClientError,
+  QuoteRejectedError,
+  EvaluateResponseError,
+} from './dispute/EvaluatorClient';
+
+export type {
+  EvaluatorClientConfig,
+  EvaluatorPaymentClient,
+  RequestEvaluationParams,
+  EvaluationResult,
+  RulingVerification,
+  BundleSource,
+  ProposeDirectlyRecommendation,
+} from './dispute/EvaluatorClient';
+
+// NOTE: SignedEvaluateResponse / ProposeDirectlyEvaluateResponse / EvaluateResponse
+// / EvaluatorRuling are INTENTIONALLY NOT re-exported here. They are internal
+// HTTP wire-parse shapes (not caller inputs); the Python SDK parses the evaluate
+// response as a raw dict and has NO twin, so to keep the public package surface
+// symmetric they are de-exported from the package entrypoint. They remain
+// `export`ed from ./dispute/EvaluatorClient for intra-module typing. The cross-SDK
+// META parity test (tests/dispute-parity.test.ts) asserts each is absent from
+// this entrypoint via parity-surface.json `tsOnlyDeExported`, so this de-export
+// cannot silently regress.
+
+// =============================================================================
 // ERC-8004 Integration
 // =============================================================================
 
@@ -418,6 +601,7 @@ export type {
   ReputationReporterConfig,
   ReportSettlementParams,
   ReportDisputeParams,
+  ReportDisputeSplitParams,
   ReportResult,
   ERC8004Network,
   ERC8004Agent,

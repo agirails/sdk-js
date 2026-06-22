@@ -105,6 +105,7 @@
     "ethers": "^6.15.0",
     "ethr-did-resolver": "11.0.5",
     "fast-json-stable-stringify": "2.1.0",
+    "js-tiktoken": "^1.0.21",
     "kubo-rpc-client": "6.1.0",
     "proper-lockfile": "4.1.2",
     "viem": "^2.47.12",

@@ -713,8 +713,19 @@ export class ACTPKernel {
   }
 
   /**
-   * Raise dispute on delivered transaction
+   * Raise dispute on delivered transaction (legacy single-shot kernel path).
    * Reference: Yellow Paper §3.4 (Dispute Management)
+   *
+   * @remarks
+   * TIERED FLOW: this is the PRE-AIP-14 path — it transitions the transaction
+   * straight to DISPUTED, after which resolution historically required a
+   * privileged {@link resolveDispute}. The AIP-14b SUCCESSOR is the three-tier
+   * bond game reached via the {@link DisputeClient} facade (`client.dispute`):
+   * still call this to enter the kernel DISPUTED state, but then drive resolution
+   * through `client.dispute.bond` (open → propose/AI → challenge → finalize /
+   * escalateToUMA) and read state with `client.dispute.getDisputeStatus()` —
+   * NOT through `resolveDispute`. See `dispute/DisputeClient.ts` (grep
+   * `DisputeClient`). PARITY: Py `raise_dispute` carries the same steer.
    */
   async raiseDispute(txId: string, reason: string, evidence: string): Promise<void> {
     validateTxId(txId, 'txId');
@@ -753,11 +764,21 @@ export class ACTPKernel {
   }
 
   /**
-   * Resolve/settle dispute with payment split
+   * Resolve/settle dispute with payment split (legacy privileged kernel path).
    * Reference: Yellow Paper §3.4
    *
    * Disputes are settled via transitionState(SETTLED, proof) per §3.2
    * The kernel contract decodes the proof and handles escrow disbursement
+   *
+   * @remarks
+   * TIERED FLOW: this is the PRE-AIP-14 admin/mediator resolution. Under AIP-14b
+   * resolution is driven by the bond game, not by a direct privileged call here:
+   * route through the {@link DisputeClient} facade (`client.dispute`) instead —
+   * `client.dispute.bond.finalize()` / `escalateToUMA()` (then the on-chain
+   * CompositeMediator settles), with `client.dispute.getDisputeStatus()` for the
+   * §9 sub-state. `resolveDispute` remains only for the legacy admin path. See
+   * `dispute/DisputeClient.ts` (grep `DisputeClient`). PARITY: Py `resolve_dispute`
+   * carries the same steer.
    */
   async resolveDispute(txId: string, resolution: DisputeResolution): Promise<void> {
     validateTxId(txId, 'txId');

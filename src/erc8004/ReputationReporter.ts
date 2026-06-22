@@ -164,6 +164,35 @@ export interface ReportDisputeParams {
 }
 
 /**
+ * Parameters for reporting a dispute SPLIT outcome (AIP-14b §3.4, §3.5).
+ *
+ * A split (CompositeMediator ruling-2 OR kernel DISPUTED→CANCELLED) carries NO
+ * reputation penalty for either party — it is written as a NEUTRAL `value: 0`
+ * trace — but it is NOT reputation-invisible. The trace lets indexers surface
+ * per-agent split rates so systematic dispute-to-split ambiguity griefing is
+ * visible to future counterparties (INV-22).
+ *
+ * PARITY: Py `ReputationReporter.report_dispute_split`.
+ */
+export interface ReportDisputeSplitParams {
+  /** ERC-8004 agent ID */
+  agentId: string;
+
+  /** ACTP transaction ID (used for replay protection + dedup) */
+  txId: string;
+
+  /** Agent capability (optional, tag2) */
+  capability?: string;
+
+  /**
+   * Provider share in basis points (0–10000), if known from the
+   * `DisputeSplitRecorded` event. Recorded as `feedbackURI` for transparency;
+   * does NOT change the neutral `value: 0`. Optional.
+   */
+  splitBps?: number;
+}
+
+/**
  * Result of a reputation report.
  */
 export interface ReportResult {
@@ -186,6 +215,11 @@ export interface ReportResult {
  *
  * Designed to never block or fail the main ACTP flow.
  * All errors are caught and logged, returning null on failure.
+ *
+ * PARITY: python-sdk-v2/src/agirails/erc8004/reputation_reporter.py — every
+ * public method (reportSettlement / reportDispute / reportDisputeSplit /
+ * getAgentReputation / isReported / clearReportedCache / getStats) has a Py
+ * twin with the same name (snake_case) and arity.
  */
 export class ReputationReporter {
   private readonly registry: IERC8004ReputationRegistry;
@@ -362,6 +396,74 @@ export class ReputationReporter {
       };
     } catch (error) {
       this.logError('reportDispute', agentId, txId, error);
+      return null;
+    }
+  }
+
+  /**
+   * Report an ACTP dispute SPLIT outcome to ERC-8004 Reputation (AIP-14b §3.4,
+   * §3.5, INV-22).
+   *
+   * Call this after a dispute resolves to a SPLIT — either a CompositeMediator
+   * ruling-2 (`DisputeSplitRecorded`) or a kernel `DISPUTED → CANCELLED`
+   * transition (admin-CANCELLED). Failure here does NOT affect the resolution.
+   *
+   * Reports:
+   * - value: **0** (NEUTRAL — no penalty for either party; INV-4)
+   * - valueDecimals: 0 (binary)
+   * - tag1: 'actp_dispute_split' (identical string in both SDKs)
+   * - tag2: capability
+   * - feedbackURI: `splitBps` (when known) for transparency
+   * - feedbackHash: keccak256(txId)
+   *
+   * The neutral value makes the split rate INDEXABLE without punishing
+   * legitimately ambiguous one-off cases. PARITY: Py `report_dispute_split`.
+   *
+   * @param params - Split details
+   * @returns ReportResult if successful, null if failed (NEVER throws)
+   */
+  async reportDisputeSplit(
+    params: ReportDisputeSplitParams
+  ): Promise<ReportResult | null> {
+    const { agentId, txId, capability = '', splitBps } = params;
+
+    // Local dedup check
+    if (this.reportedTxIds.has(txId)) {
+      sdkLogger.warn(`[ERC8004] Already reported txId in this session: ${txId}`);
+      return null;
+    }
+
+    try {
+      const feedbackHash = ethers.keccak256(ethers.toUtf8Bytes(txId));
+
+      const txOptions: { gasLimit?: bigint } = {};
+      if (this.gasLimit) {
+        txOptions.gasLimit = this.gasLimit;
+      }
+
+      const tx = await this.registry.giveFeedback(
+        agentId,
+        0, // value: 0 = NEUTRAL split trace (no penalty — AIP-14b §3.4/INV-4)
+        0, // decimals: 0 (binary)
+        ACTP_FEEDBACK_TAGS.DISPUTE_SPLIT, // tag1: 'actp_dispute_split'
+        capability, // tag2: capability
+        '', // endpoint
+        splitBps !== undefined ? `splitBps:${splitBps}` : '', // feedbackURI
+        feedbackHash,
+        txOptions
+      );
+
+      const receipt = await tx.wait();
+      this.reportedTxIds.add(txId);
+
+      return {
+        txHash: receipt.hash,
+        blockNumber: receipt.blockNumber,
+        gasUsed: receipt.gasUsed,
+      };
+    } catch (error) {
+      // Log but NEVER throw — split resolution already succeeded on-chain.
+      this.logError('reportDisputeSplit', agentId, txId, error);
       return null;
     }
   }
