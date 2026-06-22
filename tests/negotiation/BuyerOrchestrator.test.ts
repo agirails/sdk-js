@@ -4,6 +4,7 @@ import { IACTPRuntime, CreateTransactionParams } from '../../src/runtime/IACTPRu
 import { mkdirSync, rmSync, existsSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
+import { keccak256, toUtf8Bytes } from 'ethers';
 
 // Mock the discover API
 jest.mock('../../src/api/agirailsApp', () => ({
@@ -594,5 +595,140 @@ describe('BuyerOrchestrator', () => {
         PolicyEngine.prototype.validate = origValidate;
       }
     });
+  });
+});
+
+// ============================================================================
+// F-5: buyer-side pre-escrow price-band check
+// ============================================================================
+
+describe('BuyerOrchestrator F-5 pre-escrow price-band check', () => {
+  const SERVICE_HASH = keccak256(toUtf8Bytes(POLICY.task));
+
+  /** Mock AgentRegistry returning a single ServiceDescriptor band. */
+  function mockRegistry(
+    opts: { minPrice?: bigint; maxPrice?: bigint; serviceTypeHash?: string; throws?: boolean } = {},
+  ) {
+    return {
+      getServiceDescriptors: jest.fn(async () => {
+        if (opts.throws) throw new Error('RPC timeout');
+        return [
+          {
+            serviceTypeHash: opts.serviceTypeHash ?? SERVICE_HASH,
+            serviceType: POLICY.task,
+            schemaURI: '',
+            minPrice: opts.minPrice ?? 500_000n, // $0.50
+            maxPrice: opts.maxPrice ?? 1_000_000n, // $1.00
+            avgCompletionTime: 60,
+            metadataCID: '',
+          },
+        ];
+      }),
+    } as any;
+  }
+
+  /** Runtime that drives the provider straight to QUOTED so the fixed-price escrow path runs. */
+  function quotingRuntime() {
+    const runtime = createMockRuntime();
+    const origCreate = runtime.createTransaction.bind(runtime);
+    runtime.createTransaction = jest.fn(async (params: CreateTransactionParams) => {
+      const txId = await origCreate(params);
+      runtime._transactions.get(txId)!.state = 'QUOTED';
+      return txId;
+    });
+    runtime.linkEscrow = jest.fn(runtime.linkEscrow.bind(runtime));
+    return runtime;
+  }
+
+  beforeEach(() => {
+    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+    mkdirSync(TEST_DIR, { recursive: true });
+    jest.clearAllMocks();
+  });
+  afterEach(() => {
+    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+  });
+
+  it('proceeds to escrow when the request is in-band', async () => {
+    mockDiscover.mockResolvedValue({ agents: [mockAgent('p', 0.80, 90, '0xP')], total: 1 });
+    const runtime = quotingRuntime();
+    const registry = mockRegistry({ minPrice: 500_000n, maxPrice: 1_000_000n });
+    const orch = new BuyerOrchestrator(POLICY, runtime, '0xBuyer', TEST_DIR, {}, undefined, registry);
+
+    const result = await orch.negotiate({ pollIntervalMs: 50 });
+
+    expect(registry.getServiceDescriptors).toHaveBeenCalled();
+    expect(result.success).toBe(true);
+    expect(result.rounds[0].action).toBe('accepted');
+    expect(runtime.linkEscrow).toHaveBeenCalled();
+  });
+
+  it('rejects below-band requests before locking escrow', async () => {
+    mockDiscover.mockResolvedValue({ agents: [mockAgent('p', 0.10, 90, '0xP')], total: 1 });
+    const runtime = quotingRuntime();
+    const registry = mockRegistry({ minPrice: 500_000n, maxPrice: 1_000_000n }); // 0.10 < 0.50
+    const orch = new BuyerOrchestrator(POLICY, runtime, '0xBuyer', TEST_DIR, {}, undefined, registry);
+
+    const result = await orch.negotiate({ pollIntervalMs: 50 });
+
+    expect(result.success).toBe(false);
+    expect(result.rounds[0].action).toBe('rejected');
+    expect(result.rounds[0].reason).toContain('price band');
+    expect(runtime.createTransaction).not.toHaveBeenCalled(); // rejected before any tx
+    expect(runtime.linkEscrow).not.toHaveBeenCalled();
+  });
+
+  it('rejects above-band requests before locking escrow', async () => {
+    mockDiscover.mockResolvedValue({ agents: [mockAgent('p', 0.80, 90, '0xP')], total: 1 });
+    const runtime = quotingRuntime();
+    const registry = mockRegistry({ minPrice: 500_000n, maxPrice: 700_000n }); // 0.80 > 0.70
+    const orch = new BuyerOrchestrator(POLICY, runtime, '0xBuyer', TEST_DIR, {}, undefined, registry);
+
+    const result = await orch.negotiate({ pollIntervalMs: 50 });
+
+    expect(result.success).toBe(false);
+    expect(result.rounds[0].action).toBe('rejected');
+    expect(result.rounds[0].reason).toContain('price band');
+    expect(runtime.createTransaction).not.toHaveBeenCalled(); // rejected before any tx
+    expect(runtime.linkEscrow).not.toHaveBeenCalled();
+  });
+
+  it('fails open (proceeds) when no registry is wired', async () => {
+    mockDiscover.mockResolvedValue({ agents: [mockAgent('p', 0.80, 90, '0xP')], total: 1 });
+    const runtime = quotingRuntime();
+    const orch = new BuyerOrchestrator(POLICY, runtime, '0xBuyer', TEST_DIR); // no registry
+
+    const result = await orch.negotiate({ pollIntervalMs: 50 });
+
+    expect(result.success).toBe(true);
+    expect(runtime.linkEscrow).toHaveBeenCalled();
+  });
+
+  it('fails open (proceeds) when the descriptor read throws', async () => {
+    mockDiscover.mockResolvedValue({ agents: [mockAgent('p', 0.10, 90, '0xP')], total: 1 });
+    const runtime = quotingRuntime();
+    const registry = mockRegistry({ throws: true }); // 0.10 would be out-of-band, but read fails
+    const orch = new BuyerOrchestrator(POLICY, runtime, '0xBuyer', TEST_DIR, {}, undefined, registry);
+
+    const result = await orch.negotiate({ pollIntervalMs: 50 });
+
+    expect(result.success).toBe(true); // fail-open
+    expect(runtime.linkEscrow).toHaveBeenCalled();
+  });
+
+  it('fails open (proceeds) when no descriptor matches the requested service', async () => {
+    mockDiscover.mockResolvedValue({ agents: [mockAgent('p', 0.10, 90, '0xP')], total: 1 });
+    const runtime = quotingRuntime();
+    const registry = mockRegistry({
+      serviceTypeHash: keccak256(toUtf8Bytes('some.other.service')),
+      minPrice: 500_000n,
+      maxPrice: 1_000_000n,
+    });
+    const orch = new BuyerOrchestrator(POLICY, runtime, '0xBuyer', TEST_DIR, {}, undefined, registry);
+
+    const result = await orch.negotiate({ pollIntervalMs: 50 });
+
+    expect(result.success).toBe(true); // band is for a different service → fail-open
+    expect(runtime.linkEscrow).toHaveBeenCalled();
   });
 });
