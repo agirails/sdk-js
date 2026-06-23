@@ -319,6 +319,42 @@ export class ACTPKernel {
   }
 
   /**
+   * F-6: read the kernel's immutable recovery grace (in seconds).
+   */
+  async getRecoveryGrace(): Promise<bigint> {
+    return BigInt(await this.contract.recoveryGrace());
+  }
+
+  /**
+   * F-6: the timestamp at/after which a stalled IN_PROGRESS transaction becomes
+   * recoverable, i.e. `deadline + recoveryGrace`.
+   */
+  async getRecoveryDeadline(txId: string): Promise<bigint> {
+    validateTxId(txId, 'txId');
+    const tx = await this.getTransaction(txId);
+    const grace = await this.contract.recoveryGrace();
+    return BigInt(tx.deadline) + BigInt(grace);
+  }
+
+  /**
+   * F-6: permissionlessly recover a stalled IN_PROGRESS transaction once
+   * `deadline + recoveryGrace` has elapsed. Moves it to CANCELLED and refunds the
+   * full remaining escrow to the requester (no penalty). Callable by anyone.
+   */
+  async recoverStalledInProgress(txId: string): Promise<void> {
+    validateTxId(txId, 'txId');
+    try {
+      const recoverFunc = this.contract.getFunction('recoverStalledInProgress');
+      const estimatedGas = await recoverFunc.estimateGas(txId);
+      const txOptions = this.buildTxOptions(estimatedGas, 'recoverStalledInProgress');
+      const tx = await recoverFunc(txId, txOptions);
+      await tx.wait(this.confirmations);
+    } catch (error: any) {
+      throw new TransactionRevertedError(error.transactionHash, error.reason || error.message);
+    }
+  }
+
+  /**
    * Submit quote for transaction (AIP-2)
    * Reference: AIP-2 §4.1 (Provider workflow)
    *
