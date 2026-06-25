@@ -362,5 +362,11 @@ export interface RequestResult {
      * Delivery proof hash
      */
     proof: string;
+
+    /**
+     * Escrow ID for this transaction (SDK-2: requester-side escrow visibility).
+     * Present once escrow is linked; undefined if not available.
+     */
+    escrowId?: string;
   };
 }

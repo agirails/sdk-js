@@ -386,6 +386,14 @@ export interface ACTPClientConfig {
   };
 
   /**
+   * Optional: deployment block of a CUSTOM `contracts.actpKernel`.
+   * Without it, a custom kernel has no known deployment block and event scans
+   * start from genesis (unbounded eth_getLogs — the F-1 re-arm). Set this to the
+   * custom kernel's deploy block to bound the scan window.
+   */
+  actpKernelDeploymentBlock?: number;
+
+  /**
    * Optional: Gas settings for blockchain transactions.
    *
    * Used in 'testnet' and 'mainnet' modes.
@@ -944,7 +952,7 @@ export class ACTPClient {
               provider,
               chainId: networkConfig.chainId,
               actpKernelAddress: effectiveKernelAddress,
-              actpKernelDeploymentBlock: isCustomKernel ? undefined : networkConfig.actpKernelDeploymentBlock,
+              actpKernelDeploymentBlock: isCustomKernel ? config.actpKernelDeploymentBlock : networkConfig.actpKernelDeploymentBlock,
               bundler: {
                 primaryUrl: bundlerPrimary,
                 backupUrl: bundlerBackup,
