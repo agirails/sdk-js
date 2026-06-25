@@ -81,6 +81,19 @@
   },
   {
     "type": "function",
+    "name": "activePromptCID",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "string",
+        "internalType": "string"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "admin",
     "inputs": [],
     "outputs": [
@@ -152,6 +165,13 @@
         "internalType": "uint8"
       }
     ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "cancelPromptCID",
+    "inputs": [],
     "outputs": [],
     "stateMutability": "nonpayable"
   },
@@ -359,6 +379,13 @@
   },
   {
     "type": "function",
+    "name": "executePromptCID",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "executeRotatingPoolAddition",
     "inputs": [
       {
@@ -550,6 +577,19 @@
   },
   {
     "type": "function",
+    "name": "pendingPromptCID",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "string",
+        "internalType": "string"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "pendingRotatingAdditions",
     "inputs": [
       {
@@ -601,6 +641,19 @@
   },
   {
     "type": "function",
+    "name": "promptCIDUnlockTime",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "proposeDirectly",
     "inputs": [
       {
@@ -635,6 +688,19 @@
         "name": "newEvaluator",
         "type": "address",
         "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "proposePromptCID",
+    "inputs": [
+      {
+        "name": "newCID",
+        "type": "string",
+        "internalType": "string"
       }
     ],
     "outputs": [],
@@ -1204,6 +1270,44 @@
         "type": "uint16",
         "indexed": false,
         "internalType": "uint16"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "PromptCIDProposalCancelled",
+    "inputs": [],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "PromptCIDProposed",
+    "inputs": [
+      {
+        "name": "newCID",
+        "type": "string",
+        "indexed": false,
+        "internalType": "string"
+      },
+      {
+        "name": "unlockTime",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "PromptCIDUpdated",
+    "inputs": [
+      {
+        "name": "cid",
+        "type": "string",
+        "indexed": false,
+        "internalType": "string"
       }
     ],
     "anonymous": false
