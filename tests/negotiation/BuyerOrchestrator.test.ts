@@ -731,4 +731,46 @@ describe('BuyerOrchestrator F-5 pre-escrow price-band check', () => {
     expect(result.success).toBe(true); // band is for a different service → fail-open
     expect(runtime.linkEscrow).toHaveBeenCalled();
   });
+
+  // F-5 SECOND check: the pre-commit re-band of the FINAL (possibly multi-round
+  // negotiated) amount in _commitAtAmount. The path-based tests above only hit
+  // the pre-create check (@451); this directly exercises the commit-time guard
+  // (@1017) + rollback, mirroring the Python
+  // test_f5_commit_recheck_rejects_out_of_band_final.
+  it('rejects an out-of-band FINAL amount at commit and rolls back', async () => {
+    const runtime = createMockRuntime();
+    const registry = mockRegistry({ minPrice: 500_000n, maxPrice: 700_000n }); // band $0.50-$0.70
+    const orch = new BuyerOrchestrator(POLICY, runtime, '0xBuyer', TEST_DIR, {}, undefined, registry);
+
+    // A transaction already exists (as after createTransaction in a real round);
+    // the FINAL negotiated amount ($5.00) is above the band.
+    const txId = await runtime.createTransaction({
+      provider: '0xP',
+      requester: '0xBuyer',
+      amount: '5000000',
+      deadline: Math.floor(Date.now() / 1000) + 3600,
+    } as any);
+    const acceptSpy = jest.spyOn(orch as any, '_acceptQuote');
+    const rounds: any[] = [];
+
+    const res = await (orch as any)._commitAtAmount(
+      txId,
+      '5000000', // $5.00 final — above the $0.70 ceiling
+      'p',
+      '0xP',
+      { unit_price: 5.0 } as any,
+      0,
+      rounds,
+      () => {},
+      'test',
+      0,
+    );
+
+    expect(res.done).toBe(true);
+    expect(res.success).toBe(false);
+    expect(res.reason).toContain('price band');
+    expect(acceptSpy).not.toHaveBeenCalled(); // rejected before accept
+    expect(rounds[0].action).toBe('rejected');
+    expect(runtime._transactions.get(txId)!.state).toBe('CANCELLED'); // rolled back
+  });
 });
