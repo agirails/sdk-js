@@ -150,15 +150,17 @@ export class BondEscalationClient {
 
   /**
    * Quote the initial Tier-1 bond for a dispute, given the disputed escrow
-   * amount. `max(escrowAmount * 2% , $1)` — mirrors
-   * `BondEscalation._calculateInitialBond`. AIP-14 §7.13.
+   * amount. `min(max(escrowAmount * 2% , $1), $500)` — mirrors
+   * `BondEscalation._calculateInitialBond`, including the MAX_ESCALATION_BOND
+   * ($500) ceiling the contract clamps to (F-5). AIP-14 §7.13.
    *
    * @param escrowAmount - Disputed escrow remaining (USDC, 6 decimals).
-   * @returns Initial bond in USDC base units (6 decimals).
+   * @returns Initial bond in USDC base units (6 decimals), capped at $500.
    */
   static quoteInitialBond(escrowAmount: bigint): bigint {
     const percentBond = (escrowAmount * ESCALATION_INITIAL_BPS) / BPS_DENOMINATOR;
-    return percentBond > MIN_ESCALATION_BOND ? percentBond : MIN_ESCALATION_BOND;
+    const bond = percentBond > MIN_ESCALATION_BOND ? percentBond : MIN_ESCALATION_BOND;
+    return bond > MAX_ESCALATION_BOND ? MAX_ESCALATION_BOND : bond;
   }
 
   /**
