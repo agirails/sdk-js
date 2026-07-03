@@ -167,6 +167,11 @@ export const BASE_SEPOLIA: NetworkConfig = {
     archiveTreasury: '0x63B0c4b4aCD96aC40Ac9ab023B6507FeE54375AD',
     x402Relay: '0x110b25bb3d45c40dfcf34bb451aa7069b2a1cb3b', // deprecated; not redeployed
     erc8004IdentityRegistry: '0x8004A818BFB912233c491871b3d84c89A494BD9e',
+    // AIP-14b dispute system — deployed 2026-07-02 (P4-1) against the F-6 kernel above.
+    // Tier-2 uses a testnet MockOOV3 (canonical UMA OOV3 absent on Sepolia, G2). Mediator
+    // resolver active after the 2-day approveMediator timelock (~2026-07-05).
+    bondEscalation: '0x62d5417BFcceDe49047c713362dA1d4D247fffa7',
+    compositeMediator: '0xf8095f8df0102d5f9fA36fF0792c89Db6FB814a0',
   },
   eas: {
     deliverySchemaUID: '0x1b0ebdf0bd20c28ec9d5362571ce8715a55f46e81c3de2f9b0d8e1b95fb5ffce'
