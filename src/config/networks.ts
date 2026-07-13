@@ -157,21 +157,31 @@ export const BASE_SEPOLIA: NetworkConfig = {
     // Redeployed 2026-06-24: F-6 recoverStalledInProgress + AIP-14b dispute audit (recoveryGrace 1h)
     // (INV-30 disputeBondBpsLocked + AIP-14 / d9c6e8e requesterPenaltyBpsLocked).
     // See agirails/actp-kernel deployments/base-sepolia.json for details.
-    actpKernel: '0xD8f7829c4555Fc95fc92e54729DaE7d28ace349B',
-    escrowVault: '0xAf35801fd0613c583a08ADbdA6131A431C7C69eb',
+    // AIP-14c kernel-v2 redeploy — 2026-07-13 (block 44093538). kernelVersion
+    // 0x6237ef5c… (ACTP_KERNEL_V2_AIP14C_REV2); runtime codehash 0xf42003e6… (== audited
+    // candidate). Supersedes the F-6 kernel 0xD8f7829c… (which is pre-v2: no resultHash/
+    // agreementHash, pre-D7 BondEscalation). recoveryGrace 3600s.
+    actpKernel: '0xE8ba4133CC43bAb48c9c71bF82243e0b15915389',
+    escrowVault: '0x9d3CbD2c630E390F9179DAfE02Dd5dAd80B3A05B',
     usdc: '0x444b4e1A65949AB2ac75979D5d0166Eb7A248Ccb', // MockUSDC (unchanged)
     eas: '0x4200000000000000000000000000000000000021',
     easSchemaRegistry: '0x4200000000000000000000000000000000000020',
-    agentRegistry: '0xDCcFA810ea60Fb3ACfC22F93ACFDDF57Cc8217Bc',
+    // NEW AgentRegistry bound to kernel-v2. Scheduled via scheduleAgentRegistryUpdate;
+    // becomes the kernel's active registry only after executeAgentRegistryUpdate (2-day
+    // timelock, ~2026-07-15). Until then the kernel's agentRegistry is address(0).
+    agentRegistry: '0x1bb1D4B0b84801FF8597d3e7988E00802252d962',
     identityRegistry: '0xce9749c768b425fab0daa0331047d1340ec99a88', // unchanged (no kernel ref)
-    archiveTreasury: '0x63B0c4b4aCD96aC40Ac9ab023B6507FeE54375AD',
+    archiveTreasury: '0x415Ca522e1DfF9933ab5Eb7a8569B1879093324D', // v2, bound to kernel-v2
     x402Relay: '0x110b25bb3d45c40dfcf34bb451aa7069b2a1cb3b', // deprecated; not redeployed
     erc8004IdentityRegistry: '0x8004A818BFB912233c491871b3d84c89A494BD9e',
-    // AIP-14b dispute system — deployed 2026-07-02 (P4-1) against the F-6 kernel above.
-    // Tier-2 uses a testnet MockOOV3 (canonical UMA OOV3 absent on Sepolia, G2). Mediator
-    // resolver active after the 2-day approveMediator timelock (~2026-07-05).
-    bondEscalation: '0x62d5417BFcceDe49047c713362dA1d4D247fffa7',
-    compositeMediator: '0xf8095f8df0102d5f9fA36fF0792c89Db6FB814a0',
+    // AIP-14c dispute system (D7) — deployed 2026-07-13 against kernel-v2 above (block
+    // 44093572). BondEscalation runtime codehash 0x9389b155… (Sepolia pin). Tier-2 uses a
+    // testnet MockOOV3 0x64C81e2F… (canonical UMA OOV3 absent on Sepolia, G2). Mediator
+    // resolver active after the 2-day approveMediator timelock (~2026-07-15 15:10 UTC).
+    // Supersedes the pre-D7 stack (bond 0x62d5417B…, mediator 0xf8095f8d…).
+    bondEscalation: '0x84CB23F1bCebC286270EE5E62A19a64686D3Ca0A',
+    compositeMediator: '0x45a440a34303AEe597672C1D47d1ce83BEC8aD1C',
+    umaOptimisticOracleV3: '0x64C81e2F8a8f72D20AF24a8d9b3A22A93D80AC6A', // testnet MockOOV3 (Tier-2 double)
   },
   eas: {
     deliverySchemaUID: '0x1b0ebdf0bd20c28ec9d5362571ce8715a55f46e81c3de2f9b0d8e1b95fb5ffce'
@@ -180,7 +190,7 @@ export const BASE_SEPOLIA: NetworkConfig = {
     maxFeePerGas: ethers.parseUnits('2', 'gwei'),
     maxPriorityFeePerGas: ethers.parseUnits('1', 'gwei')
   },
-  actpKernelDeploymentBlock: 43262304, // 2026-06-24 F-6 redeploy
+  actpKernelDeploymentBlock: 44093538, // 2026-07-13 AIP-14c kernel-v2 redeploy
   // AIP-12: Account Abstraction
   aa: {
     entryPoint: '0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789',
