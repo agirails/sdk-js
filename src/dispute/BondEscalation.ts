@@ -5,6 +5,8 @@ import {
   DisputeState,
   Ruling,
   Tier,
+  computeEvidenceRefHash,
+  computeReasoningRefHash,
 } from '../types/dispute';
 
 // PARITY: python-sdk-v2/src/agirails/dispute/bond_escalation.py
@@ -251,14 +253,60 @@ export class BondEscalationClient {
   }
 
   /**
-   * Submit an evaluator-signed AIRuling as the Tier-1 proposal. AIP-14 §7.7.
+   * Submit an evaluator-signed AIRuling as the Tier-1 proposal. AIP-14c §7.7 /
+   * D7 CID-binding.
+   *
+   * The v2 BondEscalation entrypoint is the 5-arg
+   * `submitAIRuling(disputeId, ruling, evidenceCID, reasoningCID, signatures)`
+   * (selector `0xca74ab82`); the old 3-arg form is REMOVED. The contract
+   * recomputes `evidenceRefHash`/`reasoningRefHash` from the submitted CIDs and
+   * requires equality with the signed refs BEFORE any bond transfer. The SDK
+   * therefore derives the two ref-hashes from the SAME CIDs it passes, so the
+   * on-chain recompute matches the evaluator-signed 9-field ruling.
    *
    * @param ruling - The {@link AIRuling} (its `disputeId` field MUST match).
+   * @param evidenceCID - IPFS CID of the canonical evidence bundle (signed).
+   * @param reasoningCID - IPFS CID of the evaluator reasoning (signed).
    * @param signatures - Evaluator EIP-712 signatures (`bytes[]`).
    */
-  async submitAIRuling(ruling: AIRuling, signatures: string[]): Promise<{ ethTxHash: string }> {
+  async submitAIRuling(
+    ruling: AIRuling,
+    evidenceCID: string,
+    reasoningCID: string,
+    signatures: string[]
+  ): Promise<{ ethTxHash: string }> {
+    // P2 HARDENING: the ref-hashes are part of the evaluator-SIGNED 9-field
+    // ruling. Recompute them from the CIDs and VERIFY they equal the signed
+    // refs — do NOT silently overwrite the ruling (that would ship the CIDs'
+    // refs under signatures that never covered them, and the on-chain quorum
+    // check would then reject the tx). Throw fail-closed on any mismatch.
+    const evidenceRefHash = computeEvidenceRefHash(ruling.bundleHash, evidenceCID);
+    const reasoningRefHash = computeReasoningRefHash(ruling.reasoningHash, reasoningCID);
+    const eq = (a?: string, b?: string) =>
+      typeof a === 'string' && typeof b === 'string' && a.toLowerCase() === b.toLowerCase();
+    if (!eq(ruling.evidenceRefHash, evidenceRefHash)) {
+      throw new Error(
+        `submitAIRuling: evidenceCID does not match the signed ruling — ` +
+          `computed evidenceRefHash ${evidenceRefHash} != signed ${ruling.evidenceRefHash ?? '(unset)'}. ` +
+          `Refusing to submit (signatures would be invalid on-chain).`
+      );
+    }
+    if (!eq(ruling.reasoningRefHash, reasoningRefHash)) {
+      throw new Error(
+        `submitAIRuling: reasoningCID does not match the signed ruling — ` +
+          `computed reasoningRefHash ${reasoningRefHash} != signed ${ruling.reasoningRefHash ?? '(unset)'}. ` +
+          `Refusing to submit (signatures would be invalid on-chain).`
+      );
+    }
+    // Submit the ORIGINAL signed ruling unchanged (its refs are now verified).
     const tuple = BondEscalationClient.aiRulingToTuple(ruling);
-    const receipt = await this.send('submitAIRuling', [ruling.disputeId, tuple, signatures]);
+    const receipt = await this.send('submitAIRuling', [
+      ruling.disputeId,
+      tuple,
+      evidenceCID,
+      reasoningCID,
+      signatures,
+    ]);
     return { ethTxHash: receipt.hash };
   }
 
@@ -312,11 +360,45 @@ export class BondEscalationClient {
    * Escalate a ceiling-bond, liveness-active dispute to UMA OOV3 (Tier 2),
    * embedding the IPFS evidence-bundle CID in the assertion. AIP-14 §7.1, §8.4.
    *
+   * BLOCKER-2 (reasoning reaches the DVM): the v2 entrypoint is the 2-CID
+   * `escalateToUMA(disputeId, evidenceCID, reasoningCID)` (selector
+   * `0xea487f8a`); the 1-CID form (`0xa3c23734`) is REMOVED. Both CIDs are
+   * embedded in the UMA/DVM claim + the `EscalatedToUMA` event.
+   *
    * @param disputeId - bytes32 dispute id.
    * @param evidenceCID - IPFS CID of the canonical evidence bundle.
+   * @param reasoningCID - IPFS CID of the evaluator reasoning.
    */
-  async escalateToUMA(disputeId: string, evidenceCID: string): Promise<{ ethTxHash: string }> {
-    const receipt = await this.send('escalateToUMA', [disputeId, evidenceCID]);
+  async escalateToUMA(
+    disputeId: string,
+    evidenceCID: string,
+    reasoningCID: string
+  ): Promise<{ ethTxHash: string }> {
+    const receipt = await this.send('escalateToUMA', [disputeId, evidenceCID, reasoningCID]);
+    return { ethTxHash: receipt.hash };
+  }
+
+  /**
+   * Settle a Tier-2 UMA assertion back into BondEscalation once the DVM has
+   * resolved: reads the OOV3 result and routes the resolved outcome to the
+   * CompositeMediator. AIP-14 §8.2 STAGE 3. Callable by anyone post-resolution.
+   *
+   * @param disputeId - bytes32 dispute id (must have been escalated to UMA).
+   */
+  async settleUMAAssertion(disputeId: string): Promise<{ ethTxHash: string }> {
+    const receipt = await this.send('settleUMAAssertion', [disputeId]);
+    return { ethTxHash: receipt.hash };
+  }
+
+  /**
+   * Retry a mediator resolution that was left pending (e.g. the
+   * CompositeMediator call reverted / ran out of gas during settlement). Drives
+   * `mediatorRetryPending[disputeId]` to completion. AIP-14 §8.2. Not pausable.
+   *
+   * @param disputeId - bytes32 dispute id with a pending mediator retry.
+   */
+  async retryMediatorResolution(disputeId: string): Promise<{ ethTxHash: string }> {
+    const receipt = await this.send('retryMediatorResolution', [disputeId]);
     return { ethTxHash: receipt.hash };
   }
 
@@ -357,7 +439,9 @@ export class BondEscalationClient {
    */
   private static aiRulingToTuple(
     ruling: AIRuling
-  ): [string, number, number, number, number, string, string] {
+  ): [string, number, number, number, number, string, string, string, string] {
+    const ZERO_BYTES32 =
+      '0x0000000000000000000000000000000000000000000000000000000000000000';
     return [
       ruling.disputeId,
       Number(ruling.ruling),
@@ -366,6 +450,8 @@ export class BondEscalationClient {
       ruling.timestamp,
       ruling.reasoningHash,
       ruling.bundleHash,
+      ruling.evidenceRefHash ?? ZERO_BYTES32,
+      ruling.reasoningRefHash ?? ZERO_BYTES32,
     ];
   }
 

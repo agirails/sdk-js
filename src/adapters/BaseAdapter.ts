@@ -79,6 +79,10 @@ export const MAX_DEADLINE_DAYS = 3650; // 10 years
  * ```
  */
 import { ValidationError as ACTPValidationError } from '../errors';
+import {
+  encodeDeliveryProof,
+  assertRealResultHash,
+} from '../utils/deliveryProof';
 
 /**
  * Adapter-layer ValidationError: extends ACTPError-based ValidationError
@@ -479,27 +483,31 @@ export abstract class BaseAdapter {
   }
 
   /**
-   * Encode dispute window as ABI-encoded proof for DELIVERED transition.
+   * Encode the AIP-14c 64-byte DELIVERED transition proof
+   * (`abi.encode(uint256 window, bytes32 resultHash)`).
    *
    * This helper centralizes proof encoding to prevent drift between
-   * adapters and ensures consistency with on-chain expectations.
+   * adapters and ensures consistency with the v2 kernel, which REJECTS the
+   * legacy 32-byte window-only proof.
    *
-   * @param disputeWindowSeconds - Dispute window in seconds
-   * @returns ABI-encoded bytes32 proof
+   * @param disputeWindowSeconds - Dispute window in seconds (1h..30d).
+   * @param resultHash - bytes32 commitment to the delivered result. REQUIRED —
+   *                     `computeResultHash(result)` (public) or the AIP-16
+   *                     envelope hash (encrypted). There is NO synthetic
+   *                     fallback: a missing/invalid `resultHash` fails closed.
+   * @returns ABI-encoded 64-byte proof
+   * @throws {Error} If `resultHash` is missing, invalid, or zero.
    *
    * @example
    * ```typescript
-   * // Encode 2-hour dispute window
-   * const proof = this.encodeDisputeWindowProof(7200);
+   * const proof = this.encodeDeliveryProof(7200, resultHash);
    * await runtime.transitionState(txId, 'DELIVERED', proof);
    * ```
    */
-  protected encodeDisputeWindowProof(disputeWindowSeconds: number): string {
-    // Lazy import to avoid circular dependency issues
-    const { ethers } = require('ethers');
-    return ethers.AbiCoder.defaultAbiCoder().encode(
-      ['uint256'],
-      [disputeWindowSeconds]
-    );
+  protected encodeDeliveryProof(
+    disputeWindowSeconds: number,
+    resultHash?: string
+  ): string {
+    return encodeDeliveryProof(disputeWindowSeconds, assertRealResultHash(resultHash));
   }
 }

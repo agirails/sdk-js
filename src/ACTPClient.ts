@@ -64,6 +64,7 @@ import { SmartWalletCall } from './wallet/aa/constants';
 import { SmartWalletRouter, createSmartWalletRouter } from './wallet/SmartWalletRouter';
 import { buildActivationBatch, ActivationScenario } from './wallet/aa/TransactionBatcher';
 import { loadPendingPublish, deletePendingPublish, PendingPublish } from './config/pendingPublish';
+import { encodeDeliveryProof, assertRealResultHash } from './utils/deliveryProof';
 import { loadBuyerLink, BuyerLink } from './config/buyerLink';
 import { sdkLogger } from './utils/Logger';
 import { SettleOnInteract } from './settle/SettleOnInteract';
@@ -1565,18 +1566,28 @@ export class ACTPClient {
    * @param txId - Transaction ID
    * @param disputeWindowSeconds - Optional dispute window override in seconds.
    *                               If not provided, uses transaction's disputeWindow.
-   * @throws {Error} If transaction not found or wrong state
+   * @param resultHash - Optional bytes32 commitment to the delivered result
+   *                     (the SAME value the AIP-4 delivery proof commits to:
+   *                     `computeResultHash(result)` for public delivery, the
+   *                     envelope hash for AIP-16 encrypted delivery). REQUIRED —
+   *                     the delivery path fails closed if it is absent; there is
+   *                     no synthetic fallback.
+   * @throws {Error} If transaction not found, wrong state, or `resultHash` is
+   *                 missing/invalid
    *
    * @example
    * ```typescript
-   * // Use transaction's disputeWindow (recommended)
-   * await client.deliver(txId);
+   * // Commit to the real delivered-result hash (uses the tx's disputeWindow)
+   * await client.deliver(txId, undefined, computeResultHash(result));
    *
    * // Override with custom dispute window (use with caution)
-   * await client.deliver(txId, 7200);
+   * await client.deliver(txId, 7200, computeResultHash(result));
+   *
+   * // Encrypted (AIP-16) delivery commits to the envelope hash
+   * await client.deliver(txId, undefined, envelopeHash);
    * ```
    */
-  async deliver(txId: string, disputeWindowSeconds?: number): Promise<void> {
+  async deliver(txId: string, disputeWindowSeconds?: number, resultHash?: string): Promise<void> {
     this.settleOnInteract.trigger();
     // Fetch transaction
     const tx = await this.runtime.getTransaction(txId);
@@ -1587,11 +1598,11 @@ export class ACTPClient {
     // Use provided disputeWindow or fall back to transaction's disputeWindow
     const effectiveDisputeWindow = disputeWindowSeconds ?? tx.disputeWindow;
 
-    // Encode dispute window as proof
-    const proof = ethers.AbiCoder.defaultAbiCoder().encode(
-      ['uint256'],
-      [effectiveDisputeWindow]
-    );
+    // AIP-14c: the v2 kernel requires a 64-byte (window, resultHash) proof and
+    // rejects the legacy 32-byte window-only blob. Fail closed unless the caller
+    // committed to a REAL deliverable — there is NO synthetic fallback.
+    const effectiveResultHash = assertRealResultHash(resultHash);
+    const proof = encodeDeliveryProof(effectiveDisputeWindow, effectiveResultHash);
 
     if (this.smartWalletRouter?.shouldRoute()) {
       // When using Smart Wallet, batch startWork + deliver if still COMMITTED

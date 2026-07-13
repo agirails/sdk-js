@@ -84,6 +84,8 @@ describe('EvaluatorClient — §4.7 signature verification (cross-SDK fixture)',
         { name: 'timestamp', type: 'uint64' },
         { name: 'reasoningHash', type: 'bytes32' },
         { name: 'bundleHash', type: 'bytes32' },
+        { name: 'evidenceRefHash', type: 'bytes32' },
+        { name: 'reasoningRefHash', type: 'bytes32' },
       ],
     };
     expect(ethers.TypedDataEncoder.hash(DOMAIN, types, RULING as any)).toBe(
@@ -158,6 +160,8 @@ const RULING_TYPES = {
     { name: 'timestamp', type: 'uint64' },
     { name: 'reasoningHash', type: 'bytes32' },
     { name: 'bundleHash', type: 'bytes32' },
+    { name: 'evidenceRefHash', type: 'bytes32' },
+    { name: 'reasoningRefHash', type: 'bytes32' },
   ],
 };
 
@@ -174,6 +178,10 @@ async function buildSignedRulingForExampleA(
     timestamp,
     reasoningHash: RULING.reasoningHash,
     bundleHash: EXAMPLE_A_HASH, // OQ-10: ruling commits the bundle we send
+    // AIP-14c: no CID commitment on this synthetic ruling → bytes32(0) refs,
+    // matching the SDK signer's withRefDefaults so recovery round-trips.
+    evidenceRefHash: ethers.ZeroHash,
+    reasoningRefHash: ethers.ZeroHash,
   };
   const signatures: string[] = [];
   for (const pk of signerKeys) {

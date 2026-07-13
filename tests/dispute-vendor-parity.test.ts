@@ -63,15 +63,34 @@ describe('P2-2 network-config dispute keys (TS)', () => {
     expect(GOLDEN.contracts.keys).toEqual(DISPUTE_KEYS);
   });
 
+  // AIP-14c dispute deployment state. On Base Sepolia the BondEscalation +
+  // CompositeMediator are live (deployed 2026-07-02 / P4-1); Tier-2 UMA still
+  // uses a testnet MockOOV3 so `umaOptimisticOracleV3` stays undefined. On Base
+  // Mainnet none of the three are deployed yet.
+  const DEPLOYED_BASE_SEPOLIA = {
+    bondEscalation: '0x62d5417BFcceDe49047c713362dA1d4D247fffa7',
+    compositeMediator: '0xf8095f8df0102d5f9fA36fF0792c89Db6FB814a0',
+    umaOptimisticOracleV3: undefined,
+  } as const;
+
   test.each(['base-sepolia', 'base-mainnet'])(
-    '%s exposes all 3 dispute keys, undefined-until-deployed',
+    '%s exposes all 3 dispute keys (bondEscalation + compositeMediator deployed on sepolia, uma undefined-until-deployed)',
     (network) => {
       const cfg = getNetwork(network);
       for (const key of DISPUTE_KEYS) {
-        // The key must exist on the contracts object (present in the type),
-        // and resolve to undefined (not yet deployed).
+        // The key must exist on the contracts object (present in the type).
         expect(key in cfg.contracts).toBe(true);
-        expect((cfg.contracts as Record<string, unknown>)[key]).toBeUndefined();
+      }
+      const contracts = cfg.contracts as Record<string, unknown>;
+      if (network === 'base-sepolia') {
+        expect(contracts.bondEscalation).toBe(DEPLOYED_BASE_SEPOLIA.bondEscalation);
+        expect(contracts.compositeMediator).toBe(DEPLOYED_BASE_SEPOLIA.compositeMediator);
+        expect(contracts.umaOptimisticOracleV3).toBeUndefined();
+      } else {
+        // Mainnet: none of the dispute contracts are deployed yet.
+        for (const key of DISPUTE_KEYS) {
+          expect(contracts[key]).toBeUndefined();
+        }
       }
     }
   );
@@ -90,6 +109,8 @@ describe('P2-2 GOLDEN EIP-712 vector (TS ↔ Py ↔ Solidity anchor)', () => {
     timestamp: GOLDEN.ruling.timestamp,
     reasoningHash: GOLDEN.ruling.reasoningHash,
     bundleHash: GOLDEN.ruling.bundleHash,
+    evidenceRefHash: GOLDEN.ruling.evidenceRefHash,
+    reasoningRefHash: GOLDEN.ruling.reasoningRefHash,
   };
   const { chainId, verifyingContract } = GOLDEN.domain;
 

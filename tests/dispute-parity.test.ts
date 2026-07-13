@@ -334,6 +334,8 @@ describe('P2-10 golden — AIRuling digest (byte-identical to Py + Solidity)', (
     timestamp: g.ruling.timestamp,
     reasoningHash: g.ruling.reasoningHash,
     bundleHash: g.ruling.bundleHash,
+    evidenceRefHash: g.ruling.evidenceRefHash,
+    reasoningRefHash: g.ruling.reasoningRefHash,
   };
 
   test('domain identity matches the frozen constants', () => {
@@ -429,14 +431,25 @@ describe('P2-10 golden — BondEscalation calldata (byte-exact, both SDKs)', () 
 
   test('submitAIRuling calldata == frozen', async () => {
     const { client, captured } = makeClient();
-    await client.submitAIRuling(g.submitAIRuling.args.ruling as AIRuling, g.submitAIRuling.args.signatures);
+    await client.submitAIRuling(
+      g.submitAIRuling.args.ruling as AIRuling,
+      g.submitAIRuling.args.evidenceCID,
+      g.submitAIRuling.args.reasoningCID,
+      g.submitAIRuling.args.signatures
+    );
     expect(captured[0].data).toBe(g.submitAIRuling.calldata);
+    expect(captured[0].data.slice(0, 10)).toBe(g.submitAIRuling.selector);
   });
 
   test('escalateToUMA calldata == frozen', async () => {
     const { client, captured } = makeClient();
-    await client.escalateToUMA(g.disputeId, g.escalateToUMA.args.evidenceCID);
+    await client.escalateToUMA(
+      g.disputeId,
+      g.escalateToUMA.args.evidenceCID,
+      g.escalateToUMA.args.reasoningCID
+    );
     expect(captured[0].data).toBe(g.escalateToUMA.calldata);
+    expect(captured[0].data.slice(0, 10)).toBe(g.escalateToUMA.selector);
   });
 });
 

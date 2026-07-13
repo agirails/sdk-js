@@ -228,13 +228,16 @@ export interface IAdapter {
    * Transition to DELIVERED state (provider completes work).
    *
    * @param txId - Transaction ID
-   * @param proof - Delivery proof (ABI-encoded dispute window)
+   * @param proof - AIP-14c 64-byte delivery proof: `abi.encode(uint256 window,
+   *                bytes32 resultHash)`. The v2 kernel rejects the legacy
+   *                32-byte window-only proof.
    * @throws {Error} If transaction not found or wrong state
    *
    * @example
    * ```typescript
-   * // Provider marks work as delivered with 2-hour dispute window
-   * const proof = ethers.AbiCoder.defaultAbiCoder().encode(['uint256'], [7200]);
+   * // Provider marks work as delivered with a 2-hour dispute window
+   * const proof = ethers.AbiCoder.defaultAbiCoder()
+   *   .encode(['uint256', 'bytes32'], [7200, resultHash]);
    * await adapter.deliver(txId, proof);
    * ```
    */

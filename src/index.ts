@@ -456,6 +456,28 @@ export type {
   BundleTokenizer,
 } from './dispute/EvidenceBundle';
 
+// AIP-14c Schema-2.0.0 IMMUTABLE evidence artifact (D5/D6) — canonical serializer + hash.
+export {
+  EVIDENCE_ARTIFACT_V2_SCHEMA_VERSION,
+  assertArtifactV2Version,
+  validateEvidenceArtifactV2,
+  serializeArtifactV2,
+  serializeArtifactV2ToString,
+  computeArtifactV2Hash,
+  countArtifactV2Tokens,
+  UnsupportedArtifactVersionError,
+  InvalidArtifactError,
+} from './dispute/EvidenceArtifactV2';
+
+export type {
+  EvidenceArtifactV2,
+  ArtifactV2Parties,
+  ArtifactV2Timestamps,
+  ArtifactV2Transaction,
+  ArtifactV2Agreement,
+  ArtifactV2Delivery,
+} from './dispute/EvidenceArtifactV2';
+
 // CompositeMediator read/event client + decoders (PRD P2-5; 1:1 with the Python twin).
 export {
   CompositeMediator,

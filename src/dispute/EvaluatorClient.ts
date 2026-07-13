@@ -620,6 +620,11 @@ export class EvaluatorClient {
       timestamp: Number(r.timestamp),
       reasoningHash: r.reasoningHash,
       bundleHash: r.bundleHash,
+      // AIP-14c D7: carry the CID-commitment ref-hashes through verbatim when the
+      // evaluator provides them; a missing value is normalized to bytes32(0) by
+      // the signer helpers (withRefDefaults).
+      evidenceRefHash: r.evidenceRefHash,
+      reasoningRefHash: r.reasoningRefHash,
     };
   }
 

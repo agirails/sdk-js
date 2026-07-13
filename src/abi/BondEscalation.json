@@ -359,6 +359,11 @@
         "name": "evidenceCID",
         "type": "string",
         "internalType": "string"
+      },
+      {
+        "name": "reasoningCID",
+        "type": "string",
+        "internalType": "string"
       }
     ],
     "outputs": [],
@@ -857,8 +862,28 @@
             "name": "bundleHash",
             "type": "bytes32",
             "internalType": "bytes32"
+          },
+          {
+            "name": "evidenceRefHash",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "reasoningRefHash",
+            "type": "bytes32",
+            "internalType": "bytes32"
           }
         ]
+      },
+      {
+        "name": "evidenceCID",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "reasoningCID",
+        "type": "string",
+        "internalType": "string"
       },
       {
         "name": "signatures",
@@ -1098,6 +1123,12 @@
       },
       {
         "name": "evidenceCID",
+        "type": "string",
+        "indexed": false,
+        "internalType": "string"
+      },
+      {
+        "name": "reasoningCID",
         "type": "string",
         "indexed": false,
         "internalType": "string"

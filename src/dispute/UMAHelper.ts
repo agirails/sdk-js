@@ -131,6 +131,12 @@ export interface IOptimisticOracleV3Contract {
     (...args: unknown[]): Promise<ContractTxResponse>;
     estimateGas(...args: unknown[]): Promise<bigint>;
   };
+  /**
+   * OOV3 `getMinimumBond(currency)` read — the minimum bond the oracle requires
+   * for `currency`. A direct read (like {@link IDisputeContract.disputeToAssertion}),
+   * NOT a state-changing write.
+   */
+  getMinimumBond(currency: string): Promise<bigint>;
 }
 
 /** Result of a self-dispute cost quote (USDC base units, 6 decimals). */
@@ -261,6 +267,25 @@ export class UMAHelper {
     return this.bondEscalation.disputeToAssertion(disputeId);
   }
 
+  /**
+   * Read the UMA oracle's minimum bond for USDC (`OOV3.getMinimumBond(usdc)`).
+   * A direct read — never recorded as a write.
+   */
+  async getMinimumBond(): Promise<bigint> {
+    return BigInt(await this.oov3.getMinimumBond(this.usdcAddress));
+  }
+
+  /**
+   * The effective per-side bond the SDK must post to escalate to UMA:
+   * `max($500, getMinimumBond(USDC))` (AIP-14b §7.4). BondEscalation.sol posts
+   * this exact dynamic value; the SDK matches it so a raised UMA minimum never
+   * under-approves and reverts `escalateToUMA`.
+   */
+  async getEffectiveBond(): Promise<bigint> {
+    const min = await this.getMinimumBond();
+    return min > UMA_BOND ? min : UMA_BOND;
+  }
+
   // ===================================================================
   // The §8.6 self-dispute flow
   // ===================================================================
@@ -272,8 +297,8 @@ export class UMAHelper {
    *
    *   1. `USDC.approve(bondEscalation, $500)` — so `escalateToUMA` can pull the
    *      asserter bond.
-   *   2. `BondEscalation.escalateToUMA(disputeId, evidenceCID)` — posts the
-   *      $500 asserter bond ("Provider delivered").
+   *   2. `BondEscalation.escalateToUMA(disputeId, evidenceCID, reasoningCID)` —
+   *      posts the $500 asserter bond ("Provider delivered").
    *   3. read `assertionId` ← `BondEscalation.disputeToAssertion(disputeId)`.
    *   4. `USDC.approve(oov3, $500)` — so `disputeAssertion` can pull the disputer
    *      bond directly to OOV3.
@@ -289,6 +314,8 @@ export class UMAHelper {
    * @param disputeId   - bytes32 dispute id (already at the Tier-1 $500 ceiling,
    *                       liveness active — `escalateToUMA`'s preconditions).
    * @param evidenceCID - IPFS CID of the canonical evidence bundle (§8.4).
+   * @param reasoningCID - IPFS CID of the evaluator reasoning (BLOCKER-2: both
+   *                       CIDs are forwarded into the UMA/DVM claim).
    * @param disputer    - Address that disputes the assertion (the requester
    *                       themself; receives the $750 if the DVM rules FALSE).
    * @returns `{ assertionId, escalateTxHash, disputeTxHash }`.
@@ -296,19 +323,30 @@ export class UMAHelper {
   async requesterForceDVM(
     disputeId: string,
     evidenceCID: string,
+    reasoningCID: string,
     disputer: string
   ): Promise<{ assertionId: string; escalateTxHash: string; disputeTxHash: string }> {
-    // 1. approve BondEscalation for the $500 asserter bond.
-    await this.sendUsdc('approve', [this.bondEscalationAddress, UMA_BOND]);
+    // 0. read the effective per-side bond = max($500, getMinimumBond(USDC)),
+    //    matching BondEscalation.sol's dynamic bond (a pure read, not recorded
+    //    as a write). Under the default regime this is $500 (UMA_BOND).
+    const bond = await this.getEffectiveBond();
+
+    // 1. approve BondEscalation for the asserter bond.
+    await this.sendUsdc('approve', [this.bondEscalationAddress, bond]);
 
     // 2. escalateToUMA posts the asserter bond ("Provider delivered").
-    const escalate = await this.sendBond('escalateToUMA', [disputeId, evidenceCID]);
+    //    BLOCKER-2: forward BOTH evidence + reasoning CIDs into the DVM claim.
+    const escalate = await this.sendBond('escalateToUMA', [
+      disputeId,
+      evidenceCID,
+      reasoningCID,
+    ]);
 
     // 3. read the assertionId the escalation registered.
     const assertionId = await this.bondEscalation.disputeToAssertion(disputeId);
 
-    // 4. approve OOV3 for the $500 disputer bond.
-    await this.sendUsdc('approve', [this.oov3Address, UMA_BOND]);
+    // 4. approve OOV3 for the disputer bond (same effective amount).
+    await this.sendUsdc('approve', [this.oov3Address, bond]);
 
     // 5. dispute the requester's own assertion, forcing DVM review.
     const dispute = await this.sendOov3('disputeAssertion', [assertionId, disputer]);

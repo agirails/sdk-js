@@ -23,7 +23,12 @@ import {
   BondEscalationClient,
   IBondEscalationContract,
 } from '../src/dispute/BondEscalation';
-import { AIRuling, Ruling } from '../src/types/dispute';
+import {
+  AIRuling,
+  Ruling,
+  computeEvidenceRefHash,
+  computeReasoningRefHash,
+} from '../src/types/dispute';
 
 // PARITY: test_bond_escalation.py — same fixture, same assertions.
 const VECTORS_DIR = path.resolve(__dirname, '../../../DISPUTE SYSTEM/test-vectors');
@@ -153,19 +158,29 @@ describe('P2-4 BondEscalationClient — calldata per IBondEscalation method', ()
     expect(disputeId).toMatch(/^0x[0-9a-f]{64}$/);
   });
 
-  test('submitAIRuling builds the AIRuling tuple + signatures calldata', async () => {
+  test('submitAIRuling builds the 9-field AIRuling tuple + CIDs + signatures calldata', async () => {
     const { client, calls } = makeClient();
+    const reasoningHash = '0x' + '11'.repeat(32);
+    const bundleHash = '0x' + '22'.repeat(32);
+    const evidenceCID = 'bafybeigevidencecid';
+    const reasoningCID = 'bafybeigreasoningcid';
+    // P2: the SIGNED ruling already carries the D7 ref-hashes (the evaluator
+    // quorum signed over them). The SDK VERIFIES, it does not overwrite.
+    const evidenceRefHash = computeEvidenceRefHash(bundleHash, evidenceCID);
+    const reasoningRefHash = computeReasoningRefHash(reasoningHash, reasoningCID);
     const ruling: AIRuling = {
       disputeId: DISPUTE_ID,
       ruling: Ruling.SPLIT,
       confidence: 9500,
       splitBps: 6000,
       timestamp: 1700000000,
-      reasoningHash: '0x' + '11'.repeat(32),
-      bundleHash: '0x' + '22'.repeat(32),
+      reasoningHash,
+      bundleHash,
+      evidenceRefHash,
+      reasoningRefHash,
     };
     const sigs = ['0x' + 'ab'.repeat(65), '0x' + 'cd'.repeat(65)];
-    await client.submitAIRuling(ruling, sigs);
+    await client.submitAIRuling(ruling, evidenceCID, reasoningCID, sigs);
     const tuple = [
       ruling.disputeId,
       ruling.ruling,
@@ -174,11 +189,47 @@ describe('P2-4 BondEscalationClient — calldata per IBondEscalation method', ()
       ruling.timestamp,
       ruling.reasoningHash,
       ruling.bundleHash,
+      evidenceRefHash,
+      reasoningRefHash,
     ];
     expect(calls[0].method).toBe('submitAIRuling');
     expect(calls[0].data).toBe(
-      IFACE.encodeFunctionData('submitAIRuling', [DISPUTE_ID, tuple, sigs])
+      IFACE.encodeFunctionData('submitAIRuling', [
+        DISPUTE_ID,
+        tuple,
+        evidenceCID,
+        reasoningCID,
+        sigs,
+      ])
     );
+    // Frozen final selector (AIP14C-BOND-ABI-FREEZE.md).
+    expect(calls[0].data.slice(0, 10)).toBe('0xca74ab82');
+  });
+
+  test('P2: submitAIRuling THROWS when a CID does not match the signed ruling refs', async () => {
+    const { client, calls } = makeClient();
+    const reasoningHash = '0x' + '11'.repeat(32);
+    const bundleHash = '0x' + '22'.repeat(32);
+    const evidenceCID = 'bafybeigevidencecid';
+    const reasoningCID = 'bafybeigreasoningcid';
+    const ruling: AIRuling = {
+      disputeId: DISPUTE_ID,
+      ruling: Ruling.SPLIT,
+      confidence: 9500,
+      splitBps: 6000,
+      timestamp: 1700000000,
+      reasoningHash,
+      bundleHash,
+      evidenceRefHash: computeEvidenceRefHash(bundleHash, evidenceCID),
+      reasoningRefHash: computeReasoningRefHash(reasoningHash, reasoningCID),
+    };
+    const sigs = ['0x' + 'ab'.repeat(65)];
+    // A DIFFERENT evidenceCID than the one the ruling committed to.
+    await expect(
+      client.submitAIRuling(ruling, 'bafybeigTAMPEREDcid', reasoningCID, sigs)
+    ).rejects.toThrow(/evidenceCID does not match the signed ruling/);
+    // Fail-closed: nothing was sent.
+    expect(calls.length).toBe(0);
   });
 
   test('proposeDirectly', async () => {
@@ -203,12 +254,31 @@ describe('P2-4 BondEscalationClient — calldata per IBondEscalation method', ()
     expect(calls[0].data).toBe(IFACE.encodeFunctionData('finalize', [DISPUTE_ID]));
   });
 
-  test('escalateToUMA', async () => {
+  test('escalateToUMA (2-CID: evidence + reasoning)', async () => {
     const { client, calls } = makeClient();
-    const cid = 'bafybeigdyrztabcdefghijklmnopqrstuvwxyz1234567890';
-    await client.escalateToUMA(DISPUTE_ID, cid);
+    const evidenceCID = 'bafybeigdyrztabcdefghijklmnopqrstuvwxyz1234567890';
+    const reasoningCID = 'bafybeigreasoningdyrztabcdefghijklmnopqrstuvwxyz00';
+    await client.escalateToUMA(DISPUTE_ID, evidenceCID, reasoningCID);
     expect(calls[0].data).toBe(
-      IFACE.encodeFunctionData('escalateToUMA', [DISPUTE_ID, cid])
+      IFACE.encodeFunctionData('escalateToUMA', [DISPUTE_ID, evidenceCID, reasoningCID])
+    );
+    // Frozen final selector (AIP14C-BOND-ABI-FREEZE.md).
+    expect(calls[0].data.slice(0, 10)).toBe('0xea487f8a');
+  });
+
+  test('settleUMAAssertion', async () => {
+    const { client, calls } = makeClient();
+    await client.settleUMAAssertion(DISPUTE_ID);
+    expect(calls[0].data).toBe(
+      IFACE.encodeFunctionData('settleUMAAssertion', [DISPUTE_ID])
+    );
+  });
+
+  test('retryMediatorResolution', async () => {
+    const { client, calls } = makeClient();
+    await client.retryMediatorResolution(DISPUTE_ID);
+    expect(calls[0].data).toBe(
+      IFACE.encodeFunctionData('retryMediatorResolution', [DISPUTE_ID])
     );
   });
 

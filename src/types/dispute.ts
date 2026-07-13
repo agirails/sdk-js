@@ -86,6 +86,90 @@ export interface AIRuling {
   reasoningHash: string;
   /** keccak256 of the canonical evidence bundle (bytes32). */
   bundleHash: string;
+  /**
+   * AIP-14c D7 evidence CID commitment (bytes32):
+   * `keccak256(abi.encode(bundleHash, keccak256(bytes(evidenceCID))))`.
+   * Binds the pinned evidence CID into the signed ruling so it cannot be
+   * swapped before first on-chain persistence. Optional on the wire; a missing
+   * value is normalized to `bytes32(0)` before hashing (`ZeroHash`).
+   */
+  evidenceRefHash?: string;
+  /**
+   * AIP-14c D7 reasoning CID commitment (bytes32):
+   * `keccak256(abi.encode(reasoningHash, keccak256(bytes(reasoningCID))))`.
+   * Same treatment as {@link AIRuling.evidenceRefHash}.
+   */
+  reasoningRefHash?: string;
+}
+
+/** bytes32(0) — the default for an unset {@link AIRuling.evidenceRefHash}/`reasoningRefHash`. */
+const ZERO_BYTES32 =
+  '0x0000000000000000000000000000000000000000000000000000000000000000';
+
+/**
+ * Fill defaults for the AIP-14c ref-hash fields so the EIP-712 encoder always
+ * receives a complete 9-field value. A caller that has no CID commitment yet
+ * (e.g. a pre-D7 / direct-proposal ruling) may omit them; they hash as
+ * `bytes32(0)`, exactly like the on-chain default.
+ */
+function withRefDefaults(ruling: AIRuling): Required<AIRuling> {
+  return {
+    disputeId: ruling.disputeId,
+    ruling: ruling.ruling,
+    confidence: ruling.confidence,
+    splitBps: ruling.splitBps,
+    timestamp: ruling.timestamp,
+    reasoningHash: ruling.reasoningHash,
+    bundleHash: ruling.bundleHash,
+    evidenceRefHash: ruling.evidenceRefHash ?? ZERO_BYTES32,
+    reasoningRefHash: ruling.reasoningRefHash ?? ZERO_BYTES32
+  };
+}
+
+/**
+ * Compute the AIP-14c D7 evidence ref-hash that binds an IPFS evidence CID to
+ * the signed ruling:
+ *
+ *   `keccak256(abi.encode(bundleHash, keccak256(bytes(evidenceCID))))`
+ *
+ * BondEscalation.submitAIRuling recomputes this on-chain from the submitted
+ * `evidenceCID` and requires equality with the SIGNED `ruling.evidenceRefHash`
+ * before touching any bond — so the SDK MUST derive it from the exact same CID
+ * it passes to the call. Reference: deployments/AIP14C-BOND-ABI-FREEZE.md.
+ *
+ * @param bundleHash - The ruling's `bundleHash` (bytes32).
+ * @param evidenceCID - IPFS CID string committed in the evidence bundle.
+ * @returns bytes32 evidence ref-hash.
+ */
+export function computeEvidenceRefHash(bundleHash: string, evidenceCID: string): string {
+  return ethers.keccak256(
+    ethers.AbiCoder.defaultAbiCoder().encode(
+      ['bytes32', 'bytes32'],
+      [bundleHash, ethers.keccak256(ethers.toUtf8Bytes(evidenceCID))]
+    )
+  );
+}
+
+/**
+ * Compute the AIP-14c D7 reasoning ref-hash that binds an IPFS reasoning CID to
+ * the signed ruling:
+ *
+ *   `keccak256(abi.encode(reasoningHash, keccak256(bytes(reasoningCID))))`
+ *
+ * Same on-chain recompute-and-compare discipline as
+ * {@link computeEvidenceRefHash}.
+ *
+ * @param reasoningHash - The ruling's `reasoningHash` (bytes32).
+ * @param reasoningCID - IPFS CID string of the evaluator reasoning.
+ * @returns bytes32 reasoning ref-hash.
+ */
+export function computeReasoningRefHash(reasoningHash: string, reasoningCID: string): string {
+  return ethers.keccak256(
+    ethers.AbiCoder.defaultAbiCoder().encode(
+      ['bytes32', 'bytes32'],
+      [reasoningHash, ethers.keccak256(ethers.toUtf8Bytes(reasoningCID))]
+    )
+  );
 }
 
 /**
@@ -115,8 +199,8 @@ export interface DisputeState {
  * EIP-712 typed-data definition for {@link AIRuling}.
  *
  * The string passed to keccak256 for {@link RULING_TYPEHASH} is derived from
- * this exactly:
- * `AIRuling(bytes32 disputeId,uint8 ruling,uint16 confidence,uint16 splitBps,uint64 timestamp,bytes32 reasoningHash,bytes32 bundleHash)`
+ * this exactly (AIP-14c 9-field type):
+ * `AIRuling(bytes32 disputeId,uint8 ruling,uint16 confidence,uint16 splitBps,uint64 timestamp,bytes32 reasoningHash,bytes32 bundleHash,bytes32 evidenceRefHash,bytes32 reasoningRefHash)`
  */
 export const AIRulingTypes = {
   AIRuling: [
@@ -126,7 +210,9 @@ export const AIRulingTypes = {
     { name: 'splitBps', type: 'uint16' },
     { name: 'timestamp', type: 'uint64' },
     { name: 'reasoningHash', type: 'bytes32' },
-    { name: 'bundleHash', type: 'bytes32' }
+    { name: 'bundleHash', type: 'bytes32' },
+    { name: 'evidenceRefHash', type: 'bytes32' },
+    { name: 'reasoningRefHash', type: 'bytes32' }
   ]
 } as const;
 
@@ -146,9 +232,10 @@ export const DOMAIN_TYPEHASH: string = ethers.keccak256(
 );
 
 /**
- * The canonical EIP-712 typeHash for the AIRuling struct (AIP-14b §4.4).
+ * The canonical EIP-712 typeHash for the AIRuling struct (AIP-14c 9-field type).
  *
- * `keccak256("AIRuling(bytes32 disputeId,uint8 ruling,uint16 confidence,uint16 splitBps,uint64 timestamp,bytes32 reasoningHash,bytes32 bundleHash)")`
+ * `keccak256("AIRuling(bytes32 disputeId,uint8 ruling,uint16 confidence,uint16 splitBps,uint64 timestamp,bytes32 reasoningHash,bytes32 bundleHash,bytes32 evidenceRefHash,bytes32 reasoningRefHash)")`
+ * = `0x00e11bf3b34994a6bc6e216b116cbdaddee1227d0c97d46416f8d994ba8420ae`
  *
  * REPRESENTATION NOTE: this is a 0x-hex `string` in TS; the Py twin exposes the
  * same constant as `bytes`. Cross-language VALUE is byte-identical — a consumer
@@ -157,7 +244,7 @@ export const DOMAIN_TYPEHASH: string = ethers.keccak256(
  */
 export const RULING_TYPEHASH: string = ethers.keccak256(
   ethers.toUtf8Bytes(
-    'AIRuling(bytes32 disputeId,uint8 ruling,uint16 confidence,uint16 splitBps,uint64 timestamp,bytes32 reasoningHash,bytes32 bundleHash)'
+    'AIRuling(bytes32 disputeId,uint8 ruling,uint16 confidence,uint16 splitBps,uint64 timestamp,bytes32 reasoningHash,bytes32 bundleHash,bytes32 evidenceRefHash,bytes32 reasoningRefHash)'
   )
 );
 
@@ -207,7 +294,7 @@ export function computeRulingDigest(
   verifyingContract: string
 ): string {
   const domain = disputeEvaluatorDomain(chainId, verifyingContract);
-  return ethers.TypedDataEncoder.hash(domain, AIRulingTypes as any, ruling as any);
+  return ethers.TypedDataEncoder.hash(domain, AIRulingTypes as any, withRefDefaults(ruling) as any);
 }
 
 /**
@@ -227,7 +314,7 @@ export function computeRulingDomainSeparator(
  * (`keccak256(abi.encode(RULING_TYPEHASH, ...fields))`).
  */
 export function computeRulingStructHash(ruling: AIRuling): string {
-  return ethers.TypedDataEncoder.hashStruct('AIRuling', AIRulingTypes as any, ruling as any);
+  return ethers.TypedDataEncoder.hashStruct('AIRuling', AIRulingTypes as any, withRefDefaults(ruling) as any);
 }
 
 /**
@@ -261,7 +348,7 @@ export async function signRuling(
   return typedSigner.signTypedData(
     domain,
     AIRulingTypes as unknown as Record<string, Array<{ name: string; type: string }>>,
-    ruling as unknown as Record<string, unknown>
+    withRefDefaults(ruling) as unknown as Record<string, unknown>
   );
 }
 
@@ -283,7 +370,7 @@ export function recoverRulingSigner(
   return ethers.verifyTypedData(
     domain,
     AIRulingTypes as unknown as Record<string, Array<{ name: string; type: string }>>,
-    ruling as unknown as Record<string, unknown>,
+    withRefDefaults(ruling) as unknown as Record<string, unknown>,
     signature
   );
 }

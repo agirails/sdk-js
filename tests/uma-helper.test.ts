@@ -90,7 +90,10 @@ function makeHelper(assertionId: string = FIXTURE.requesterForceDVM.assertionId)
     // disputeToAssertion is a READ between the two writes.
     disputeToAssertion: async (_disputeId: unknown) => assertionId,
   }) as IDisputeContract;
-  const oov3 = makeContract('oov3', OOV3_IFACE, calls) as IOptimisticOracleV3Contract;
+  const oov3 = makeContract('oov3', OOV3_IFACE, calls, {
+    // getMinimumBond is a direct READ (not a recorded write); default regime = $500.
+    getMinimumBond: async (_currency: unknown) => UMA_BOND,
+  }) as IOptimisticOracleV3Contract;
   const usdc = makeContract('usdc', ERC20_IFACE, calls) as IERC20Contract;
 
   const helper = new UMAHelper({
@@ -139,6 +142,7 @@ describe('P2-7 UMAHelper — requesterForceDVM call sequence (shared fixture)', 
     const result = await helper.requesterForceDVM(
       fx.disputeId,
       fx.evidenceCID,
+      fx.reasoningCID,
       fx.disputer
     );
 
@@ -162,10 +166,15 @@ describe('P2-7 UMAHelper — requesterForceDVM call sequence (shared fixture)', 
     expect(calls[0].data).toBe(
       ERC20_IFACE.encodeFunctionData('approve', [BOND_ADDR, UMA_BOND])
     );
-    // Step 2: escalateToUMA(disputeId, evidenceCID).
+    // Step 2: escalateToUMA(disputeId, evidenceCID, reasoningCID) — BLOCKER-2.
     expect(calls[1].data).toBe(
-      BOND_IFACE.encodeFunctionData('escalateToUMA', [fx.disputeId, fx.evidenceCID])
+      BOND_IFACE.encodeFunctionData('escalateToUMA', [
+        fx.disputeId,
+        fx.evidenceCID,
+        fx.reasoningCID,
+      ])
     );
+    expect(calls[1].data.slice(0, 10)).toBe('0xea487f8a');
     // Step 3 (read) produced the assertionId returned to the caller.
     expect(result.assertionId).toBe(fx.assertionId);
     // Step 4: approve(oov3, $500).
@@ -212,6 +221,8 @@ describe('P2-7 UMAHelper — requesterForceDVM call sequence (shared fixture)', 
             return Promise.resolve({ hash: '0xh', wait: async () => ({ hash: '0xh' }) });
           };
         },
+        // Direct READ (not a write): does NOT push to `order`.
+        getMinimumBond: async (_currency: unknown) => UMA_BOND,
       }) as any;
 
     const helper = new UMAHelper({
@@ -224,7 +235,7 @@ describe('P2-7 UMAHelper — requesterForceDVM call sequence (shared fixture)', 
       usdc: mk('usdc', ERC20_IFACE),
     });
 
-    await helper.requesterForceDVM(fx.disputeId, fx.evidenceCID, fx.disputer);
+    await helper.requesterForceDVM(fx.disputeId, fx.evidenceCID, fx.reasoningCID, fx.disputer);
 
     const readIdx = order.indexOf('read:disputeToAssertion');
     const escalateIdx = order.indexOf('write:escalateToUMA');
@@ -248,6 +259,55 @@ describe('P2-7 UMAHelper — requesterForceDVM call sequence (shared fixture)', 
     expect(calls[0].target).toBe('oov3');
     expect(calls[0].data).toBe(
       OOV3_IFACE.encodeFunctionData('settleAssertion', [fx.assertionId])
+    );
+  });
+});
+
+describe('P2-7 UMAHelper — dynamic bond parity (getEffectiveBond)', () => {
+  function makeHelperWithMinBond(minBond: bigint) {
+    const calls: RecordedCall[] = [];
+    const bondEscalation = makeContract('bondEscalation', BOND_IFACE, calls, {
+      disputeToAssertion: async () => FIXTURE.requesterForceDVM.assertionId,
+    }) as IDisputeContract;
+    const oov3 = makeContract('oov3', OOV3_IFACE, calls, {
+      getMinimumBond: async (_c: unknown) => minBond,
+    }) as IOptimisticOracleV3Contract;
+    const usdc = makeContract('usdc', ERC20_IFACE, calls) as IERC20Contract;
+    const helper = new UMAHelper({
+      bondEscalationAddress: BOND_ADDR,
+      oov3Address: OOV3_ADDR,
+      usdcAddress: USDC_ADDR,
+      signer: {} as any,
+      bondEscalation,
+      oov3,
+      usdc,
+    });
+    return { helper, calls };
+  }
+
+  test('getEffectiveBond returns $500 when the oracle minimum is below it', async () => {
+    const { helper } = makeHelperWithMinBond(100_000_000n); // $100 < $500
+    expect(await helper.getMinimumBond()).toBe(100_000_000n);
+    expect(await helper.getEffectiveBond()).toBe(UMA_BOND); // max($500, $100) = $500
+  });
+
+  test('getEffectiveBond returns the oracle minimum when it exceeds $500', async () => {
+    const raised = 800_000_000n; // $800 > $500
+    const { helper } = makeHelperWithMinBond(raised);
+    expect(await helper.getEffectiveBond()).toBe(raised);
+  });
+
+  test('requesterForceDVM approves the RAISED effective bond, not a fixed $500', async () => {
+    const raised = 800_000_000n;
+    const fx = FIXTURE.requesterForceDVM;
+    const { helper, calls } = makeHelperWithMinBond(raised);
+    await helper.requesterForceDVM(fx.disputeId, fx.evidenceCID, fx.reasoningCID, fx.disputer);
+    // Both approvals must use the raised bond (matching BondEscalation.sol).
+    expect(calls[0].data).toBe(
+      ERC20_IFACE.encodeFunctionData('approve', [BOND_ADDR, raised])
+    );
+    expect(calls[2].data).toBe(
+      ERC20_IFACE.encodeFunctionData('approve', [OOV3_ADDR, raised])
     );
   });
 });

@@ -305,8 +305,9 @@ export class StandardAdapter extends BaseAdapter implements IAdapter {
    * // Provider starts work
    * await adapter.transitionState(txId, 'IN_PROGRESS');
    *
-   * // Provider marks work as delivered (with dispute window proof)
-   * const disputeWindowProof = ethers.AbiCoder.defaultAbiCoder().encode(['uint256'], [7200]);
+   * // Provider marks work as delivered (AIP-14c 64-byte (window, resultHash) proof)
+   * const disputeWindowProof = ethers.AbiCoder.defaultAbiCoder()
+   *   .encode(['uint256', 'bytes32'], [7200, resultHash]);
    * await adapter.transitionState(txId, 'DELIVERED', disputeWindowProof);
    * ```
    */
@@ -648,10 +649,13 @@ export class StandardAdapter extends BaseAdapter implements IAdapter {
    * walletProvider.sendTransaction().
    *
    * @param txId - Transaction ID
-   * @param proof - Optional delivery proof (ABI-encoded dispute window).
-   *                If not provided, uses transaction's disputeWindow.
+   * @param proof - Optional pre-encoded delivery proof (AIP-14c 64-byte
+   *                `abi.encode(window, resultHash)`). If not provided, one is
+   *                built from the transaction's disputeWindow + `resultHash`.
+   * @param resultHash - Optional bytes32 commitment to the delivered result,
+   *                     used only when `proof` is not supplied.
    */
-  async deliver(txId: string, proof?: string): Promise<void> {
+  async deliver(txId: string, proof?: string, resultHash?: string): Promise<void> {
     let deliveryProof = proof;
 
     if (!deliveryProof) {
@@ -660,8 +664,9 @@ export class StandardAdapter extends BaseAdapter implements IAdapter {
       if (!tx) {
         throw new Error(`Transaction ${txId} not found`);
       }
-      // Use transaction's disputeWindow, not a default
-      deliveryProof = this.encodeDisputeWindowProof(tx.disputeWindow);
+      // AIP-14c 64-byte (window, resultHash) proof — the v2 kernel rejects the
+      // legacy 32-byte window-only form. Fails closed without a real resultHash.
+      deliveryProof = this.encodeDeliveryProof(tx.disputeWindow, resultHash);
     }
 
     if (this.smartWalletRouter?.shouldRoute()) {
