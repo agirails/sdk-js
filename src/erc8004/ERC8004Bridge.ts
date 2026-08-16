@@ -51,6 +51,7 @@ import { sdkLogger } from '../utils/Logger';
 export interface IERC8004IdentityRegistry {
   ownerOf(agentId: string): Promise<string>;
   getAgentURI(agentId: string): Promise<string>;
+  getAgentWallet(agentId: string): Promise<string>;
   balanceOf(owner: string): Promise<bigint>;
   tokenOfOwnerByIndex(owner: string, index: number): Promise<bigint>;
 }
@@ -184,20 +185,53 @@ export class ERC8004Bridge {
   }
 
   /**
-   * Get wallet address for receiving payments.
+   * Get the verified on-chain wallet address for receiving payments.
    *
-   * Wallet priority:
-   * 1. metadata.paymentAddress (explicit payment destination)
-   * 2. metadata.wallet (alternative field name)
-   * 3. owner address (fallback)
+   * This deliberately does not consult agentURI metadata or fall back to the
+   * ERC-721 owner. ERC-8004 clears agentWallet on transfer until the new owner
+   * proves control of a receiving wallet, so either fallback would bypass the
+   * registry's verification boundary.
    *
    * @param agentId - ERC-8004 agent ID
    * @returns Checksummed wallet address
-   * @throws ERC8004Error if agent not found
+   * @throws ERC8004Error if the ID is invalid, the registry read fails, or no
+   * verified wallet is set
    */
   async getAgentWallet(agentId: string): Promise<string> {
-    const agent = await this.resolveAgent(agentId);
-    return agent.wallet;
+    if (!this.isValidAgentId(agentId)) {
+      throw new ERC8004Error(
+        `Invalid agent ID format: "${agentId}"`,
+        ERC8004ErrorCode.INVALID_AGENT_ID,
+        agentId
+      );
+    }
+
+    let walletAddress: string;
+    try {
+      walletAddress = await this.registry.getAgentWallet(agentId);
+    } catch (error) {
+      throw new ERC8004Error(
+        `Failed to fetch verified wallet for agent ${agentId}: ${
+          error instanceof Error ? error.message : 'Unknown error'
+        }`,
+        ERC8004ErrorCode.NETWORK_ERROR,
+        agentId,
+        error instanceof Error ? error : undefined
+      );
+    }
+
+    if (
+      walletAddress === ethers.ZeroAddress ||
+      !this.isValidAddress(walletAddress)
+    ) {
+      throw new ERC8004Error(
+        `Agent ${agentId} has no verified payment wallet`,
+        ERC8004ErrorCode.WALLET_NOT_FOUND,
+        agentId
+      );
+    }
+
+    return ethers.getAddress(walletAddress);
   }
 
   /**
@@ -271,8 +305,9 @@ export class ERC8004Bridge {
     // Fetch metadata (may return undefined if fetch fails)
     const metadata = await this.fetchMetadata(agentURI, agentId);
 
-    // Determine wallet address
-    // Priority: paymentAddress > wallet > owner
+    // Preserve the legacy profile field for compatibility. This value comes
+    // from unverified off-chain metadata or the NFT owner and MUST NOT be used
+    // for payments; getAgentWallet() reads the verified on-chain agentWallet.
     let walletAddress = owner;
 
     if (metadata?.paymentAddress && this.isValidAddress(metadata.paymentAddress)) {

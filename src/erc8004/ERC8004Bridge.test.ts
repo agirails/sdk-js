@@ -15,7 +15,7 @@ import {
   ERC8004Bridge,
   IERC8004IdentityRegistry,
 } from './ERC8004Bridge';
-import { ERC8004Error, ERC8004ErrorCode } from '../types/erc8004';
+import { ERC8004ErrorCode } from '../types/erc8004';
 
 // ============================================================================
 // Mock Setup
@@ -28,6 +28,7 @@ function createMockRegistry(): jest.Mocked<IERC8004IdentityRegistry> {
   return {
     ownerOf: jest.fn(),
     getAgentURI: jest.fn(),
+    getAgentWallet: jest.fn(),
     balanceOf: jest.fn(),
     tokenOfOwnerByIndex: jest.fn(),
   };
@@ -104,68 +105,99 @@ describe('ERC8004Bridge', () => {
   });
 
   describe('getAgentWallet()', () => {
-    it('returns metadata.paymentAddress if present', async () => {
-      const paymentAddress = '0x2222222222222222222222222222222222222222';
+    const verifiedWallet = '0x2222222222222222222222222222222222222222';
 
+    it('returns only the verified on-chain agent wallet', async () => {
+      mockRegistry.getAgentWallet.mockResolvedValue(verifiedWallet);
       mockRegistry.ownerOf.mockResolvedValue(validOwner);
       mockRegistry.getAgentURI.mockResolvedValue(validAgentURI);
-
       mockFetch.mockResolvedValue({
         ok: true,
         json: async () => ({
-          name: 'Test Agent',
-          paymentAddress,
+          paymentAddress: '0x3333333333333333333333333333333333333333',
+          wallet: '0x4444444444444444444444444444444444444444',
         }),
       });
 
       const wallet = await bridge.getAgentWallet(validAgentId);
 
-      expect(wallet).toBe(paymentAddress);
+      expect(wallet).toBe(verifiedWallet);
+      expect(mockRegistry.getAgentWallet).toHaveBeenCalledWith(validAgentId);
+      expect(mockRegistry.ownerOf).not.toHaveBeenCalled();
+      expect(mockRegistry.getAgentURI).not.toHaveBeenCalled();
+      expect(mockFetch).not.toHaveBeenCalled();
     });
 
-    it('returns metadata.wallet as fallback', async () => {
-      const walletAddress = '0x3333333333333333333333333333333333333333';
+    it.each([
+      ['HTTP 404', () => Promise.resolve({ ok: false, status: 404 })],
+      ['timeout', () => Promise.reject(new Error('request timed out'))],
+      [
+        'invalid JSON',
+        () =>
+          Promise.resolve({
+            ok: true,
+            json: async () => Promise.reject(new SyntaxError('invalid JSON')),
+          }),
+      ],
+      [
+        'missing wallet fields',
+        () =>
+          Promise.resolve({ ok: true, json: async () => ({ name: 'Agent' }) }),
+      ],
+      [
+        'invalid metadata address',
+        () =>
+          Promise.resolve({
+            ok: true,
+            json: async () => ({ paymentAddress: 'not-an-address' }),
+          }),
+      ],
+      ['unavailable IPFS', () => Promise.reject(new Error('IPFS unavailable'))],
+    ])(
+      'returns no address when the verified wallet is absent despite %s metadata',
+      async (_label, fetchResult) => {
+        mockRegistry.getAgentWallet.mockResolvedValue(
+          '0x0000000000000000000000000000000000000000'
+        );
+        mockRegistry.ownerOf.mockResolvedValue(validOwner);
+        mockRegistry.getAgentURI.mockResolvedValue('ipfs://QmUnavailable');
+        mockFetch.mockImplementation(fetchResult as jest.Mock);
 
-      mockRegistry.ownerOf.mockResolvedValue(validOwner);
-      mockRegistry.getAgentURI.mockResolvedValue(validAgentURI);
+        await expect(bridge.getAgentWallet(validAgentId)).rejects.toMatchObject(
+          {
+            code: ERC8004ErrorCode.WALLET_NOT_FOUND,
+          }
+        );
 
-      mockFetch.mockResolvedValue({
-        ok: true,
-        json: async () => ({
-          name: 'Test Agent',
-          wallet: walletAddress, // No paymentAddress, but has wallet
-        }),
+        expect(mockRegistry.ownerOf).not.toHaveBeenCalled();
+        expect(mockRegistry.getAgentURI).not.toHaveBeenCalled();
+        expect(mockFetch).not.toHaveBeenCalled();
+      }
+    );
+
+    it('rejects an invalid address returned by the registry', async () => {
+      mockRegistry.getAgentWallet.mockResolvedValue('not-an-address');
+
+      await expect(bridge.getAgentWallet(validAgentId)).rejects.toMatchObject({
+        code: ERC8004ErrorCode.WALLET_NOT_FOUND,
       });
-
-      const wallet = await bridge.getAgentWallet(validAgentId);
-
-      expect(wallet).toBe(walletAddress);
     });
 
-    it('returns owner address as final fallback', async () => {
-      mockRegistry.ownerOf.mockResolvedValue(validOwner);
-      mockRegistry.getAgentURI.mockResolvedValue(validAgentURI);
+    it('fails closed when the registry read fails', async () => {
+      mockRegistry.getAgentWallet.mockRejectedValue(new Error('RPC timeout'));
 
-      mockFetch.mockResolvedValue({
-        ok: true,
-        json: async () => ({
-          name: 'Test Agent',
-          // No paymentAddress or wallet
-        }),
+      await expect(bridge.getAgentWallet(validAgentId)).rejects.toMatchObject({
+        code: ERC8004ErrorCode.NETWORK_ERROR,
       });
-
-      const wallet = await bridge.getAgentWallet(validAgentId);
-
-      expect(wallet).toBe(validOwner);
     });
 
-    it('throws for non-existent agent', async () => {
-      mockRegistry.ownerOf.mockRejectedValue(new Error('ERC721: nonexistent token'));
-
-      await expect(bridge.getAgentWallet('99999')).rejects.toThrow(ERC8004Error);
-      await expect(bridge.getAgentWallet('99999')).rejects.toMatchObject({
-        code: ERC8004ErrorCode.AGENT_NOT_FOUND,
-      });
+    it('rejects an invalid agent ID without reading the registry', async () => {
+      await expect(bridge.getAgentWallet('not-a-number')).rejects.toMatchObject(
+        {
+          code: ERC8004ErrorCode.INVALID_AGENT_ID,
+        }
+      );
+      expect(mockRegistry.getAgentWallet).not.toHaveBeenCalled();
     });
   });
 
