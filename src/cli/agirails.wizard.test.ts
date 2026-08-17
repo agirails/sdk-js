@@ -31,6 +31,7 @@ import {
   WizardDeps,
   WizardAnswers,
 } from './agirails';
+import { parseAgirailsMdV4 } from '../config/agirailsmdV4';
 import { saveConfig, CONFIG_DEFAULTS, loadConfig, isInitialized } from './utils/config';
 
 // ============================================================================
@@ -439,7 +440,8 @@ describe('buildIdentityFile', () => {
     expect(result.filename).toBe('my-agent.md');
     expect(result.content).toContain('name: My Agent');
     expect(result.content).toContain('slug: my-agent');
-    expect(result.content).toContain('network: base-sepolia'); // testnet default
+    expect(result.content).toContain('network: testnet');
+    expect(parseAgirailsMdV4(result.content).network).toBe('testnet');
     expect(result.content).toContain('type: code-review');
     expect(result.content).toContain('min_price');
     expect(result.content).toContain('max_price');

@@ -290,8 +290,8 @@ describe('CATEGORY A — fresh user paths', () => {
     expect(result.filename).toMatch(/\.md$/i);
     expect(result.content).toContain('translation');
     expect(result.content).toContain('My Agent');
-    // Frontmatter has the testnet network — wizard's whole point is Base Sepolia.
-    expect(result.content).toContain('base-sepolia');
+    // Frontmatter uses the canonical mode; runtime maps testnet to Base Sepolia.
+    expect(result.content).toContain('network: testnet');
   });
 
   // A7 — non-ASCII agent names are slugified safely.
