@@ -1,5 +1,22 @@
 # Changelog
 
+## [Unreleased]
+
+### Security
+
+- **ERC-8004 payment resolution now fails closed.**
+  `ERC8004Bridge.getAgentWallet()` reads only the Identity Registry's verified
+  on-chain `agentWallet`. Missing, malformed, or unreadable registry values
+  return typed errors instead of falling back to the ERC-721 owner or
+  unverified `agentURI` metadata.
+
+### Changed
+
+- `IERC8004IdentityRegistry` now requires `getAgentWallet(agentId)`. Consumers
+  that implement this testing/injection interface directly must add the new
+  read method. `resolveAgent().wallet` remains available for compatibility but
+  is explicitly documented as unverified and unsuitable for payment routing.
+
 ## [4.9.0] — 2026-06-21
 
 ### Fixed

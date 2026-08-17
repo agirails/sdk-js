@@ -9,6 +9,9 @@
  * - Safe to call without signer
  * - Caches results to minimize RPC calls
  * - Handles network errors gracefully
+ * - Only getAgentWallet() returns a verified payment destination
+ * - resolveAgent().wallet is a legacy, unverified profile field and MUST NOT
+ *   be used to route payments
  *
  * @example
  * ```typescript
@@ -103,8 +106,9 @@ interface CachedAgent {
  *
  * Provides methods to:
  * - Verify agent existence
- * - Get agent wallet address for payments
- * - Resolve full agent info including metadata
+ * - Get the verified on-chain agent wallet address for payments
+ * - Resolve full agent info including metadata and a legacy, unverified
+ *   wallet profile field
  * - List agents owned by an address
  */
 export class ERC8004Bridge {
@@ -240,8 +244,13 @@ export class ERC8004Bridge {
    * Fetches on-chain data (owner, agentURI) and off-chain metadata.
    * Results are cached for cacheTimeMs.
    *
+   * SECURITY: The returned `wallet` field is derived from unverified metadata
+   * or the ERC-721 owner and is retained only for backward compatibility. It
+   * MUST NOT be used as a payment destination. Use getAgentWallet() to read
+   * the verified on-chain agentWallet value.
+   *
    * @param agentId - ERC-8004 agent ID
-   * @returns Full agent info including metadata
+   * @returns Full agent profile including metadata and a legacy wallet field
    * @throws ERC8004Error if agent not found or invalid ID
    */
   async resolveAgent(agentId: string): Promise<ERC8004Agent> {
