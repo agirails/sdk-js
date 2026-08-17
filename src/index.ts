@@ -417,6 +417,8 @@ export {
   ERC8004_REGISTRATION_V1_TYPE,
   createERC8004MigrationLedger,
   createERC8004MigrationRecord,
+  collectERC8004MigrationInventory,
+  fetchERC8004Artifact,
 } from './erc8004';
 
 export type {
@@ -441,6 +443,11 @@ export type {
   ERC8004MigrationReview,
   ERC8004MigrationReviewStatus,
   ERC8004MigrationStatus,
+  ERC8004IdentityReader,
+  ERC8004InventoryFailure,
+  ERC8004InventoryFile,
+  ERC8004InventoryNetwork,
+  ERC8004InventoryOptions,
 } from './erc8004';
 
 // =============================================================================
