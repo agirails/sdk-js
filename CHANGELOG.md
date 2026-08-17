@@ -14,6 +14,10 @@
   `mock`. Fresh wizard output uses the canonical `testnet` value; the two
   previously documented chain labels (`base-sepolia`, `base-mainnet`) are
   preserved as explicit compatibility aliases.
+- **ERC-8004 migration inventory is read-only and fail-visible.** The new
+  inventory command reads explicit token IDs without a signer, retains
+  per-agent RPC/content failures, blocks local/private URI targets and unsafe
+  redirects, caps artifact size, and never persists complete RPC URLs.
 
 ### Changed
 
@@ -21,6 +25,20 @@
   that implement this testing/injection interface directly must add the new
   read method. `resolveAgent().wallet` remains available for compatibility but
   is explicitly documented as unverified and unsuitable for payment routing.
+- `actp publish` now uploads a distinct, deterministic `registration-v1` JSON
+  artifact for ERC-8004 `agentURI`; AGIRAILS Markdown remains the AGIRAILS
+  service artifact. Version-1 pending-publish files no longer mint ERC-8004
+  identities with the legacy Markdown URI.
+
+### Added
+
+- `actp erc8004 inventory` collects a read-only evidence inventory for
+  explicit identities, and `actp erc8004 migration-plan` turns it into a
+  resumable per-agent before/after ledger. Neither command uploads, signs, nor
+  creates transactions.
+- Conservative `registration-v1` builders and validators that publish only
+  evidenced AGIRAILS service metadata and suppress inferred A2A, MCP, x402,
+  and trust claims.
 
 ## [4.9.0] — 2026-06-21
 

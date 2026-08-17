@@ -59,3 +59,44 @@ export {
   ERC8004_DEFAULT_RPC,
   ACTP_FEEDBACK_TAGS,
 } from '../types/erc8004';
+
+// Registration-v1 projection (off-chain, no transaction side effects)
+export {
+  buildERC8004RegistrationV1,
+  serializeERC8004RegistrationV1,
+  validateERC8004RegistrationV1,
+  ERC8004_REGISTRATION_V1_TYPE,
+} from './registration';
+export type {
+  BuildERC8004RegistrationOptions,
+  ERC8004RegistrationReference,
+  ERC8004RegistrationService,
+  ERC8004RegistrationV1,
+} from './registration';
+
+// Migration planning (read-only; never uploads, signs, or submits)
+export {
+  createERC8004MigrationLedger,
+  createERC8004MigrationRecord,
+} from './migration';
+
+// Explicit read-only inventory collection for migration evidence
+export {
+  collectERC8004MigrationInventory,
+  fetchERC8004Artifact,
+} from './inventory';
+export type {
+  ERC8004IdentityReader,
+  ERC8004InventoryFailure,
+  ERC8004InventoryFile,
+  ERC8004InventoryNetwork,
+  ERC8004InventoryOptions,
+} from './inventory';
+export type {
+  ERC8004MigrationInput,
+  ERC8004MigrationLedger,
+  ERC8004MigrationRecord,
+  ERC8004MigrationReview,
+  ERC8004MigrationReviewStatus,
+  ERC8004MigrationStatus,
+} from './migration';

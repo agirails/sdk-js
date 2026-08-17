@@ -9,7 +9,12 @@
  */
 
 import { keccak256, toUtf8Bytes } from 'ethers';
-import { publishAgirailsMd, PENDING_ENDPOINT, extractRegistrationParams } from './publishPipeline';
+import {
+  publishAgirailsMd,
+  preparePublish,
+  PENDING_ENDPOINT,
+  extractRegistrationParams,
+} from './publishPipeline';
 import * as fs from 'fs';
 
 // ============================================================================
@@ -25,9 +30,20 @@ const mockReadFileSync = fs.readFileSync as jest.MockedFunction<typeof fs.readFi
 const mockWriteFileSync = fs.writeFileSync as jest.MockedFunction<typeof fs.writeFileSync>;
 
 // Mock FilebaseClient
-function createMockFilebaseClient(cid = 'bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi') {
+function createMockFilebaseClient(
+  cid = 'bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi',
+  registrationCid = 'bafybeihkoviema7g3gxyt6la7v4zh2lbq4sy7sp5q3qg6d5o7jgrm4hmry'
+) {
   return {
-    uploadBinary: jest.fn().mockResolvedValue({ cid }),
+    uploadBinary: jest.fn(
+      async (
+        _content: Buffer,
+        contentType: string,
+        _options?: { metadata?: Record<string, string> }
+      ) => ({
+        cid: contentType === 'application/json' ? registrationCid : cid,
+      })
+    ),
     uploadJSON: jest.fn().mockResolvedValue({ cid }),
   };
 }
@@ -273,6 +289,61 @@ describe('publishAgirailsMd', () => {
 
     expect(result.registered).toBe(false);
     expect(mockRegisterAgent).not.toHaveBeenCalled();
+  });
+});
+
+describe('preparePublish registration-v1 artifacts', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockReadFileSync.mockReturnValue(SAMPLE_MD);
+  });
+
+  test('uploads separate Markdown and deterministic registration-v1 JSON artifacts', async () => {
+    const mockFilebase = createMockFilebaseClient();
+    const result = await preparePublish({
+      path: '/test/AGIRAILS.md',
+      filebaseClient: mockFilebase as any,
+      skipArweave: true,
+    });
+
+    expect(result.cid).toBe('bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi');
+    expect(result.erc8004RegistrationCid).toBe(
+      'bafybeihkoviema7g3gxyt6la7v4zh2lbq4sy7sp5q3qg6d5o7jgrm4hmry'
+    );
+    expect(result.erc8004Registration.services).toEqual([
+      {
+        name: 'AGIRAILS',
+        endpoint: `ipfs://${result.cid}`,
+        version: '1.0.0',
+      },
+    ]);
+    expect(result.erc8004Registration.x402Support).toBe(false);
+    expect(result.erc8004Registration).not.toHaveProperty('supportedTrust');
+
+    const registrationCall = mockFilebase.uploadBinary.mock.calls.find(
+      (call) => call[1] === 'application/json'
+    );
+    expect(registrationCall).toBeDefined();
+    const registrationBytes = registrationCall![0] as Buffer;
+    expect(registrationBytes.toString('utf-8')).toBe(
+      `${JSON.stringify(result.erc8004Registration, null, 2)}\n`
+    );
+    expect(registrationCall![2]).toEqual({
+      metadata: { type: 'erc8004-registration', version: '1' },
+    });
+  });
+
+  test('dry run projects registration-v1 without storage side effects', async () => {
+    const mockFilebase = createMockFilebaseClient();
+    const result = await preparePublish({
+      path: '/test/AGIRAILS.md',
+      filebaseClient: mockFilebase as any,
+      dryRun: true,
+    });
+
+    expect(result.erc8004RegistrationCid).toBe('(dry-run)');
+    expect(result.erc8004Registration.services[0].endpoint).toBe('ipfs://dry-run-config-cid');
+    expect(mockFilebase.uploadBinary).not.toHaveBeenCalled();
   });
 });
 

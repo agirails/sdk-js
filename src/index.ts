@@ -411,6 +411,12 @@ export {
   ERC8004_REPUTATION_REGISTRY,
   ERC8004_DEFAULT_RPC,
   ACTP_FEEDBACK_TAGS,
+  buildERC8004RegistrationV1,
+  serializeERC8004RegistrationV1,
+  validateERC8004RegistrationV1,
+  ERC8004_REGISTRATION_V1_TYPE,
+  createERC8004MigrationLedger,
+  createERC8004MigrationRecord,
 } from './erc8004';
 
 export type {
@@ -425,6 +431,16 @@ export type {
   ReputationFeedback,
   ReputationSummary,
   ACTPFeedbackTag,
+  BuildERC8004RegistrationOptions,
+  ERC8004RegistrationReference,
+  ERC8004RegistrationService,
+  ERC8004RegistrationV1,
+  ERC8004MigrationInput,
+  ERC8004MigrationLedger,
+  ERC8004MigrationRecord,
+  ERC8004MigrationReview,
+  ERC8004MigrationReviewStatus,
+  ERC8004MigrationStatus,
 } from './erc8004';
 
 // =============================================================================
