@@ -96,6 +96,21 @@ describe('ERC-8004 migration planning', () => {
     expect(record.after).toBeUndefined();
   });
 
+  test('matches an existing registry reference independent of address casing', () => {
+    const draft = createERC8004MigrationRecord(input());
+    const registration = JSON.parse(draft.after!.serializedRegistration);
+    registration.registrations[0].agentRegistry =
+      registration.registrations[0].agentRegistry.toLowerCase();
+
+    const record = createERC8004MigrationRecord(input({
+      currentContent: JSON.stringify(registration),
+      currentAgentURI: 'ipfs://bafy-existing-registration',
+    }));
+
+    expect(record.status).toBe('already-registration-v1');
+    expect(record.after).toBeUndefined();
+  });
+
   test('blocks registration-v1-shaped JSON that does not validate', () => {
     const record = createERC8004MigrationRecord(input({
       currentContent: JSON.stringify({

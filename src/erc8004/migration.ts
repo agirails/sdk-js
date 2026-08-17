@@ -130,7 +130,9 @@ function hasIdentityReference(
   agentRegistry: string
 ): boolean {
   return registration.registrations.some(
-    (entry) => String(entry.agentId) === agentId && entry.agentRegistry === agentRegistry
+    (entry) =>
+      String(entry.agentId) === agentId &&
+      entry.agentRegistry.toLowerCase() === agentRegistry.toLowerCase()
   );
 }
 

@@ -27,8 +27,11 @@
   is explicitly documented as unverified and unsuitable for payment routing.
 - `actp publish` now uploads a distinct, deterministic `registration-v1` JSON
   artifact for ERC-8004 `agentURI`; AGIRAILS Markdown remains the AGIRAILS
-  service artifact. Version-1 pending-publish files no longer mint ERC-8004
-  identities with the legacy Markdown URI.
+  service artifact. Mandatory core registration fields remain present; legacy
+  cards without an authored image receive the stable AGIRAILS favicon URL and
+  fallback descriptions exclude later operational sections. Version-1
+  pending-publish files no longer mint ERC-8004 identities with the legacy
+  Markdown URI.
 
 ### Added
 

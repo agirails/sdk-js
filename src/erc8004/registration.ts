@@ -11,6 +11,9 @@
 export const ERC8004_REGISTRATION_V1_TYPE =
   'https://eips.ethereum.org/EIPS/eip-8004#registration-v1' as const;
 
+/** Stable fallback for older AGIRAILS cards that predate an authored image. */
+export const DEFAULT_ERC8004_IMAGE_URI = 'https://agirails.app/favicon.ico';
+
 /** Operational limit shared with the public publish proxy. */
 export const ERC8004_REGISTRATION_V1_MAX_BYTES = 10 * 1024;
 
@@ -29,7 +32,7 @@ export interface ERC8004RegistrationV1 {
   type: typeof ERC8004_REGISTRATION_V1_TYPE;
   name: string;
   description: string;
-  image?: string;
+  image: string;
   services: ERC8004RegistrationService[];
   x402Support: false;
   active: true;
@@ -53,7 +56,11 @@ function nonEmptyString(value: unknown): string | undefined {
 
 function descriptionFromBody(body: string, fallback: string): string {
   const withoutHeading = body.replace(/^\s*#\s+[^\n]+\n?/, '').trim();
-  return withoutHeading || fallback;
+  const nextSection = withoutHeading.search(/^##\s+/m);
+  const description = (
+    nextSection === -1 ? withoutHeading : withoutHeading.slice(0, nextSection)
+  ).trim();
+  return description || fallback;
 }
 
 function isArtifactURI(value: string): boolean {
@@ -138,16 +145,20 @@ export function buildERC8004RegistrationV1(
   if (options.frontmatter.version !== undefined && !version) {
     throw new Error('ERC-8004 registration version must be a non-empty string when present');
   }
-  const image = nonEmptyString(options.frontmatter.image);
-  if (options.frontmatter.image !== undefined && (!image || !isArtifactURI(image))) {
+  const authoredImage = nonEmptyString(options.frontmatter.image);
+  if (
+    options.frontmatter.image !== undefined &&
+    (!authoredImage || !isArtifactURI(authoredImage))
+  ) {
     throw new Error('ERC-8004 registration image must be an https, ipfs, or data image URI');
   }
+  const image = authoredImage ?? DEFAULT_ERC8004_IMAGE_URI;
 
   const registration: ERC8004RegistrationV1 = {
     type: ERC8004_REGISTRATION_V1_TYPE,
     name,
     description,
-    ...(image ? { image } : {}),
+    image,
     services: [
       {
         name: 'AGIRAILS',
@@ -185,11 +196,9 @@ export function validateERC8004RegistrationV1(
   if (!nonEmptyString(record.name) || !nonEmptyString(record.description)) {
     throw new Error('ERC-8004 registration name and description must be non-empty strings');
   }
-  if (record.image !== undefined) {
-    const image = nonEmptyString(record.image);
-    if (!image || !isArtifactURI(image)) {
-      throw new Error('ERC-8004 registration image must be an https, ipfs, or data image URI');
-    }
+  const image = nonEmptyString(record.image);
+  if (!image || !isArtifactURI(image)) {
+    throw new Error('ERC-8004 registration image must be an https, ipfs, or data image URI');
   }
   if (record.x402Support !== false) {
     throw new Error('Unverified x402Support claims are not accepted by this publisher');

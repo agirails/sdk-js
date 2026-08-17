@@ -1,5 +1,6 @@
 import {
   buildERC8004RegistrationV1,
+  DEFAULT_ERC8004_IMAGE_URI,
   ERC8004_REGISTRATION_V1_TYPE,
   serializeERC8004RegistrationV1,
   validateERC8004RegistrationV1,
@@ -43,8 +44,22 @@ describe('ERC-8004 registration-v1 projection', () => {
     });
 
     expect(result.services.map((service) => service.name)).toEqual(['AGIRAILS']);
+    expect(result.image).toBe('https://agirails.app/a/reviewer/avatar.png');
     expect(result.x402Support).toBe(false);
     expect(result).not.toHaveProperty('supportedTrust');
+  });
+
+  test('keeps mandatory image and description fields valid for legacy cards', () => {
+    const result = buildERC8004RegistrationV1({
+      frontmatter: { name: 'Legacy Agent' },
+      body:
+        '# Legacy Agent\n\nConcise public description.\n\n' +
+        '## How to Request This Service\n\nOperational instructions that are not identity metadata.',
+      agirailsConfigURI: 'ipfs://bafy-config',
+    });
+
+    expect(result.image).toBe(DEFAULT_ERC8004_IMAGE_URI);
+    expect(result.description).toBe('Concise public description.');
   });
 
   test('can bind an existing identity without predicting a new token ID', () => {
@@ -120,6 +135,9 @@ describe('ERC-8004 registration-v1 projection', () => {
     });
     expect(() => validateERC8004RegistrationV1({ ...valid, x402Support: true })).toThrow(
       'Unverified x402Support'
+    );
+    expect(() => validateERC8004RegistrationV1({ ...valid, image: undefined })).toThrow(
+      'image must be'
     );
     expect(() =>
       validateERC8004RegistrationV1({ ...valid, supportedTrust: ['reputation'] })

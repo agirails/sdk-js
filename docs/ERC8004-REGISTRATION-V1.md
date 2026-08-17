@@ -13,6 +13,13 @@ use an empty `registrations` array because the token ID does not exist until
 `register(agentURI)` completes. Binding that identity, and updating existing
 identities, require a later evidence-reviewed `setAgentURI` operation.
 
+ERC-8004 requires the core registration fields to remain present. Older cards
+without an authored image use `https://agirails.app/favicon.ico`; an explicit
+valid HTTPS, IPFS, or supported data-image URI still takes precedence. The
+fallback description contains only the introductory section before the first
+level-two heading, so operational instructions are not copied into identity
+metadata.
+
 ## Compatibility boundaries
 
 - Version-2 pending-publish state contains both the Markdown CID and the
