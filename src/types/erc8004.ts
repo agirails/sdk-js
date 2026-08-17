@@ -36,7 +36,11 @@ export interface ERC8004Agent {
   /** Owner address (EOA that controls the NFT) */
   owner: string;
 
-  /** Payment wallet address (checksummed) */
+  /**
+   * Legacy metadata/owner-derived address (checksummed).
+   * @deprecated This field is not on-chain wallet proof. For payments, use
+   * ERC8004Bridge.getAgentWallet(), which reads the verified registry value.
+   */
   wallet: string;
 
   /** Agent URI (IPFS or HTTPS, points to metadata JSON) */
@@ -64,10 +68,10 @@ export interface ERC8004AgentMetadata {
   /** Agent avatar/logo URL */
   image?: string;
 
-  /** Wallet address for receiving payments (overrides owner) */
+  /** Unverified off-chain payment-address claim */
   paymentAddress?: string;
 
-  /** Alternative field name for payment address */
+  /** Unverified off-chain wallet-address claim */
   wallet?: string;
 
   /** List of agent capabilities */
@@ -239,6 +243,7 @@ export const ERC8004_IDENTITY_ABI = [
   // Read (ERC-721 + ERC-8004)
   'function ownerOf(uint256 agentId) view returns (address)',
   'function getAgentURI(uint256 agentId) view returns (string)',
+  'function getAgentWallet(uint256 agentId) view returns (address)',
   'function balanceOf(address owner) view returns (uint256)',
   'function tokenOfOwnerByIndex(address owner, uint256 index) view returns (uint256)',
   // Write (ERC-8004 registration)
