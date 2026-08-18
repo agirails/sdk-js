@@ -41,7 +41,7 @@ jobs:
           # Build the canary at runtime so it is never committed as one token.
           canary_dir="$RUNNER_TEMP/gitleaks-canary"
           mkdir -p "$canary_dir"
-          printf '%s%s\n' 'token = "ghp_' 'aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789"' \
+          printf '%s%s\n' 'api_token = "Zf3D0LXCM3EIM' 'bgJpUNnkRtOfOueHznB"' \
             > "$canary_dir/secret.txt"
 
           set +e
