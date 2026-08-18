@@ -83,7 +83,7 @@ jobs:
             --no-color \
             --redact \
             --verbose \
-            --log-opts="--all $BASE_SHA..$HEAD_SHA" \
+            --log-opts="$BASE_SHA..$HEAD_SHA" \
             /repo
 
   lint-build-test:
