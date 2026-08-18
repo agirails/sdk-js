@@ -166,6 +166,21 @@ describe('ERC-8004 read-only inventory', () => {
     ).resolves.toBe('{"type":"x"}');
   });
 
+  test('normalizes arbitrarily long gateway slash suffixes without a regular expression', async () => {
+    const fetchFn = jest.fn().mockResolvedValue(response(MARKDOWN));
+    await expect(
+      fetchERC8004Artifact('ipfs://bafyobserved', {
+        fetchFn,
+        resolveHost: async () => ['93.184.216.34'],
+        ipfsGateway: `https://ipfs.example/ipfs/${'/'.repeat(10_000)}`,
+      })
+    ).resolves.toBe(MARKDOWN);
+
+    expect(String(fetchFn.mock.calls[0][0])).toBe(
+      'https://ipfs.example/ipfs/bafyobserved'
+    );
+  });
+
   test('requires explicit approval for non-IPFS HTTPS artifact hosts', async () => {
     const fetchFn = jest.fn();
     await expect(

@@ -153,7 +153,11 @@ function normalizeAgentUri(uri: string, ipfsGateway: string): string {
   if (!/^[a-zA-Z0-9]+(?:\/[a-zA-Z0-9._~-]+)*$/.test(path) || path.includes('..')) {
     throw new Error('Invalid IPFS agentURI');
   }
-  return `${ipfsGateway.replace(/\/+$/, '')}/${path}`;
+  let gatewayEnd = ipfsGateway.length;
+  while (gatewayEnd > 0 && ipfsGateway.charCodeAt(gatewayEnd - 1) === 0x2f) {
+    gatewayEnd -= 1;
+  }
+  return `${ipfsGateway.slice(0, gatewayEnd)}/${path}`;
 }
 
 async function readResponseBodyCapped(response: Response, maxBytes: number): Promise<string> {
