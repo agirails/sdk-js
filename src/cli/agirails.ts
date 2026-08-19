@@ -244,9 +244,9 @@ export function buildIdentityFile(answers: WizardAnswers): { filename: string; c
     name: answers.name,
     slug,
     version: '1.0.0',
-    // Default to testnet — the wizard's whole point is to put the user on
-    // Base Sepolia with a real keystore and a real Sentinel transaction.
-    network: 'base-sepolia',
+    // Manifest values use the canonical mode vocabulary. Runtime code maps
+    // testnet to Base Sepolia when it needs a concrete chain identifier.
+    network: 'testnet',
     services: [
       {
         type: answers.service,

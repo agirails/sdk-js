@@ -9,6 +9,11 @@
   on-chain `agentWallet`. Missing, malformed, or unreadable registry values
   return typed errors instead of falling back to the ERC-721 owner or
   unverified `agentURI` metadata.
+- **Agent manifest network parsing now fails closed.** Unknown authored
+  `network` values are rejected instead of being silently replaced with
+  `mock`. Fresh wizard output uses the canonical `testnet` value; the two
+  previously documented chain labels (`base-sepolia`, `base-mainnet`) are
+  preserved as explicit compatibility aliases.
 
 ### Changed
 
