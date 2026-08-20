@@ -53,7 +53,7 @@ import { sdkLogger } from '../utils/Logger';
  */
 export interface IERC8004IdentityRegistry {
   ownerOf(agentId: string): Promise<string>;
-  getAgentURI(agentId: string): Promise<string>;
+  tokenURI(agentId: string): Promise<string>;
   getAgentWallet(agentId: string): Promise<string>;
   balanceOf(owner: string): Promise<bigint>;
   tokenOfOwnerByIndex(owner: string, index: number): Promise<bigint>;
@@ -276,7 +276,7 @@ export class ERC8004Bridge {
     try {
       [owner, agentURI] = await Promise.all([
         this.registry.ownerOf(agentId),
-        this.registry.getAgentURI(agentId),
+        this.registry.tokenURI(agentId),
       ]);
     } catch (error) {
       // Check if it's a "nonexistent token" error

@@ -9,7 +9,7 @@ const MARKDOWN = `---\nname: observed-agent\nversion: "4.9.0"\n---\n# Observed A
 function reader(overrides: Partial<ERC8004IdentityReader> = {}): ERC8004IdentityReader {
   return {
     ownerOf: jest.fn().mockResolvedValue('0x1111111111111111111111111111111111111111'),
-    getAgentURI: jest.fn().mockResolvedValue('ipfs://bafyobserved'),
+    tokenURI: jest.fn().mockResolvedValue('ipfs://bafyobserved'),
     getAgentWallet: jest.fn().mockResolvedValue('0x2222222222222222222222222222222222222222'),
     ...overrides,
   };
@@ -47,6 +47,44 @@ describe('ERC-8004 read-only inventory', () => {
       readOnly: true,
       signaturesRequested: 0,
       transactionsGenerated: 0,
+    });
+  });
+
+  test('reads the deployed registry shape: tokenURI served, getAgentURI absent', async () => {
+    // Mirrors the deployed canonical registry (ERC-8004 agent URI is ERC-721
+    // tokenURI; the contract has no getAgentURI). Any read through getAgentURI
+    // must fail this test loudly instead of being masked by a fallback.
+    const deployedShapeReader = new Proxy(
+      {
+        ownerOf: jest.fn().mockResolvedValue('0x1111111111111111111111111111111111111111'),
+        tokenURI: jest.fn().mockResolvedValue('ipfs://bafyobserved'),
+        getAgentWallet: jest.fn().mockResolvedValue('0x2222222222222222222222222222222222222222'),
+      },
+      {
+        get(target, property, receiver) {
+          if (property === 'getAgentURI') {
+            throw new Error('deployed registry does not serve getAgentURI');
+          }
+          return Reflect.get(target, property, receiver);
+        },
+      }
+    ) as unknown as ERC8004IdentityReader;
+
+    const result = await collectERC8004MigrationInventory({
+      network: 'base-sepolia',
+      agentIds: ['6732'],
+      reader: deployedShapeReader,
+      fetchFn: jest.fn().mockResolvedValue(response(MARKDOWN)),
+      resolveHost: async () => ['93.184.216.34'],
+      generatedAt: '2026-08-20T00:00:00.000Z',
+    });
+
+    expect(result.failures).toEqual([]);
+    expect(result.agents).toHaveLength(1);
+    expect(result.agents[0]).toMatchObject({
+      agentId: '6732',
+      currentAgentURI: 'ipfs://bafyobserved',
+      currentContent: MARKDOWN,
     });
   });
 
