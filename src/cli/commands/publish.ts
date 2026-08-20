@@ -32,6 +32,12 @@ import { ArweaveClient } from '../../storage/ArweaveClient';
 import { generateWallet } from '../utils/wallet';
 import { parseAgirailsMdV4 } from '../../config/agirailsmdV4';
 import { checkSlug, upsertAgent } from '../../api/agirailsApp';
+import { validateCID } from '../../utils/validation';
+import {
+  buildERC8004RegistrationV1,
+  ERC8004RegistrationV1,
+  serializeERC8004RegistrationV1,
+} from '../../erc8004/registration';
 
 // ============================================================================
 // Publish Proxy (fallback when no Filebase credentials)
@@ -72,7 +78,7 @@ async function publishViaProxy(content: string, localConfigHash: string): Promis
       'Content-Type': 'application/json',
       'X-API-Key': PUBLISH_CLIENT_KEY,
     },
-    body: JSON.stringify({ content }),
+    body: JSON.stringify({ content, artifactType: 'agirails-config' }),
   });
 
   if (!response.ok) {
@@ -84,6 +90,7 @@ async function publishViaProxy(content: string, localConfigHash: string): Promis
   if (!result.cid || !result.configHash) {
     throw new Error('Publish proxy returned invalid response (missing cid or configHash)');
   }
+  validateCID(result.cid, 'agirailsConfigCid');
 
   // Validate: proxy's configHash must match locally computed hash
   // (guards against hash-drift between SDK and API canonicalization logic)
@@ -96,6 +103,39 @@ async function publishViaProxy(content: string, localConfigHash: string): Promis
   }
 
   return result;
+}
+
+async function publishERC8004RegistrationViaProxy(
+  registration: ERC8004RegistrationV1
+): Promise<string> {
+  const response = await fetch(PUBLISH_PROXY_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-API-Key': PUBLISH_CLIENT_KEY,
+    },
+    body: JSON.stringify({
+      content: serializeERC8004RegistrationV1(registration),
+      artifactType: 'erc8004-registration-v1',
+    }),
+  });
+
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({ error: response.statusText })) as {
+      error?: string;
+    };
+    throw new Error(
+      `ERC-8004 registration publish proxy error (${response.status}): ` +
+        `${body.error || response.statusText}`
+    );
+  }
+
+  const result = await response.json() as { cid?: string; artifactType?: string };
+  if (!result.cid || result.artifactType !== 'erc8004-registration-v1') {
+    throw new Error('Publish proxy returned an invalid ERC-8004 registration response');
+  }
+  validateCID(result.cid, 'erc8004RegistrationCid');
+  return result.cid;
 }
 
 // ============================================================================
@@ -468,6 +508,7 @@ export async function runPublish(
     const isPayOnly = v4Config?.intent === 'pay';
 
     let cid: string | undefined;
+    let erc8004RegistrationCid: string | undefined;
     let arweaveTxId: string | undefined;
 
     if (isPayOnly) {
@@ -490,9 +531,24 @@ export async function runPublish(
       const publishSpinner = output.spinner('Publishing to IPFS...');
 
       if (useProxy) {
+        // Preflight before either proxy upload. The actual registration is
+        // rebuilt with the returned Markdown CID below.
+        const parsed = parseAgirailsMd(content);
+        const preflightRegistration = buildERC8004RegistrationV1({
+          frontmatter: parsed.frontmatter as Record<string, unknown>,
+          body: parsed.body,
+          agirailsConfigURI: 'ipfs://preflight-config-cid',
+        });
+        serializeERC8004RegistrationV1(preflightRegistration);
         // Fallback: upload via AGIRAILS publish proxy API
         const proxyResult = await publishViaProxy(content, configHash);
         cid = proxyResult.cid;
+        const registration = buildERC8004RegistrationV1({
+          frontmatter: parsed.frontmatter as Record<string, unknown>,
+          body: parsed.body,
+          agirailsConfigURI: `ipfs://${cid}`,
+        });
+        erc8004RegistrationCid = await publishERC8004RegistrationViaProxy(registration);
         // Proxy doesn't do Arweave — skip
       } else {
         // Direct upload via Filebase S3 + optional Arweave
@@ -520,10 +576,17 @@ export async function runPublish(
         });
 
         cid = prepResult.cid;
+        erc8004RegistrationCid = prepResult.erc8004RegistrationCid;
         arweaveTxId = prepResult.arweaveTxId;
       }
 
       publishSpinner.stop(true);
+    }
+
+    if (!isPayOnly && (!cid || !erc8004RegistrationCid)) {
+      throw new Error(
+        'Publish did not produce both the AGIRAILS config CID and ERC-8004 registration CID'
+      );
     }
 
     // Parse frontmatter for registration params
@@ -533,9 +596,10 @@ export async function runPublish(
     // Only consumed in the non-pay activation-failure path (cid is a real
     // string there); the '' fallback for pay-only is never persisted.
     const pendingData = {
-      version: 1 as const,
+      version: 2 as const,
       configHash,
       cid: cid ?? '',
+      erc8004RegistrationCid: erc8004RegistrationCid ?? '',
       endpoint: regParams.endpoint,
       serviceDescriptors: regParams.serviceDescriptors,
       createdAt: new Date().toISOString(),
@@ -636,7 +700,7 @@ export async function runPublish(
       try {
         const activationResult = await activateOnTestnet(
           // Non-pay branch: the upload above always assigns cid.
-          projectRoot, configHash, cid!,
+          projectRoot, configHash, cid!, erc8004RegistrationCid!,
           regParams.endpoint, regParams.serviceDescriptors, output,
         );
         activationSpinner.stop(true);
@@ -998,6 +1062,7 @@ async function activateOnTestnet(
   projectRoot: string,
   configHash: string,
   cid: string,
+  erc8004RegistrationCid: string,
   endpoint: string,
   serviceDescriptors: import('../../types/agent').ServiceDescriptor[],
   output: Output,
@@ -1061,7 +1126,13 @@ async function activateOnTestnet(
     provider, networkConfig.contracts.agentRegistry, smartWalletAddress
   );
   const scenario = detectLazyPublishScenario(onChainState, {
-    version: 1, configHash, cid, endpoint, serviceDescriptors, createdAt: new Date().toISOString(),
+    version: 2,
+    configHash,
+    cid,
+    erc8004RegistrationCid,
+    endpoint,
+    serviceDescriptors,
+    createdAt: new Date().toISOString(),
   });
 
   if (scenario === 'C' || scenario === 'none') {
@@ -1078,6 +1149,7 @@ async function activateOnTestnet(
     listed: true,
     ...(scenario === 'A' ? { endpoint, serviceDescriptors } : {}),
     erc8004IdentityRegistry: networkConfig.contracts.erc8004IdentityRegistry,
+    erc8004AgentURI: `ipfs://${erc8004RegistrationCid}`,
   });
 
   // Mint test USDC on testnet — but only on FIRST activation. Re-activation

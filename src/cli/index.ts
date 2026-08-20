@@ -84,6 +84,7 @@ import { createHealthCommand } from './commands/health';
 import { createRepairCommand } from './commands/repair';
 import { createServeCommand } from './commands/serve';
 import { createAgentCommand } from './commands/agent';
+import { createERC8004Command } from './commands/erc8004';
 
 // ============================================================================
 // Program Setup
@@ -168,6 +169,9 @@ program.addCommand(createRepairCommand());
 
 // AIP-2.1 provider daemon — channel-driven, no HTTP listener (3.5.0)
 program.addCommand(createAgentCommand());
+
+// ERC-8004 maintenance (read-only planning; no transaction executor)
+program.addCommand(createERC8004Command());
 
 // AIP-2.1 quote-channel HTTP daemon. Since 4.0.0, `actp serve` focuses
 // solely on the AIP-2.1 quote channel surface — on-chain INITIATED tx

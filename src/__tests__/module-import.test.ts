@@ -42,6 +42,15 @@ describe('CJS Module Imports', () => {
     expect(sdk.EOAWalletProvider).toBeDefined();
   });
 
+  it('should export ERC-8004 registration and read-only migration APIs', () => {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const sdk = require('../../src/index');
+    expect(typeof sdk.buildERC8004RegistrationV1).toBe('function');
+    expect(typeof sdk.createERC8004MigrationLedger).toBe('function');
+    expect(typeof sdk.collectERC8004MigrationInventory).toBe('function');
+    expect(typeof sdk.fetchERC8004Artifact).toBe('function');
+  });
+
   it('should export getNetwork from config', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { getNetwork } = require('../../src/config/networks');

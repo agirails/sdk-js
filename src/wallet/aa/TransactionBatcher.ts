@@ -315,6 +315,11 @@ export interface ActivationBatchParams {
   listed?: boolean;
   /** ERC-8004 Identity Registry address (for scenario A — first registration) */
   erc8004IdentityRegistry?: string;
+  /**
+   * URI of a separately published ERC-8004 registration-v1 JSON artifact.
+   * Never substitute the AGIRAILS Markdown CID when this is absent.
+   */
+  erc8004AgentURI?: string;
 }
 
 /**
@@ -369,11 +374,13 @@ export function buildActivationBatch(params: ActivationBatchParams): SmartWallet
       }
       const allCalls: SmartWalletCall[] = [];
       // ERC-8004 identity mint (if registry address provided)
-      if (params.erc8004IdentityRegistry) {
-        // Ensure CID is bare (strip gateway prefix if present)
-        const bareCID = cid.replace(/^https?:\/\/.*\/ipfs\//, '').replace(/^ipfs:\/\//, '');
-        const agentURI = `ipfs://${bareCID}`;
-        allCalls.push(...buildERC8004RegisterBatch(params.erc8004IdentityRegistry, agentURI));
+      if (params.erc8004IdentityRegistry && params.erc8004AgentURI) {
+        allCalls.push(
+          ...buildERC8004RegisterBatch(
+            params.erc8004IdentityRegistry,
+            params.erc8004AgentURI
+          )
+        );
       }
       // AgentRegistry registration
       allCalls.push(...buildRegisterAgentBatch(

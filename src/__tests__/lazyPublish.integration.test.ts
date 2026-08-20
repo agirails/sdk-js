@@ -36,6 +36,7 @@ const ZERO_HASH = '0x' + '0'.repeat(64);
 const CONFIG_HASH_A = '0x' + 'aa'.repeat(32);
 const CONFIG_HASH_B = '0x' + 'bb'.repeat(32);
 const REGISTRY_ADDRESS = '0x' + 'ff'.repeat(20);
+const ERC8004_REGISTRY_ADDRESS = '0x8004A818BFB912233c491871b3d84c89A494BD9e';
 const CID = 'bafybeiexamplecid123456789';
 
 const SAMPLE_PENDING: PendingPublish = {
@@ -55,6 +56,12 @@ const SAMPLE_PENDING: PendingPublish = {
     },
   ],
   createdAt: '2026-02-11T12:00:00.000Z',
+};
+
+const SAMPLE_PENDING_V2: PendingPublish = {
+  ...SAMPLE_PENDING,
+  version: 2,
+  erc8004RegistrationCid: 'bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi',
 };
 
 const TEST_DIR = join(__dirname, '__lazy_publish_integration__');
@@ -154,6 +161,34 @@ describe('Lazy Publish Integration', () => {
       // Simulate onSuccess callback
       deletePendingPublish();
       expect(loadPendingPublish()).toBeNull();
+    });
+
+    it('should prepend ERC-8004 registration using only the v2 registration CID', () => {
+      savePendingPublish(SAMPLE_PENDING_V2);
+      const loaded = loadPendingPublish();
+      if (loaded?.version !== 2) {
+        throw new Error('Expected pending publish v2');
+      }
+
+      const calls = buildActivationBatch({
+        scenario: 'A',
+        agentRegistryAddress: REGISTRY_ADDRESS,
+        cid: loaded.cid,
+        configHash: loaded.configHash,
+        listed: true,
+        endpoint: loaded.endpoint,
+        serviceDescriptors: loaded.serviceDescriptors,
+        erc8004IdentityRegistry: ERC8004_REGISTRY_ADDRESS,
+        erc8004AgentURI: `ipfs://${loaded.erc8004RegistrationCid}`,
+      });
+
+      expect(calls).toHaveLength(4);
+      const identity = new ethers.Interface([
+        'function register(string agentURI) external returns (uint256 agentId)',
+      ]);
+      const [agentURI] = identity.decodeFunctionData('register', calls[0].data);
+      expect(agentURI).toBe(`ipfs://${SAMPLE_PENDING_V2.erc8004RegistrationCid}`);
+      expect(agentURI).not.toContain(CID);
     });
   });
 

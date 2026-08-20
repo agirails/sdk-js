@@ -19,6 +19,12 @@ import { AgentRegistry } from '../protocol/AgentRegistry';
 import { FilebaseClient } from '../storage/FilebaseClient';
 import { ArweaveClient } from '../storage/ArweaveClient';
 import { ServiceDescriptor } from '../types';
+import { validateCID } from '../utils/validation';
+import {
+  buildERC8004RegistrationV1,
+  ERC8004RegistrationV1,
+  serializeERC8004RegistrationV1,
+} from '../erc8004/registration';
 
 // ============================================================================
 // Types
@@ -247,6 +253,10 @@ export interface PreparePublishResult {
   cid: string;
   /** Canonical config hash (bytes32) */
   configHash: string;
+  /** IPFS CID of the separate ERC-8004 registration-v1 JSON artifact. */
+  erc8004RegistrationCid: string;
+  /** Exact JSON projection uploaded at erc8004RegistrationCid. */
+  erc8004Registration: ERC8004RegistrationV1;
   /** Arweave transaction ID (if uploaded) */
   arweaveTxId?: string;
   /** Parsed frontmatter */
@@ -278,8 +288,32 @@ export async function preparePublish(options: PreparePublishOptions): Promise<Pr
   const { configHash } = computeConfigHash(content);
 
   if (dryRun) {
-    return { cid: '(dry-run)', configHash, frontmatter, body, dryRun: true };
+    const erc8004Registration = buildERC8004RegistrationV1({
+      frontmatter,
+      body,
+      agirailsConfigURI: 'ipfs://dry-run-config-cid',
+    });
+    return {
+      cid: '(dry-run)',
+      configHash,
+      erc8004RegistrationCid: '(dry-run)',
+      erc8004Registration,
+      frontmatter,
+      body,
+      dryRun: true,
+    };
   }
+
+  // Validate the registration projection before the first external write. The
+  // final service endpoint depends on the Markdown CID, so it is rebuilt after
+  // upload; this preflight prevents an invalid local card from leaving an
+  // orphaned Markdown pin before the command fails.
+  const preflightRegistration = buildERC8004RegistrationV1({
+    frontmatter,
+    body,
+    agirailsConfigURI: 'ipfs://preflight-config-cid',
+  });
+  serializeERC8004RegistrationV1(preflightRegistration);
 
   // Upload to IPFS
   const ipfsResult = await filebaseClient.uploadBinary(
@@ -288,6 +322,22 @@ export async function preparePublish(options: PreparePublishOptions): Promise<Pr
     { metadata: { type: 'agirails-config', version: '1.0' } }
   );
   const cid = ipfsResult.cid;
+  validateCID(cid, 'agirailsConfigCid');
+
+  // ERC-8004 agentURI must resolve to registration-v1 JSON, not the
+  // AGIRAILS Markdown config. Keep the artifacts independent and pin both.
+  const erc8004Registration = buildERC8004RegistrationV1({
+    frontmatter,
+    body,
+    agirailsConfigURI: `ipfs://${cid}`,
+  });
+  const registrationUpload = await filebaseClient.uploadBinary(
+    Buffer.from(serializeERC8004RegistrationV1(erc8004Registration), 'utf-8'),
+    'application/json',
+    { metadata: { type: 'erc8004-registration', version: '1' } }
+  );
+  const erc8004RegistrationCid = registrationUpload.cid;
+  validateCID(erc8004RegistrationCid, 'erc8004RegistrationCid');
 
   // Arweave (optional)
   let arweaveTxId: string | undefined;
@@ -303,7 +353,16 @@ export async function preparePublish(options: PreparePublishOptions): Promise<Pr
     arweaveTxId = arweaveResult.txId;
   }
 
-  return { cid, configHash, arweaveTxId, frontmatter, body, dryRun: false };
+  return {
+    cid,
+    configHash,
+    erc8004RegistrationCid,
+    erc8004Registration,
+    arweaveTxId,
+    frontmatter,
+    body,
+    dryRun: false,
+  };
 }
 
 // ============================================================================

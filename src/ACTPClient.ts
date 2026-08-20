@@ -1733,12 +1733,23 @@ export class ACTPClient {
       configHash: pending.configHash,
       listed: true,
       erc8004IdentityRegistry: this.erc8004IdentityRegistryAddress,
+      ...(pending.version === 2
+        ? { erc8004AgentURI: `ipfs://${pending.erc8004RegistrationCid}` }
+        : {}),
     };
 
     // For scenario A, extract registration params from pending publish
     if (this.lazyScenario === 'A') {
       params.endpoint = pending.endpoint;
       params.serviceDescriptors = pending.serviceDescriptors;
+      if (this.erc8004IdentityRegistryAddress && pending.version === 1) {
+        sdkLogger.warn(
+          '[ERC8004] Legacy pending publish has no registration-v1 artifact; ' +
+            'skipping ERC-8004 mint instead of registering the AGIRAILS Markdown CID. ' +
+            'The payment activation will continue without an identity mint; use the ' +
+            'read-only migration planner before any later owner-authorized URI update.'
+        );
+      }
     }
 
     const calls = buildActivationBatch(params);
