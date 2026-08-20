@@ -242,7 +242,7 @@ export const ERC8004_REPUTATION_REGISTRY: Record<ERC8004Network, string> = {
 export const ERC8004_IDENTITY_ABI = [
   // Read (ERC-721 + ERC-8004)
   'function ownerOf(uint256 agentId) view returns (address)',
-  'function getAgentURI(uint256 agentId) view returns (string)',
+  'function tokenURI(uint256 agentId) view returns (string)',
   'function getAgentWallet(uint256 agentId) view returns (address)',
   'function balanceOf(address owner) view returns (uint256)',
   'function tokenOfOwnerByIndex(address owner, uint256 index) view returns (uint256)',

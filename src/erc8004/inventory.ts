@@ -24,7 +24,7 @@ export type ERC8004InventoryNetwork = 'base-sepolia' | 'base-mainnet';
 
 export interface ERC8004IdentityReader {
   ownerOf(agentId: string): Promise<string>;
-  getAgentURI(agentId: string): Promise<string>;
+  tokenURI(agentId: string): Promise<string>;
   getAgentWallet(agentId: string): Promise<string>;
 }
 
@@ -286,7 +286,7 @@ export async function collectERC8004MigrationInventory(
       try {
         const [ownerValue, currentAgentURI, walletValue] = await Promise.all([
           reader.ownerOf(agentId),
-          reader.getAgentURI(agentId),
+          reader.tokenURI(agentId),
           reader.getAgentWallet(agentId),
         ]);
         const owner = getAddress(ownerValue);
