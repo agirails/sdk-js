@@ -385,7 +385,6 @@ export function setBundleTokenizer(tokenizer: BundleTokenizer): void {
 function _resolveTokenizer(): BundleTokenizer | null {
   if (_tokenizer) return _tokenizer;
   // Optional dependency — only used if the host app installed it.
-  /* eslint-disable @typescript-eslint/no-var-requires */
   try {
     // js-tiktoken (pure-JS, no wasm) — preferred for the SDK.
     const mod = require('js-tiktoken');
@@ -403,7 +402,6 @@ function _resolveTokenizer(): BundleTokenizer | null {
   } catch {
     /* not installed */
   }
-  /* eslint-enable @typescript-eslint/no-var-requires */
   return null;
 }
 

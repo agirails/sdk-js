@@ -288,13 +288,9 @@ export class AutoWalletProvider implements IWalletProvider {
   private async constructViemSmartAccount(): Promise<unknown> {
     // Dynamic require to avoid pulling viem into the call path of
     // ACTP-only users who never touch x402.
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { createPublicClient, http } = require('viem');
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { privateKeyToAccount } = require('viem/accounts');
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { toCoinbaseSmartAccount } = require('viem/account-abstraction');
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
     const viemChains = require('viem/chains');
 
     // I4: chain mapping MUST stay in sync with X402Adapter's DEFAULT_EVM_NETWORKS.
