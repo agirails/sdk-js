@@ -301,19 +301,31 @@ def _baseline_for(repo: Path, path: Path) -> dict:
 
 
 def run_full(args) -> Report:
-    """Cijeli repo kao izvještaj; s --baseline pada samo ono što je iznad baselinea."""
+    """Cijeli repo kao izvještaj; s --baseline pada samo ono što je iznad baselinea. S --base-baseline pada i kad
+    baseline glave ima unos kojeg u baselineu baze nema ili ga ima više (CI: baseline smije samo padati)."""
     repo = Path(args.repo).resolve()
+    if args.base_baseline and not args.baseline:
+        raise MeasureError("--base-baseline traži --baseline (baseline glave koji se uspoređuje s bazom)")
     report = Report("full", ignored=scope.ignored_for_full(repo))
     found = _measure(report, args, scope.views_for_full(repo), repo)
     if not args.baseline:
         report.findings = found
         return report
     known, never, warnings = _split_baselinable(found)
-    result = baseline.compare(known, _baseline_for(repo, Path(args.baseline)))
+    head = _baseline_for(repo, Path(args.baseline))
+    result = baseline.compare(known, head)
     report.findings = ordered(result.new + never + warnings)
     report.baseline = {"matched": len(result.matched), "new": len(result.new) + len(never),
                        "resolved": [asdict(e) for e in result.resolved]}
     report.exit = _verdict(report.findings)
+    if args.base_baseline:
+        grown = baseline.growth(head, _baseline_for(repo, Path(args.base_baseline)))
+        report.baseline["grown"] = [asdict(e) for e in grown]
+        if grown:
+            shown = ", ".join(f"{e.rule} {e.path} +{e.count}" for e in grown[:20])
+            report.exit = VIOLATIONS
+            report.error = (f"baseline glave raste prema bazi ({len(grown)}): {shown} → popravi nalaz umjesto upisa u "
+                            "baseline; porast traži odobrenu izmjenu baze")
     return report
 
 
@@ -414,6 +426,7 @@ def parser() -> argparse.ArgumentParser:
     diff.add_argument("--base-dir", metavar="DIR")
     full = sub.add_parser("full", parents=[common], help="izvještaj cijelog repoa; s --baseline pada iznad njega")
     full.add_argument("--baseline", metavar="FILE")
+    full.add_argument("--base-baseline", metavar="FILE", help="baseline baze; baseline glave ne smije biti veći")
     base = sub.add_parser("baseline", parents=[common], help="upis baselinea koji smije samo padati")
     base.add_argument("--write", required=True, metavar="FILE")
     base.add_argument("--allow-increase", action="store_true")

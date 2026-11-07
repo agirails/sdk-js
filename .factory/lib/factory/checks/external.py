@@ -307,8 +307,9 @@ def check_secrets(views: Iterable[FileView], repo_root: Path, tools_dir: Path = 
     Ključ unosa baselinea je sha256 otisak nalaza pod imenom `key`, koji gitleaks čita kao tajnu. Zato u valjanom
     `.factory/baseline.json` (version 2, samo polja rule, path, key i count, ključ točno 64 hex) gitleaks vidi kopiju u
     kojoj su samo te vrijednosti nule, i samo kad je broj zamjena jednak broju unosa. Putanju, pravilo i commit vidi
-    neizmijenjene, a baseline na drugoj putanji ili neispravan baseline skenira se kakav jest. Da svaki `key` odgovara
-    stvarnom nalazu, provjerava `code-check full --baseline`: riješen unos u CI-ju je pad."""
+    neizmijenjene, a baseline na drugoj putanji ili neispravan baseline skenira se kakav jest. Novi ključ (pa ni lažni
+    unos koji bi sakrio 64-hex vrijednost) ne ulazi u baseline bez odobrene izmjene baze: CI uspoređuje baseline glave
+    s baselineom baze (`code-check full --base-baseline`)."""
     views = [view for view in views if not view.meta.get("deleted")]
     if not views:
         return []

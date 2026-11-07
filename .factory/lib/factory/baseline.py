@@ -155,6 +155,12 @@ def compare(findings: Iterable[Finding], base: dict[Key, int]) -> Comparison:
     return Comparison(ordered(new), ordered(matched), _sorted_entries(resolved))
 
 
+def growth(head: dict[Key, int], base: dict[Key, int]) -> list[Entry]:
+    """Unosi baselinea glave iznad baselinea baze: ključ kojeg u bazi nema ili veći broj pojavljivanja (razlika)."""
+    return _sorted_entries(Entry(*key, count - base.get(key, 0)) for key, count in head.items()
+                           if count > base.get(key, 0))
+
+
 def _serialize(entries: list[Entry], commit: str | None) -> str:
     doc = {"version": VERSION, **({"commit": commit} if commit else {}), "entries": [asdict(e) for e in entries]}
     return json.dumps(doc, ensure_ascii=False, indent=2) + "\n"

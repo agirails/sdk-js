@@ -1,17 +1,11 @@
 {
   "version": 2,
-  "commit": "f5b6ea3d774645feda35a6f48ca8fe54bbeb7ebf",
+  "commit": "f6cc1397373d95c416fe8f7d43e31a283a1b9185",
   "entries": [
     {
       "rule": "S3",
       "path": ".github/workflows/codeql.yml",
       "key": "70ca8c3fe96fa3d009a3a740b2e0dfadcf7cfeeab7584413fadae607d31c0e04",
-      "count": 1
-    },
-    {
-      "rule": "S3",
-      "path": ".github/workflows/publish.yml",
-      "key": "33a968c858b17cb384b2e557fa86c86d9e48a0e8807e84c35c5683587a6f48e1",
       "count": 1
     },
     {

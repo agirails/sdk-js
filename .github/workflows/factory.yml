@@ -1,0 +1,109 @@
+name: factory
+
+# The required check for main. It has no path filters, so every pull request runs it.
+#
+# The checker, its rules and both baselines come from the pull request base, not from the
+# pull request itself: a change to .factory/ only takes effect after it is merged. The one
+# exception is the first run on a base without .factory/ (bootstrap), which uses this commit's
+# copy and says so. Changes to this workflow, .factory/, eslint.config.mjs and package.json need
+# a code owner's approval (CODEOWNERS), because a pull request can edit them.
+#
+# publish.yml only publishes a commit on main for which this workflow passed on push
+# (.github/scripts/release-gate.sh).
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: factory-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  factory:
+    name: factory
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Node 22
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
+        with:
+          node-version: 22
+
+      - name: Checker from the base commit
+        id: base
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT" == "pull_request" ]]; then base="$PR_BASE"; else base="$PUSH_BEFORE"; fi
+          if [[ ! "$base" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::no base commit for event $EVENT" >&2
+            exit 2
+          fi
+          if [[ "$base" == 0000000000000000000000000000000000000000 ]]; then
+            base="$(git rev-parse HEAD^)"
+          fi
+          dest="$RUNNER_TEMP/factory-base"
+          mkdir -p "$dest"
+          if git cat-file -e "$base:.factory/SOURCE" 2>/dev/null; then
+            git archive "$base" .factory | tar -x -C "$dest"
+            echo "bootstrap=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::base $base has no .factory/; this bootstrap run uses the checker from this commit"
+            git archive HEAD .factory | tar -x -C "$dest"
+            echo "bootstrap=true" >> "$GITHUB_OUTPUT"
+          fi
+          echo "sha=$base" >> "$GITHUB_OUTPUT"
+          echo "dir=$dest/.factory" >> "$GITHUB_OUTPUT"
+          head -1 "$dest/.factory/SOURCE"
+
+      - name: Install pinned tools (sha256 from tools.lock)
+        env:
+          FACTORY: ${{ steps.base.outputs.dir }}
+        run: python3 "$FACTORY/bin/standard" install-tools
+
+      - name: code-check diff (new findings against the base)
+        env:
+          FACTORY: ${{ steps.base.outputs.dir }}
+          BASE: ${{ steps.base.outputs.sha }}
+        run: python3 "$FACTORY/bin/code-check" diff --repo . --base "$BASE"
+
+      - name: code-check full (findings within the base baseline; baseline only shrinks)
+        env:
+          FACTORY: ${{ steps.base.outputs.dir }}
+        run: >-
+          python3 "$FACTORY/bin/code-check" full --repo . --baseline .factory/baseline.json
+          --base-baseline "$FACTORY/baseline.json"
+
+      - name: Install dependencies (lockfile, no install scripts)
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Lint (suppressions from the base may only shrink)
+        env:
+          FACTORY: ${{ steps.base.outputs.dir }}
+        run: |
+          set -euo pipefail
+          npx eslint src --suppressions-location "$FACTORY/eslint-suppressions.json" --pass-on-unpruned-suppressions
+          npm run lint
+
+      - name: Build
+        run: npm run build
+
+      - name: Test
+        run: npm test
