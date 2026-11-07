@@ -1,6 +1,6 @@
 {
   "version": 3,
-  "commit": "f6cc1397373d95c416fe8f7d43e31a283a1b9185",
+  "commit": "7a34ce9a86b5c95de20ebd6cbb362c2db84da859",
   "entries": [
     {
       "rule": "S3",
@@ -4445,12 +4445,6 @@
     {
       "rule": "K2",
       "path": "src/adapters/BaseAdapter.ts",
-      "fp": "0d77b78f50d80fcc09ac611545e0924bc815ebb6894d417eed6679eaff018bd4",
-      "count": 1
-    },
-    {
-      "rule": "K2",
-      "path": "src/adapters/BaseAdapter.ts",
       "fp": "0df9b46c9c5a3314d4fada1f37f37e0b8f61896c88fd063747f8b6eab702b1f8",
       "count": 1
     },
@@ -4524,12 +4518,6 @@
       "rule": "K2",
       "path": "src/adapters/BaseAdapter.ts",
       "fp": "3fcf11145868f05b091cbaa48f484ab9fe6b3b0181ba469576d9b0c9cf293b71",
-      "count": 1
-    },
-    {
-      "rule": "K2",
-      "path": "src/adapters/BaseAdapter.ts",
-      "fp": "417310259900bbed97f39f2e2c6d053d40597dcc6fec2420c7bcd6b7d39a5842",
       "count": 1
     },
     {
@@ -4692,12 +4680,6 @@
       "rule": "K2",
       "path": "src/adapters/BaseAdapter.ts",
       "fp": "ea5fd5f9349304f1ab373915e41e57b7e6f46fd4a3d69a4d4ef554b8b31eb794",
-      "count": 1
-    },
-    {
-      "rule": "K3",
-      "path": "src/adapters/BaseAdapter.ts",
-      "fp": "04c81b87fcb66a41a903560faee7e649282b06824cbb2ba159f42110033e97e5",
       "count": 1
     },
     {

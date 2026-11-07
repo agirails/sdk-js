@@ -43,6 +43,10 @@ class TestAdapter extends BaseAdapter {
   public testFormatAmount(amount: bigint | string): string {
     return this.formatAmount(amount);
   }
+
+  public testValidateTimestamp(timestamp: number, paramName: string): number {
+    return this.validateTimestamp(timestamp, paramName);
+  }
 }
 
 describe('BaseAdapter', () => {
@@ -372,6 +376,27 @@ describe('BaseAdapter', () => {
         expect(result).toBeGreaterThanOrEqual(before + 86400);
         expect(result).toBeLessThanOrEqual(after + 86400);
       });
+    });
+  });
+
+  describe('validateTimestamp', () => {
+    test('returns a reasonable timestamp unchanged', () => {
+      expect(adapter.testValidateTimestamp(1_700_000_000, 'deadline')).toBe(1_700_000_000);
+    });
+
+    test('accepts a timestamp in the past (no past-time check)', () => {
+      expect(adapter.testValidateTimestamp(1, 'createdAt')).toBe(1);
+    });
+
+    test('accepts the year-3000 bound and rejects anything above it', () => {
+      expect(adapter.testValidateTimestamp(32503680000, 'deadline')).toBe(32503680000);
+      expect(() => adapter.testValidateTimestamp(32503680001, 'deadline')).toThrow(/too far in the future/);
+    });
+
+    test('rejects zero, negative and NaN', () => {
+      expect(() => adapter.testValidateTimestamp(0, 'deadline')).toThrow(/must be positive/);
+      expect(() => adapter.testValidateTimestamp(-5, 'deadline')).toThrow(/must be positive/);
+      expect(() => adapter.testValidateTimestamp(Number.NaN, 'deadline')).toThrow(/expected number/);
     });
   });
 

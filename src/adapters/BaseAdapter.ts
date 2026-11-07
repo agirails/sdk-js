@@ -426,14 +426,6 @@ export abstract class BaseAdapter {
       );
     }
 
-    // Check it's not in the past (with 1 minute buffer)
-    const now = Math.floor(Date.now() / 1000);
-    const _oneMinuteAgo = now - 60; // Reserved for future validation
-
-    // Only apply this check if it looks like a deadline/future timestamp
-    // (e.g., createdAt can be in the past)
-    // For now, just validate it's reasonable
-
     // Check for overflow (year 3000 = ~32503680000)
     const year3000 = 32503680000;
     if (timestamp > year3000) {
