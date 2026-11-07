@@ -448,7 +448,7 @@ npm run test:coverage
 | `transitionState(txId, state, proof?)` | Transition to new state |
 | `releaseEscrow(txId)` | Release funds |
 | `getTransaction(txId)` | Get transaction details |
-| `getAllTransactions()` | List all transactions |
+| `getAllTransactions()` | List all transactions (MockRuntime; `BlockchainRuntime` throws `OperationNotSupportedError`) |
 
 ## Level 0 & Level 1 APIs
 

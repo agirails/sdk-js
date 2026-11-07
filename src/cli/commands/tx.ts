@@ -18,6 +18,7 @@ import { createClient, mapError, isValidTxId } from '../utils/client';
 import { TransactionState, MockTransaction } from '../../runtime/types/MockState';
 import { encodeDeliveryProof, assertRealResultHash } from '../../utils/deliveryProof';
 import { computeResultHash } from '../../utils/canonicalJson';
+import { OperationNotSupportedError } from '../../errors';
 
 // ============================================================================
 // Main tx Command
@@ -221,23 +222,17 @@ function createTxListCommand(): Command {
 
       try {
         const client = await createClient();
-        let transactions: MockTransaction[] = await client.advanced.getAllTransactions();
-
-        // PRD §5.10.1 graceful degradation: BlockchainRuntime.getAllTransactions()
-        // is a documented no-op that returns [] — there is no on-chain
-        // "all transactions in the universe" view, only per-address sweeps.
-        // Until the indexer-backed path lands, emit a clear hint so users
-        // running `actp tx list` on a real chain don't think their state
-        // is empty when it's just unreachable from this command.
-        const isRealChainEmptyList =
-          transactions.length === 0 &&
-          'getNetworkConfig' in client.advanced; // BlockchainRuntime exposes this; MockRuntime does not.
-        if (isRealChainEmptyList) {
+        let transactions: MockTransaction[];
+        try {
+          transactions = await client.advanced.getAllTransactions();
+        } catch (error) {
+          if (!(error instanceof OperationNotSupportedError)) throw error;
           output.warning(
             'actp tx list is not yet supported on testnet/mainnet — the on-chain ' +
             'view is per-address, not global. For known txIds use `actp tx status <txId>`; ' +
             'for live monitoring use `actp watch`. A full event-indexed list will land in a follow-up.'
           );
+          transactions = [];
         }
 
         // Filter by state if specified

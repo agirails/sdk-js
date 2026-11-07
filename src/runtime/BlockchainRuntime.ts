@@ -24,7 +24,7 @@ import { EASHelper, EASConfig } from '../protocol/EASHelper';
 import { NetworkConfig, getNetwork } from '../config/networks';
 import { IACTPRuntime, CreateTransactionParams } from './IACTPRuntime';
 import { MockTransaction, TransactionState } from './types/MockState';
-import { ValidationError, TransactionNotFoundError } from '../errors';
+import { ValidationError, TransactionNotFoundError, OperationNotSupportedError } from '../errors';
 import { QuoteBuilder, QuoteMessage } from '../builders/QuoteBuilder';
 import { Wallet as EthersWallet } from 'ethers';
 import { InMemoryNonceManager } from '../utils/NonceManager';
@@ -687,15 +687,12 @@ export class BlockchainRuntime implements IACTPRuntime {
   }
 
   /**
-   * Gets all transactions
-   *
-   * @returns Promise resolving to array of all transactions
+   * @throws OperationNotSupportedError always: a real chain has no global transaction view, only per-txId and
+   * per-address reads.
    */
   async getAllTransactions(): Promise<MockTransaction[]> {
-    // V2: Implement event-based transaction indexing via EventMonitor
-    // For now, return empty array as this requires off-chain indexer
-    sdkLogger.warn('getAllTransactions() not implemented - use EventMonitor for event-based queries');
-    return [];
+    throw new OperationNotSupportedError('getAllTransactions()', 'BlockchainRuntime',
+      'Use getTransaction(txId), getTransactionsByProvider() for one provider, or EventMonitor for live events.');
   }
 
   /**
