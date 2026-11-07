@@ -3,7 +3,7 @@
  *
  * EXTERNAL(@x402/fetch): the package's top-level `types` names ./dist/index.d.ts, which the tarball does not ship (2.9.0
  * through 2.30.0), so classic "node" resolution finds no declarations for the root import
- * https://github.com/x402-foundation/x402/blob/3414a56618e94f5aeff1c03295f7d5879a56157a/typescript/packages/http/fetch/package.json#L6
+ * https://github.com/x402-foundation/x402/issues/4191
  *
  * The `@x402/core/*` and `@x402/evm/exact/server` subpaths exist only in the packages' `exports` maps, which this
  * project's `moduleResolution: "node"` does not read; their declarations go when the project moves to "node16".
