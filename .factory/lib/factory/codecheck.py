@@ -294,9 +294,13 @@ def _split_baselinable(findings: list[Finding]) -> tuple[list[Finding], list[Fin
     return known, never, warnings
 
 
-def _baseline_for(repo: Path, path: Path) -> dict:
+def _baseline_for(repo: Path, path: Path, report: Report) -> dict:
     base = baseline.load(path)
     written = baseline.written_at(path)
+    if written and not scope.has_commit(repo, written):
+        report.notes.append(f"commit baselinea {written[:12]} ({path.name}) nije u povijesti repoa, pa se preimenovanja "
+                            "ne prenose → prepiši baseline: code-check baseline --write")
+        return base
     return baseline.rename(base, scope.renames_since(repo, written)) if written else base
 
 
@@ -312,14 +316,14 @@ def run_full(args) -> Report:
         report.findings = found
         return report
     known, never, warnings = _split_baselinable(found)
-    head = _baseline_for(repo, Path(args.baseline))
+    head = _baseline_for(repo, Path(args.baseline), report)
     result = baseline.compare(known, head)
     report.findings = ordered(result.new + never + warnings)
     report.baseline = {"matched": len(result.matched), "new": len(result.new) + len(never),
                        "resolved": [asdict(e) for e in result.resolved]}
     report.exit = _verdict(report.findings)
     if args.base_baseline:
-        grown = baseline.growth(head, _baseline_for(repo, Path(args.base_baseline)))
+        grown = baseline.growth(head, _baseline_for(repo, Path(args.base_baseline), report))
         report.baseline["grown"] = [asdict(e) for e in grown]
         if grown:
             shown = ", ".join(f"{e.rule} {e.path} +{e.count}" for e in grown[:20])
@@ -340,7 +344,7 @@ def run_baseline(args) -> Report:
         return report
     target = Path(args.write)
     try:
-        written = baseline.write(target, known, _baseline_for(repo, target), args.allow_increase, args.reason,
+        written = baseline.write(target, known, _baseline_for(repo, target, report), args.allow_increase, args.reason,
                                  scope.head(repo))
     except baseline.BaselineIncrease as exc:
         report.exit, report.error = VIOLATIONS, str(exc)

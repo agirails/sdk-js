@@ -278,6 +278,11 @@ def head(repo: Path) -> str | None:
     return git.run("rev-parse", "--verify", "--quiet", "HEAD", ok=(0, 1)).stdout.decode().strip() or None
 
 
+def has_commit(repo: Path, rev: str) -> bool:
+    """Postoji li commit `rev` u povijesti repoa (npr. commit iz baselinea nakon squash mergea ili obrisane grane)."""
+    return gitsafe.Git(Path(repo)).run("cat-file", "-e", f"{rev}^{{commit}}", ok=(0, 1, 128)).returncode == 0
+
+
 def renames_since(repo: Path, rev: str) -> dict[str, str]:
     """Preimenovanja od `rev` do radnog stabla, stara putanja → nova, za prenošenje baselinea."""
     return {c.old_path: c.path for c in _changes(gitsafe.Git(Path(repo)), rev) if c.status == "R" and c.old_path}
