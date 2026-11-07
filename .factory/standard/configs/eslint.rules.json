@@ -1,0 +1,33 @@
+{
+  "no-empty": ["error", { "allowEmptyCatch": false }],
+  "@typescript-eslint/no-floating-promises": "error",
+  "@typescript-eslint/no-misused-promises": "error",
+  "@eslint-community/eslint-comments/require-description": ["error", { "ignore": [] }],
+  "@eslint-community/eslint-comments/no-unlimited-disable": "error",
+  "@eslint-community/eslint-comments/no-unused-disable": "error",
+  "@eslint-community/eslint-comments/disable-enable-pair": "error",
+  "@typescript-eslint/ban-ts-comment": ["error", { "ts-expect-error": "allow-with-description", "ts-ignore": true, "ts-nocheck": true, "ts-check": false, "minimumDescriptionLength": 10 }],
+  "no-unused-vars": "off",
+  "@typescript-eslint/no-unused-vars": ["error", { "argsIgnorePattern": "^_", "varsIgnorePattern": "^_", "caughtErrors": "all" }],
+  "@typescript-eslint/no-explicit-any": "error",
+  "@typescript-eslint/no-non-null-assertion": "error",
+  "@typescript-eslint/consistent-type-assertions": ["error", { "assertionStyle": "never" }],
+  "@typescript-eslint/switch-exhaustiveness-check": ["error", { "considerDefaultExhaustiveForUnions": false, "requireDefaultForNonUnion": true }],
+  "@typescript-eslint/no-unsafe-argument": "error",
+  "@typescript-eslint/no-unsafe-assignment": "error",
+  "@typescript-eslint/no-unsafe-call": "error",
+  "@typescript-eslint/no-unsafe-member-access": "error",
+  "@typescript-eslint/no-unsafe-return": "error",
+  "@typescript-eslint/no-unsafe-type-assertion": "error",
+  "no-console": "error",
+  "no-eval": "error",
+  "no-implied-eval": "off",
+  "@typescript-eslint/no-implied-eval": "error",
+  "no-new-func": "error",
+  "no-restricted-imports": ["error", {
+    "paths": [
+      { "name": "child_process", "importNames": ["exec", "execSync"], "message": "S5: execFile ili spawn s nizom argumenata, bez ljuske." },
+      { "name": "node:child_process", "importNames": ["exec", "execSync"], "message": "S5: execFile ili spawn s nizom argumenata, bez ljuske." }
+    ]
+  }]
+}

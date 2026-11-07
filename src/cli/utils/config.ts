@@ -463,7 +463,6 @@ export function resolveIdentityPath(projectRoot: string = process.cwd()): string
     for (const mdFile of mdFiles) {
       try {
         // Use a lazy require to avoid a circular import between config → agirailsmdV4
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
         const { parseAgirailsMdV4 } = require('../../config/agirailsmdV4');
         const content = fs.readFileSync(path.join(projectRoot, mdFile), 'utf-8');
         const v4 = parseAgirailsMdV4(content);

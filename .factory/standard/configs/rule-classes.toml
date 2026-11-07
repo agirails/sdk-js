@@ -1,0 +1,33 @@
+description = "K5: isključenje ispravnosnog pravila traži factory-allow; stilsko traži samo ime pravila i razlog. Pravilo kojeg nema na popisu vrijedi kao ispravnosno."
+default = "correctness"
+
+[eslint]
+style = [
+  "indent", "quotes", "semi", "comma-dangle", "max-len", "brace-style", "object-curly-spacing", "arrow-parens",
+  "prefer-const", "prefer-template", "no-useless-escape", "no-useless-rename", "spaced-comment",
+  "@typescript-eslint/naming-convention", "@typescript-eslint/consistent-type-definitions",
+  "@typescript-eslint/array-type", "@typescript-eslint/consistent-type-imports",
+  "@eslint-community/eslint-comments/disable-enable-pair",
+]
+correctness = [
+  "no-empty", "no-console", "no-eval", "no-implied-eval", "no-new-func", "no-restricted-imports", "no-unused-vars",
+  "no-constant-condition", "no-undef", "no-dupe-class-members", "no-fallthrough", "no-unreachable",
+  "@typescript-eslint/no-floating-promises", "@typescript-eslint/no-misused-promises",
+  "@typescript-eslint/ban-ts-comment", "@typescript-eslint/no-unused-vars", "@typescript-eslint/no-explicit-any",
+  "@typescript-eslint/no-non-null-assertion", "@typescript-eslint/consistent-type-assertions",
+  "@typescript-eslint/switch-exhaustiveness-check", "@typescript-eslint/no-unsafe-argument",
+  "@typescript-eslint/no-unsafe-assignment", "@typescript-eslint/no-unsafe-call",
+  "@typescript-eslint/no-unsafe-member-access", "@typescript-eslint/no-unsafe-return",
+  "@typescript-eslint/no-unsafe-type-assertion", "@typescript-eslint/no-implied-eval",
+  "@typescript-eslint/no-dupe-class-members",
+  "@eslint-community/eslint-comments/require-description", "@eslint-community/eslint-comments/no-unlimited-disable",
+  "@eslint-community/eslint-comments/no-unused-disable",
+]
+
+[ruff]
+style = ["E1", "E2", "E3", "E4", "E5", "W", "I", "Q", "COM", "N"]
+correctness = ["F", "E7", "E9", "B", "BLE", "S", "SIM105", "PGH", "PLC0415", "ERA", "T10"]
+
+[biome]
+style = ["format", "assist/", "lint/style/"]
+correctness = ["lint"]

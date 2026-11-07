@@ -56,7 +56,6 @@ describe('Networks Config', () => {
 
     let config: ReturnType<typeof getNetwork>;
     jest.isolateModules(() => {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
       const mod = require('./networks');
       config = mod.getNetwork('base-sepolia');
     });

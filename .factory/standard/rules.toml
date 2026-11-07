@@ -1,0 +1,313 @@
+[meta]
+title = "Standard tvornice softvera"
+intro = """
+Jedna ljestvica kvalitete i sigurnosti za sav kod koji gradimo, bez obzira tko ga piše: Claude, Codex, drugi model ili \
+osoba. Pravilo živi na najvišoj razini koja ga može provesti. Postojeće kršenje stoji u baselineu koji smije samo \
+padati: pravilo pada na novim i promijenjenim redcima i na kršenju koje je nastalo brisanjem. Ulaz za provjeru je `bin/code-check`. Exit 0 je čisto, exit 1 \
+su nova kršenja, a exit 2 znači da provjera nije mogla izmjeriti; exit 2 nikad nije prolaz. Budžet performansi (P) \
+je prvo izvještaj, a brana postaje tek kad je šum izmjeren i budžet zapisan u `standard/repos/<id>.toml`."""
+
+[[level]]
+id = 1
+name = "Kod i arhitektura"
+text = "loš uzorak se ne može napisati."
+
+[[level]]
+id = 2
+name = "Statička provjera"
+text = "lint, typecheck, `code-check` i CI; loš uzorak se ne može isporučiti."
+
+[[level]]
+id = 3
+name = "Skillovi i pravila"
+text = "za prosudbu koju stroj ne može provjeriti."
+
+[[level]]
+id = 4
+name = "Ljudski review"
+text = "samo za ono što razine 1–3 još ne pokrivaju; svaki takav nalaz je kandidat za višu razinu."
+
+[[rule]]
+id = "K1"
+title = "Jedan put za istu stvar"
+text = "Novi kod koristi postojeći modul ili API i ne uvodi paralelni."
+level = [1, 2]
+enforcer = "arhitektura po repou; zabranjeni importi u `standard/repos/<id>.toml`"
+langs = ["all"]
+
+[[rule]]
+id = "K2"
+title = "Komentar je samo dokumentacija ili direktiva"
+text = "Komentar postoji samo kao dokumentacija javnog simbola ili modula, direktiva s razlogom ili `EXTERNAL(...)`."
+level = [2]
+enforcer = "`code-check comments`"
+langs = ["py", "ts", "sol", "sh"]
+checker = "comments"
+detail = """
+Dopušteno na novim redcima:
+- Python docstring na javnom simbolu i module docstring;
+- Solidity NatSpec (`///` ili `/** */` s `@notice`, `@dev`, `@param`, `@return`, `@custom`) na ugovorima, funkcijama, \
+eventima i greškama;
+- JSDoc/TSDoc neposredno iznad exportane deklaracije ili javnog člana exportane klase;
+- `/** … */` zaglavlje na vrhu TS ili Solidity datoteke;
+- `SPDX-License-Identifier`, shebang, direktive iz K5 i `factory-allow`.
+
+Ograničenje izvana (ovisnost, platforma, vendor, protokol) smije stajati uz poziv samo u obliku \
+`EXTERNAL(<ovisnost>): <pravilo> <url>`. Prednost ima kodiranje ograničenja tipom, assertom, testom ili lintom.
+
+Nije dopušten nijedan drugi komentar u tijelu koda. Ako kod treba objašnjenje, mijenja se ime, struktura ili test. \
+Ako je pozadina odluka, ide u zapis odluke. Kad nije jasno vrijedi li iznimka, komentar ne ostaje. JSDoc na lokalnoj \
+ili privatnoj funkciji pada na novim redcima.
+
+Riječi koje signaliziraju ograničenje (IMPORTANT, do not remove, ne diraj, pazi) padaju s porukom \
+„kodiraj ograničenje (tip, assert, test, lint), pa obriši komentar".
+
+Provjera čita kod tokenizerom po jeziku, a ne regexom po retku: string `"// not a comment"` ne pada. Uzastopni `//`, \
+`///` i `#` redci su jedan komentar."""
+
+[[rule]]
+id = "K3"
+title = "Nema komentara o zaobilasku ni TODO-a"
+text = "Ni u doc komentaru. Nedovršeno ide u issue."
+level = [2]
+enforcer = "`code-check comments` (rječnik ispod, engleski i hrvatski)"
+langs = ["all"]
+checker = "comments"
+terms = ["for now", "TODO", "FIXME", "XXX", "hack", "kludge", "band-aid", "quick fix", "workaround", "temporary fix", "temporary solution", "temporary hack", "temporary patch", "temporarily disabled", "temporarily skipped", "temporarily hardcoded", "privremeno rješenje", "za sada", "zasad", "zaobilazak"]
+detail = """
+„temporary" i „temporarily" broje se samo u frazama iz rječnika. „no workaround", „without workaround" i \
+„workaround mode" se ne broje. Rječnik se može izigrati („for now" → „currently"), pa se uzorak novih doc komentara \
+pregledava tjedno; pregled prijavljuje, ali ne odlučuje."""
+
+[[rule]]
+id = "K4"
+title = "Greška se ne guta"
+text = "Nema praznog `except` ili `catch`, `except Exception: pass`, `.catch(() => {})` ni prazne rejection funkcije u `.then(_, () => {})`. Rukovatelj koji hvata svaku grešku i samo vraća stalnu vrijednost (`.catch(() => null)`, `catch { return null; }`, `except Exception: return None`) također guta grešku."
+level = [2]
+enforcer = "ruff `BLE001`, `S110`, `SIM105`; eslint `no-empty`, `@typescript-eslint/no-floating-promises`; AST provjera praznih callbacka u `code-check`, jer `no-empty` izuzima tijela funkcija"
+langs = ["py", "ts"]
+checker = "checks.handlers"
+
+[[rule]]
+id = "K5"
+title = "Isključenje lintera samo uz ime pravila i razlog"
+text = "`eslint-disable-next-line <pravilo> -- razlog`, `biome-ignore <kategorija>: razlog`, `# noqa: KOD`, `@ts-expect-error razlog`. `@ts-ignore` i goli `# type: ignore` su zabranjeni. Isključenje ispravnosnog pravila traži `factory-allow`; isključenje provjere tipova (`@ts-expect-error`, `# type: ignore[kod]`, `# pyright: ignore[kod]`) je ispravnosno. Isključenje za cijelu datoteku (`@ts-nocheck`, `# mypy: ignore-errors` i ostale slabije `mypy:` postavke, `# pyright: basic` i `report*=false`) je kršenje i uz razlog."
+level = [2]
+enforcer = "eslint `@eslint-community/eslint-comments/require-description`, `@typescript-eslint/ban-ts-comment`; ruff `PGH003`, `PGH004`; razvrstavanje pravila u `standard/configs/rule-classes.toml`"
+langs = ["py", "ts"]
+checker = "comments"
+
+[[rule]]
+id = "K6"
+title = "Strogi tipovi"
+text = "TypeScript `strict` i `noUncheckedIndexedAccess`; Python SDK i servisi s type hintovima i mypy."
+level = [2]
+enforcer = "`tsc --noEmit` sa `standard/configs/tsconfig.strict.json`; mypy"
+langs = ["ts", "py"]
+
+[[rule]]
+id = "K7"
+title = "Upozorenje je greška na novim redcima"
+text = "Linter se vrti s `--max-warnings 0`."
+level = [2]
+enforcer = "CI i `code-check`"
+langs = ["ts", "py"]
+
+[[rule]]
+id = "K8"
+title = "Bez mrtvog koda"
+text = "Nema neiskorištenih importa, varijabli ni exporta."
+level = [2]
+enforcer = "ruff `F401`, `F841`; `@typescript-eslint/no-unused-vars` = error; knip za tier A"
+langs = ["ts", "py"]
+
+[[rule]]
+id = "K9"
+title = "Bez lokalnih putanja i interne infrastrukture"
+text = "Isporučeni kod i docsi ne sadrže apsolutne putanje korisničkih direktorija, putanje u interni radni prostor ni imena internih repoa. Uzorci putanja su u provjeri, a interna imena u `standard/configs/internal-names.txt`."
+level = [2]
+enforcer = "`code-check paths`"
+langs = ["all", "md"]
+checker = "checks.paths"
+
+[[rule]]
+id = "K10"
+title = "Ovisnosti idu jednim smjerom"
+text = "Nema importa unutar funkcija kao zaobilaska kružnih ovisnosti."
+level = [1, 2]
+enforcer = "ruff `PLC0415`"
+langs = ["py"]
+
+[[rule]]
+id = "K11"
+title = "Formatter je jedini izvor stila"
+text = "Stil određuje formatter u check načinu, a ne review."
+level = [2]
+enforcer = "`ruff format --check`, `prettier --check` ili formatter repoa, `forge fmt --check`"
+langs = ["all"]
+
+[[rule]]
+id = "K12"
+title = "Promjena ponašanja ima test koji bez nje pada"
+text = "Test se piše prije izmjene i mora pasti iz pravog razloga."
+level = [3, 2]
+enforcer = "skill `prove`; `code-check` upozorava na izmjenu u `src/` bez izmjene testova"
+langs = ["all"]
+checker = "checks.testdelta"
+
+[[rule]]
+id = "K13"
+title = "Datoteka ili funkcija ne raste preko praga"
+text = "800 redaka po datoteci, 120 po funkciji. Pada samo rast."
+level = [2]
+enforcer = "`code-check size`"
+langs = ["all"]
+checker = "checks.size"
+
+[[rule]]
+id = "K14"
+title = "Granice modula su zapisane i provode se kroz graf importa"
+text = "Electron main, preload i renderer su odvojeni; Next.js serverski kod (baza, tajne, ključevi) nikad nije u klijentskoj komponenti (`import \"server-only\"`); javni API SDK-a ide samo kroz `index`."
+level = [1, 2]
+enforcer = "dependency-cruiser (TS), import-linter (Python), granice u `standard/repos/<id>.toml`"
+langs = ["ts", "py"]
+
+[[rule]]
+id = "K15"
+title = "Stari i paralelni putovi se brišu"
+text = "Deprecated API ima datum uklanjanja; mrtvi exporti i nekorištene datoteke se brišu."
+level = [1, 2]
+enforcer = "inventar putova po repou; knip ili vulture; `code-check` pada na `@deprecated` bez datuma"
+langs = ["ts", "py", "sol"]
+checker = "comments"
+
+[[rule]]
+id = "K16"
+title = "Ponovljena skripta postaje CLI"
+text = "Skripta koju agenti napišu u dvije sesije postaje CLI u `scripts/` skilla ili repoa."
+level = [3, 2]
+enforcer = "rudar transkripata koji hrani skill `correct`"
+langs = ["all"]
+
+[[rule]]
+id = "K17"
+title = "TypeScript bez izlaza iz sustava tipova"
+text = "Nema `as` (osim `as const`), `!`, `any` ni `console.*` u bibliotekama; `switch` je exhaustive; nema `no-unsafe-*` kršenja."
+level = [2]
+enforcer = "typescript-eslint `no-explicit-any`, `no-non-null-assertion`, `consistent-type-assertions`, `switch-exhaustiveness-check`, `no-unsafe-*`; eslint `no-console`"
+langs = ["ts"]
+
+[[rule]]
+id = "K18"
+title = "Nema ručno usklađenih popisa"
+text = "Kad iste stvari žive na dva mjesta, jedno se generira iz drugog ili test pada kad se razlikuju."
+level = [1, 2]
+enforcer = "`bin/standard gen --check`; `tests/test_standard.py`"
+langs = ["all"]
+
+[[rule]]
+id = "K19"
+title = "Testovi se ne isključuju i ne slabe"
+text = "Dodani `.only`, `.skip`, `.fixme`, `.fail`, `xit`, `xfail`, `pytest.skip` i `vm.skip` padaju; uklonjena asercija daje upozorenje; novi test mora pasti na mutaciji koja kvari ponašanje."
+level = [2, 3]
+enforcer = "`code-check tests`; skill `prove`"
+langs = ["all"]
+checker = "checks.tests_guard"
+
+[[rule]]
+id = "S1"
+title = "Nema tajni u diffu ni u povijesti"
+text = "Tajna ne ulazi u diff; povijest se jednom skenira, a izvještaj ne sadrži vrijednosti tajni. Konfiguracija ne preuzima upstream allowliste putanja (vendor, node_modules, lockfileovi), a repo `.gitleaksignore` se ne poštuje."
+level = [2]
+enforcer = "gitleaks (pinan, `standard/configs/gitleaks.toml` generiran iz njegove zadane konfiguracije) nad diffom u `code-check` i u CI-ju"
+langs = ["all", "md"]
+checker = "checks.external"
+
+[[rule]]
+id = "S2"
+title = "Nova ovisnost je pinana i pregledana"
+text = "Lockfile, pinana verzija, audit bez high ili critical nalaza, pregledane install skripte."
+level = [2, 3]
+enforcer = "`code-check deps` na promjeni lockfilea (`npm audit --omit=dev --audit-level=high`, osv-scanner ili pip-audit); skill `supply-chain-security` za svaku novu ovisnost"
+langs = ["ts", "py"]
+
+[[rule]]
+id = "S3"
+title = "GitHub Actions su pinane i minimalne"
+text = "Akcije su pinane na SHA, `permissions:` je minimalan, nema `pull_request_target` s checkoutom koda PR-a ni `${{ github.event.* }}` u `run:`. Workflow ili `action.yml` koji se ne može pročitati nije prolaz, a skripte u `run:` provjerava shellcheck."
+level = [2]
+enforcer = "zizmor `--strict-collection`, actionlint i shellcheck (pinani, `standard/configs/zizmor.yml`)"
+langs = ["gha"]
+checker = "checks.external"
+
+[[rule]]
+id = "S4"
+title = "Solidity bez novih high ili medium nalaza"
+text = "slither bez novih high ili medium nalaza, NatSpec na external i public funkcijama, CEI."
+level = [2, 3]
+enforcer = "slither u CI-ju uz baseline; solhint (`standard/configs/.solhint.json`); skill `smart-contract-implementation`"
+langs = ["sol"]
+
+[[rule]]
+id = "S5"
+title = "Bez opasnih poziva"
+text = "Nema `eval`, `exec` s ulazom, `shell=True` s varijablom, `child_process.exec` s interpolacijom, `pickle` nad nepovjerljivim ulazom ni SQL-a spojenog iz stringova."
+level = [2]
+enforcer = "ruff `S`; eslint `no-eval`, `no-implied-eval`, `no-new-func`, ograničen `child_process.exec`"
+langs = ["py", "ts"]
+
+[[rule]]
+id = "S6"
+title = "Diff na granici povjerenja prolazi sigurnosni pregled"
+text = "Auth, mostovi, egress, dozvole, novac i potpisi prolaze `blast-radius`, `security-audit` guidance i Codex Security `security-diff-scan` prije shipa. Ugovori i SDK major prije releasea idu u puni audit."
+level = [2, 3]
+enforcer = "`code-check` označi diff koji dira `trust_boundary` iz `standard/repos/<id>.toml`; `prove` traži zapis audita"
+langs = ["all"]
+
+[[rule]]
+id = "S7"
+title = "Kod repoa se izvršava samo u sandboxu"
+text = "Provjera koja izvršava kod repoa (konfiguracija lintera, testovi, repro nalaza) ide kroz sandbox koji čuva i mrežu i povjerljivost. Poznato ograničenje: ukupna memorija svih procesa i ukupno pisanje u putanje za pisanje nisu ograničeni, jer bi to tražilo cgroup preko korisničkog systemd busa; po procesu su ograničeni privatna memorija u heapu i privatnim mapiranjima (RLIMIT_DATA, zadano 4 GB), adresni prostor (RLIMIT_AS, zadano 4 GB; poziv koji pokreće code-check s gitleaksom traži 8 GB, jer pinani gitleaks rezervira oko 5,4 GB, a koristi oko 0,15 GB) i CPU vrijeme, a uz to broj procesa, veličina jedne datoteke, tmpfs i izlaz. RLIMIT_DATA ne broji stog (glavni stog, MAP_GROWSDOWN, mremap stoga) ni dijeljena mapiranja, pa je adresni prostor gornja granica memorije jednog procesa."
+level = [1, 2]
+enforcer = "`bin/sandbox-run`; tier B koristi samo našu konfiguraciju"
+langs = ["all"]
+
+[[rule]]
+id = "P1"
+title = "Solidity ugovori"
+text = "Plin po funkciji ne raste bez razloga."
+level = [2]
+enforcer = "`forge snapshot --check` u CI-ju; promjena snapshota traži razlog u commitu"
+langs = ["sol"]
+
+[[rule]]
+id = "P2"
+title = "SDK paketi"
+text = "Veličina paketa i vrijeme importa ne rastu više od 5 %."
+level = [2]
+enforcer = "`npm pack --dry-run`, vrijeme `require`, `python -X importtime`"
+langs = ["ts", "py"]
+
+[[rule]]
+id = "P3"
+title = "Web"
+text = "LCP < 2,5 s, CLS < 0,1, INP < 200 ms na mobilnom profilu; JS po ruti ne raste bez razloga."
+level = [2]
+enforcer = "Lighthouse CI ili verify skill nad preview buildom"
+langs = ["ts"]
+
+[[rule]]
+id = "P4"
+title = "Desktop aplikacija"
+text = "Nema long taskova > 50 ms na glavnim putovima; okvir ≤ 16 ms pri skrolanju."
+level = [2]
+enforcer = "verify skill s CDP traceom"
+langs = ["ts"]
+
+[[rule]]
+id = "P5"
+title = "API-ji i servisi"
+text = "p95 po endpointu je zapisan i ne raste više od 20 %."
+level = [2]
+enforcer = "verify skill ili benchmark skripta"
+langs = ["all"]

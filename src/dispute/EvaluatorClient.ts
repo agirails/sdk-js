@@ -712,7 +712,6 @@ export class EvaluatorClient {
   private countTokens(bundle: EvidenceBundle): number {
     try {
       // Lazy import avoids a hard dependency cycle; reuses the frozen counter.
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
       const mod = require('./EvidenceBundle') as typeof import('./EvidenceBundle');
       const text = mod.serializeBundleToString(bundle);
       return mod.countBundleTokens(text);
@@ -749,7 +748,6 @@ interface QuoteBody {
  * (mirrors §4.7 step 4 in BondEscalation.sol). Uses ethers under the hood.
  */
 function keccak256AbiEncodeBytes32(disputeId: string): string {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
   const { ethers } = require('ethers') as typeof import('ethers');
   const encoded = ethers.AbiCoder.defaultAbiCoder().encode(['bytes32'], [disputeId]);
   return ethers.keccak256(encoded);

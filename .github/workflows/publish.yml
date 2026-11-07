@@ -22,8 +22,13 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    # The gate below lives in the tagged commit, so a tag on a commit that edits this file could
+    # skip it. The environment is the gate outside the tree: npm Trusted Publishing accepts only
+    # tokens from this environment, and the environment allows only v* tags and a reviewer.
+    environment: npm-publish
     permissions:
       contents: read
+      actions: read    # release gate reads factory.yml runs for the tagged commit
       id-token: write  # required for npm provenance via OIDC
     steps:
       # Pin all third-party actions by full-length commit SHA, not `@vN`,
@@ -32,13 +37,23 @@ jobs:
       - name: Checkout
         uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11  # v4.1.1
         with:
-          fetch-depth: 0  # we want the full history so the tag points at a real commit
+          fetch-depth: 0  # full history: the release gate checks the tag is on main
+          persist-credentials: false
 
-      - name: Setup Node 20 with npm cache
+      - name: Release gate (tagged commit is on main and passed factory.yml)
+        # Publishing is bound to the reviewed, checked commit: the tag must point at a commit
+        # on main for which factory.yml passed on push. A tag on any other commit stops here,
+        # before the OIDC token is used.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: .github/scripts/release-gate.sh "$GITHUB_SHA"
+
+      - name: Setup Node 20
+        # No dependency cache in the release job: a cache written by another workflow must not
+        # feed the published build (zizmor cache-poisoning).
         uses: actions/setup-node@60edb5dd545a775178f52524783378180af0d1f8  # v4.0.2
         with:
           node-version: 20
-          cache: 'npm'
           registry-url: 'https://registry.npmjs.org'
 
       - name: Bump npm to 11.x (required for npm Trusted Publishing OIDC handshake)
@@ -60,8 +75,8 @@ jobs:
           fi
           echo "Tag and package.json agree on version $PKG_VERSION"
 
-      - name: Install dependencies (lockfile-pinned)
-        run: npm ci
+      - name: Install dependencies (lockfile-pinned, no install scripts)
+        run: npm ci --ignore-scripts
 
       - name: Build
         run: npm run build

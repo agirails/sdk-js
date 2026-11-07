@@ -1,0 +1,2 @@
+# sandbox-run: javna kopija ne nosi privatna stabla ni njihove otiske, jer se kratka putanja
+# iz otiska vraća rječnikom. Popis vrijedi samo u izvoru standarda.
