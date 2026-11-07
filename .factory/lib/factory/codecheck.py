@@ -245,7 +245,7 @@ def _measure(report: Report, args, views: list[FileView], repo: Path) -> list[Fi
     report.lossy = sorted(v.path for v in views if v.meta.get("lossy"))
     unread = scope.unreadable(views)
     if unread:
-        raise MeasureError(f"file cannot be read: {', '.join(unread)} → save it as UTF-8 or exclude it in "
+        raise MeasureError(f"file cannot be read: {', '.join(unread)} → commit it as a regular UTF-8 file or exclude it in "
                            "standard/repos/<id>.toml")
     measured = [v for v in views if not v.meta.get("skipped") or v.raw is not None]
     report.files = sum(not v.meta.get("skipped") and not v.meta.get("deleted") for v in views)

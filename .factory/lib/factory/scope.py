@@ -2,7 +2,9 @@
 against the base, whole repo, snapshot).
 
 The working tree is read directly from disk and compared with the base blob by blob id, so a repo attribute (ident,
-eol, filter) cannot hide a change. A symbolic link is a skipped file whose bytes are its target, so S1 still reads it.
+eol, filter) cannot hide a change. A symbolic link is a skipped file whose bytes are its target, so S1 still reads it;
+a link named like code or documentation, or one to a directory, is unmeasured (`unreadable`), because tools load its
+target while the rules would not see it.
 Git runs only through `gitsafe`. New lines are computed with the same algorithm in every mode.
 A snapshot is exactly its manifest: nothing is ignored. A directory walk outside git skips generated directories only
 at the root (`ignored_for_full` names them), and version-control metadata and interpreter caches at any depth.
@@ -35,7 +37,8 @@ GITLINK, SYMLINK = "160000", "120000"
 DIFF_FLAGS = ("-M", "--relative", "--text", "--no-color", "--diff-algorithm=myers")
 GENERATED = frozenset({"pnpm-lock.yaml", "package-lock.json", "yarn.lock", "Cargo.lock", "poetry.lock", "uv.lock",
                        "composer.lock", "Gemfile.lock"})
-UNREADABLE = {"oversized": "larger than 1 MB", "binary": "contains a NUL byte", "not_utf8": "not in declared encoding"}
+UNREADABLE = {"oversized": "larger than 1 MB", "binary": "contains a NUL byte", "not_utf8": "not in declared encoding",
+              "symlink": "a symbolic link; commit the file itself"}
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 RENAME_SCORE = 0.5
 
@@ -82,9 +85,11 @@ def _decode(data: bytes, path: str = "") -> tuple[str | None, str | None]:
 
 
 def unreadable(views: list[FileView]) -> list[str]:
-    """Code or documentation files that cannot be read, with the reason; the check must not skip them."""
+    """Code or documentation files that cannot be read, with the reason; the check must not skip them. A symbolic link
+    named like code, or one to a directory, counts: the target is loaded but measured under another name or not at all."""
     return sorted(f"{view.path} ({UNREADABLE[view.meta['skipped']]})" for view in views
-                  if view.meta.get("skipped") in UNREADABLE and lang_of(view.path) is not None)
+                  if view.meta.get("skipped") in UNREADABLE
+                  and (lang_of(view.path) is not None or view.meta.get("link_dir")))
 
 
 def _skipped(path: str, reason: str, meta: dict, raw: bytes | None = None) -> FileView:
@@ -259,7 +264,8 @@ def views_for_diff(repo: Path, base: str | None = None, staged: bool = False) ->
             views.append(_skipped(path, "submodule", view_meta))
             continue
         if entry.mode == SYMLINK:
-            views.append(_link(path, entry.data or blobs[entry.sha], before, blobs, view_meta))
+            link_meta = {**view_meta, **({"link_dir": True} if (repo / path).is_dir() else {})}
+            views.append(_link(path, entry.data or blobs[entry.sha], before, blobs, link_meta))
             continue
         old_data = blobs[before.sha] if before is not None and _kind(before.mode) == "file" else None
         views.append(_pair(path, entry.data if entry.data is not None else blobs[entry.sha], old_data, view_meta))
@@ -334,7 +340,8 @@ def views_for_full(repo: Path) -> list[FileView]:
 def _full_view(repo: Path, rel: str) -> FileView:
     data = _read_disk(repo, rel)
     if data == "symlink":
-        return _skipped(rel, data, {}, raw=os.fsencode(os.readlink(repo / rel)))
+        meta = {"link_dir": True} if (repo / rel).is_dir() else {}
+        return _skipped(rel, data, meta, raw=os.fsencode(os.readlink(repo / rel)))
     return _view(rel, data, {})
 
 
