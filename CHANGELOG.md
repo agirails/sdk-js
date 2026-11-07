@@ -4,6 +4,15 @@
 
 ### Security
 
+- **A DID that names another chain is refused during signature verification.**
+  `MessageSigner.verifySignature()` and `verifySignatureOrThrow()` throw
+  `DID chainId mismatch` when `from` is `did:ethr:<chainId>:<address>` and
+  `<chainId>` differs from the signer's EIP-712 domain, and when `<chainId>` is
+  not a decimal number. Before, a mismatch only logged a warning, and a chainId
+  such as `84532junk` was read as `84532`.
+- **`isValidAddress()` enforces the EIP-55 checksum.** A mixed-case address
+  with a wrong checksum is rejected; all-lowercase and all-uppercase addresses
+  (no checksum) are still accepted.
 - **ERC-8004 payment resolution now fails closed.**
   `ERC8004Bridge.getAgentWallet()` reads only the Identity Registry's verified
   on-chain `agentWallet`. Missing, malformed, or unreadable registry values
@@ -21,6 +30,15 @@
 
 ### Changed
 
+- **Behaviour change:** `BlockchainRuntime.getAllTransactions()` throws the new
+  `OperationNotSupportedError` (code `OPERATION_NOT_SUPPORTED`) instead of
+  returning `[]`, which read as "no transactions". A real chain has no global
+  transaction view; use `getTransaction(txId)`, `getTransactionsByProvider()`
+  or `EventMonitor`. `actp tx list` keeps its testnet/mainnet hint and only
+  hides this error, not other runtime failures. `MockRuntime` is unchanged.
+- `PricingStrategy.cost.api` documentation now states what the SDK does: the
+  named API contributes 0 to the calculated cost, and token-billed agents put
+  that cost in `base` or `perUnit`.
 - `IERC8004IdentityRegistry` now requires `getAgentWallet(agentId)`. Consumers
   that implement this testing/injection interface directly must add the new
   read method. `resolveAgent().wallet` remains available for compatibility but

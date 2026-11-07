@@ -46,22 +46,16 @@ export interface ServiceCost {
   };
 
   /**
-   * API cost auto-calculation
+   * API identifier of an upstream LLM or API this service calls (e.g. 'openai:gpt-4o').
    *
-   * Automatically calculate costs based on known API pricing.
-   * SDK knows the costs for common APIs (OpenAI, Anthropic, etc.)
+   * The SDK does not price it: it contributes 0 to the calculated cost. An agent that bills on token
+   * usage puts that cost into `base` or `perUnit` (for example `perUnit: { unit: 'word', rate }` sized to
+   * its own token price).
    *
    * @example
    * ```typescript
-   * api: 'openai:gpt-4-turbo'
-   * // SDK automatically calculates cost based on input tokens
+   * cost: { base: 0.02, perUnit: { unit: 'word', rate: 0.00001 }, api: 'openai:gpt-4o' }
    * ```
-   *
-   * Supported APIs (MVP):
-   * - 'openai:gpt-4-turbo'
-   * - 'openai:gpt-3.5-turbo'
-   * - 'anthropic:claude-3-sonnet'
-   * - 'anthropic:claude-3-haiku'
    */
   api?: string;
 }

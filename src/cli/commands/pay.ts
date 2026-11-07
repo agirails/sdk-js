@@ -108,7 +108,6 @@ async function runPay(
   const resolved = resolveNetwork(options.network);
   output.print(`  network: ${describeNetwork(resolved)}`);
 
-  // Resolve slug URLs (e.g. agirails.app/a/arha) to wallet addresses
   const slugMatch = to.match(/^(?:https?:\/\/)?(?:www\.)?agirails\.app\/a\/([a-z0-9_-]+)$/i);
   if (slugMatch) {
     const slug = slugMatch[1].toLowerCase();

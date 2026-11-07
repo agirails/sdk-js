@@ -10,11 +10,8 @@
  *   # Generate new wallets
  *   npx ts-node scripts/testnet-e2e.ts --generate-wallets
  *
- *   # Run full test (no workaround; requires agent already published)
+ *   # Run full test (requires both agents already published)
  *   E2E_REQUESTER_KEY=0x... E2E_PROVIDER_KEY=0x... npx ts-node scripts/testnet-e2e.ts
- *
- *   # Optional: force pending-publish stub workaround (legacy/debug only)
- *   E2E_REQUESTER_KEY=0x... E2E_PROVIDER_KEY=0x... npx ts-node scripts/testnet-e2e.ts --use-pending-stub
  *
  *   # Use custom RPC
  *   BASE_SEPOLIA_RPC=https://... E2E_REQUESTER_KEY=0x... E2E_PROVIDER_KEY=0x... npx ts-node scripts/testnet-e2e.ts
@@ -80,42 +77,11 @@ async function waitForState(
   throw new Error(`Timeout waiting for ${expectedState}, stuck at ${final.state}`);
 }
 
-/**
- * Create a temp state directory.
- * Optionally seeds pending-publish.json (workaround mode only).
- */
-function createStateDir(label: string, withPendingPublish: boolean): string {
+function createStateDir(label: string): string {
   const baseDir = path.join(process.cwd(), '.e2e-tmp');
   if (!fs.existsSync(baseDir)) fs.mkdirSync(baseDir, { mode: 0o700 });
   const dir = fs.mkdtempSync(path.join(baseDir, `${label}-`));
-  const actpDir = path.join(dir, '.actp');
-  fs.mkdirSync(actpDir, { mode: 0o700 });
-
-  if (withPendingPublish) {
-    const configHash = ethers.keccak256(ethers.toUtf8Bytes('e2e-test'));
-    const serviceType = 'e2e-test';
-    const serviceTypeHash = ethers.keccak256(ethers.toUtf8Bytes(serviceType));
-    const pending = {
-      version: 1,
-      configHash,
-      cid: 'QmE2ETest',
-      endpoint: 'https://test.agirails.io',
-      serviceDescriptors: [{
-        serviceTypeHash,
-        serviceType,
-        schemaURI: '',
-        minPrice: '50000',      // $0.05 USDC
-        maxPrice: '10000000',   // $10 USDC
-        avgCompletionTime: 60,
-        metadataCID: '',
-      }],
-      createdAt: new Date().toISOString(),
-      network: NETWORK,
-    };
-
-    const filePath = path.join(actpDir, `pending-publish.${NETWORK}.json`);
-    fs.writeFileSync(filePath, JSON.stringify(pending, null, 2), { mode: 0o600 });
-  }
+  fs.mkdirSync(path.join(dir, '.actp'), { mode: 0o700 });
 
   log('SETUP', `${label} state dir: ${dir}`);
   return dir;
@@ -174,7 +140,6 @@ async function generateWallets() {
 async function runE2E() {
   const requesterKey = process.env.E2E_REQUESTER_KEY;
   const providerKey = process.env.E2E_PROVIDER_KEY;
-  const usePendingStub = process.argv.includes('--use-pending-stub');
 
   if (!requesterKey || !providerKey) {
     console.error('Missing env vars: E2E_REQUESTER_KEY and E2E_PROVIDER_KEY');
@@ -194,7 +159,6 @@ async function runE2E() {
 
     log('SETUP', `RPC: ${RPC_URL}`);
     log('SETUP', `Network: ${NETWORK}`);
-    log('SETUP', `Pending-publish workaround: ${usePendingStub ? 'ENABLED' : 'DISABLED'}`);
 
     const requesterSigner = new ethers.Wallet(requesterKey, provider);
     const providerSigner = new ethers.Wallet(providerKey, provider);
@@ -208,16 +172,12 @@ async function runE2E() {
     log('SETUP', `Requester Smart Wallet: ${swRequester}`);
     log('SETUP', `Provider Smart Wallet:  ${swProvider}`);
 
-    // Create temp state directories (optionally with pending-publish stubs)
-    const requesterDir = createStateDir('requester', usePendingStub);
-    const providerDir = createStateDir('provider', usePendingStub);
+    const requesterDir = createStateDir('requester');
+    const providerDir = createStateDir('provider');
     stateDirs.push(requesterDir, providerDir);
 
     // ─── Phase 2: Create ACTP Clients ──────────────────────────────────
     log('CLIENT', 'Creating requester ACTP client (wallet: auto)...');
-    if (usePendingStub) {
-      process.env.ACTP_DIR = path.join(requesterDir, '.actp');
-    }
     const requesterClient = await ACTPClient.create({
       mode: 'testnet',
       privateKey: requesterKey,
@@ -227,18 +187,12 @@ async function runE2E() {
     log('CLIENT', 'Requester client created (Smart Wallet active)');
 
     log('CLIENT', 'Creating provider ACTP client (wallet: auto)...');
-    if (usePendingStub) {
-      process.env.ACTP_DIR = path.join(providerDir, '.actp');
-    }
     const providerClient = await ACTPClient.create({
       mode: 'testnet',
       privateKey: providerKey,
       wallet: 'auto',
       stateDirectory: providerDir,
     });
-    if (usePendingStub) {
-      delete process.env.ACTP_DIR; // cleanup
-    }
     log('CLIENT', 'Provider client created (Smart Wallet active)');
 
     // Enforce true Smart Wallet routing for this E2E.
@@ -248,8 +202,7 @@ async function runE2E() {
       throw new Error(
         'E2E requires Smart Wallet (auto) for both parties. ' +
         `Detected requester=${requesterTier ?? 'unknown'}, provider=${providerTier ?? 'unknown'}. ` +
-        'Run "actp publish" for both agents, then rerun. ' +
-        'Use --use-pending-stub only for legacy debugging.'
+        'Run "actp publish" for both agents, then rerun.'
       );
     }
 

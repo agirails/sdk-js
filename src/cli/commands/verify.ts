@@ -265,7 +265,6 @@ function resolveAddress(
   // Priority: --address flag > frontmatter wallet > skip
   if (override) return override;
   if (v4Config.wallet && /^0x[0-9a-fA-F]{40}$/.test(v4Config.wallet)) return v4Config.wallet;
-  // agent_id alone requires ownerOf lookup which needs a provider — skip for now
   return null;
 }
 

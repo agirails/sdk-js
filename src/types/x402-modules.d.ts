@@ -1,19 +1,16 @@
 /**
  * Minimal ambient module declarations for @x402/* packages.
  *
- * Workaround for upstream packaging bug: `@x402/fetch`, `@x402/evm`, and
- * `@x402/core` ship .d.ts files at `dist/cjs/index.d.ts` and expose them via
- * `package.json#exports` "types" subkey, but TypeScript's classic "node"
- * module resolution doesn't read exports maps. The top-level `types` field
- * in upstream `package.json` points to `./dist/index.d.ts` which does not
- * exist, causing TS2307 errors.
+ * EXTERNAL(@x402/fetch): the package's top-level `types` names ./dist/index.d.ts, which the tarball does not ship (2.9.0
+ * through 2.30.0), so classic "node" resolution finds no declarations for the root import
+ * https://github.com/x402-foundation/x402/blob/3414a56618e94f5aeff1c03295f7d5879a56157a/typescript/packages/http/fetch/package.json#L6
  *
- * Rather than switch our whole project to `moduleResolution: "node16"` (which
- * would ripple through hundreds of existing imports), we declare the minimal
- * surface we need here. Shapes are verified against the published tarballs
- * during the x402 integration spike (2026-04-11).
+ * The `@x402/core/*` and `@x402/evm/exact/server` subpaths exist only in the packages' `exports` maps, which this
+ * project's `moduleResolution: "node"` does not read; their declarations go when the project moves to "node16".
+ * `@x402/evm` resolves on its own, but its shipped declarations type values more narrowly than X402Adapter's
+ * assertions, so replacing that block is a change to X402Adapter.
  *
- * When upstream fixes their manifest, this file can be deleted.
+ * Shapes are verified against the published tarballs (x402 integration spike, 2026-04-11).
  *
  * @module types/x402-modules
  */
@@ -132,10 +129,6 @@ declare module '@x402/evm' {
 
   export const PERMIT2_ADDRESS: `0x${string}`;
   export const x402ExactPermit2ProxyAddress: `0x${string}`;
-}
-
-declare module '@x402/core/client' {
-  export * from '@x402/fetch';
 }
 
 // ---------------------------------------------------------------------------
