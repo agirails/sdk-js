@@ -1,0 +1,618 @@
+#!/usr/bin/env python3
+"""
+standard — registar standarda tvornice: generiranje STANDARD.md, pinani alati i stanje repoa pod standardom.
+
+  standard gen [--check] [--rules PATH] [--out PATH]      # STANDARD.md iz rules.toml; --check: exit 1 ako je zastario
+  standard install-tools [--lock PATH] [--dest DIR] [--only IME ...]
+  standard status [--json] [--repos DIR]                  # lint/format/typecheck/code-check izmjereni iz repoa
+  standard sync <repo> [--repos DIR] [--apply] [--into WORKTREE]   # kopija u .factory/; bez --apply samo ispis
+  standard install-hooks <repo> [--repos DIR] [--apply]   # pre-commit s code-checkom; bez --apply samo ispis
+
+install-tools preuzima samo sa URL-a iz locka, provjerava sha256 (i sha512 integrity za npm), vadi samo navedeni
+fajl ili `package/` stablo i pokreće `--version`; install skripte se ne pokreću.
+
+sync bez --apply ispiše popis i hasheve i ništa ne piše. S --apply upiše kopiju u .factory/ repoa (ili, uz --into, u vrh
+worktreea istog repoa) i SOURCE kao zadnji. Piše samo datoteke iz payloada i briše samo upravljane datoteke iz starog
+SOURCE kojih više nema; baseline i ostalo u .factory/ ne dira. Odbija (exit 1, ništa ne piše): prljav Harness, simboličku
+vezu u .factory/, ručno izmijenjenu kopiju i tuđu datoteku na putanji kopije.
+
+install-hooks bez --apply ispiše točan sadržaj hooka i ništa ne piše; s --apply upiše <git dir>/hooks/pre-commit.
+Hook pokreće `code-check diff --staged` iz ovog Harnessa, a kad ga na stroju nema, javnu kopiju `.factory/bin/code-check`
+uz upozorenje da interna imena nisu provjerena; bez ijednog commit je blokiran. Vlastiti hook prepoznaje se po oznaci
+(`standard.HOOK_MARKER`) i ažurira; tuđi pre-commit (i simbolička veza) se ne dira: exit 2 uz ispis. core.hooksPath u
+repou ili u globalnoj i sistemskoj konfiguraciji gita je odbijanje (exit 1), jer tada .git/hooks nije aktivan.
+
+Exit: 0 u redu, 1 odbijeno ili zastarjelo, 2 nije moguće izmjeriti ili dohvatiti (nikad prolaz) ili tuđi pre-commit.
+"""
+import argparse, base64, configparser, hashlib, json, os, platform, shutil, subprocess, sys, tarfile, tempfile
+import tomllib, urllib.error, urllib.request
+from pathlib import Path, PurePosixPath
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+from factory import gitsafe, layout, sandbox, standard  # noqa: E402
+from factory.model import MeasureError, sha256, sha256_file  # noqa: E402
+
+MAX_DOWNLOAD = 256 * 1024 * 1024
+FOREIGN_SHOWN = 8192
+VERSION_TIMEOUT = 30
+PLATFORM = f"{platform.system().lower()}-{platform.machine()}"
+
+MARKERS = {
+    "lint": {
+        "py": (("ruff.toml", ".ruff.toml", ".flake8"), (("pyproject.toml", "tool.ruff"), ("setup.cfg", "flake8"))),
+        "ts": (("eslint.config.js", "eslint.config.mjs", "eslint.config.cjs", "eslint.config.ts", ".eslintrc",
+                ".eslintrc.js", ".eslintrc.cjs", ".eslintrc.json", ".eslintrc.yml", ".eslintrc.yaml", "biome.json"),
+               (("package.json", "eslintConfig"),)),
+        "sol": ((".solhint.json", ".solhintrc"), ()),
+        "sh": ((".shellcheckrc",), ()),
+    },
+    "format": {
+        "py": (("ruff.toml", ".ruff.toml"), (("pyproject.toml", "tool.ruff"), ("pyproject.toml", "tool.black"))),
+        "ts": ((".prettierrc", ".prettierrc.json", ".prettierrc.js", ".prettierrc.cjs", ".prettierrc.mjs",
+                ".prettierrc.yml", ".prettierrc.yaml", "prettier.config.js", "prettier.config.mjs",
+                "prettier.config.cjs", "biome.json"),
+               (("package.json", "prettier"), ("package.json", "devDependencies.prettier"))),
+        "sol": (("foundry.toml",), ()),
+    },
+    "typecheck": {
+        "py": (("mypy.ini", ".mypy.ini", "pyrightconfig.json"),
+               (("pyproject.toml", "tool.mypy"), ("pyproject.toml", "tool.pyright"), ("setup.cfg", "mypy"))),
+        "ts": (("tsconfig.json",), ()),
+        "sol": (("foundry.toml",), ()),
+    },
+}
+CODE_CHECK_MARKERS = (f"{layout.SYNC_DIR}/SOURCE", layout.rel(layout.CODE_CHECK))
+
+
+class Refused(Exception):
+    """Odbijanje s razlogom: exit 1, ništa nije instalirano ni zapisano."""
+
+
+def say(*parts):
+    print(*parts, flush=True)
+
+
+def cmd_gen(args) -> int:
+    want = standard.generate(Path(args.rules))
+    out = Path(args.out)
+    have = out.read_text(encoding="utf-8") if out.is_file() else None
+    if args.check:
+        if have != want:
+            say(f"{out.name} je zastario ili ručno mijenjan → pokreni bin/standard gen")
+            return 1
+        say(f"{out.name} odgovara {Path(args.rules).name}")
+        return 0
+    if have == want:
+        say(f"{out.name} je već aktualan")
+        return 0
+    tmp = out.with_name(f".{out.name}.tmp")
+    tmp.write_text(want, encoding="utf-8")
+    os.replace(tmp, out)
+    say(f"zapisano: {out.name}")
+    return 0
+
+
+def fetch(url: str, target: Path) -> None:
+    part = target.with_name(target.name + ".part")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with urllib.request.urlopen(url, timeout=60) as resp, part.open("wb") as fh:
+            final = resp.geturl()
+            if not final.startswith(standard.URL_SCHEMES):
+                raise Refused(f"preusmjerenje na {final} nije https")
+            total = 0
+            for block in iter(lambda: resp.read(1 << 20), b""):
+                total += len(block)
+                if total > MAX_DOWNLOAD:
+                    raise Refused(f"arhiva je veća od {MAX_DOWNLOAD} bajtova")
+                fh.write(block)
+    except (urllib.error.URLError, OSError, TimeoutError) as exc:
+        part.unlink(missing_ok=True)
+        raise MeasureError(f"ne mogu dohvatiti {url}: {exc}") from exc
+    except Refused:
+        part.unlink(missing_ok=True)
+        raise
+    os.replace(part, target)
+
+
+def verified_archive(tool: standard.Tool, dest: Path) -> Path:
+    rel = tool.archive or f".dl/{PurePosixPath(tool.url).name}"
+    archive = dest / rel
+    if archive.is_file() and sha256_file(archive) == tool.sha256:
+        return archive
+    fetch(tool.url, archive)
+    got = sha256_file(archive)
+    if got != tool.sha256:
+        archive.unlink()
+        raise Refused(f"sha256 se ne slaže: lock {tool.sha256}, preuzeto {got}")
+    if tool.integrity:
+        digest = "sha512-" + base64.b64encode(hashlib.sha512(archive.read_bytes()).digest()).decode()
+        if digest != tool.integrity:
+            archive.unlink()
+            raise Refused("npm integrity (sha512) se ne slaže s lockom")
+    return archive
+
+
+def run_version(exe: Path, tool: standard.Tool) -> str:
+    with tempfile.TemporaryDirectory() as home:
+        env = {"PATH": os.defpath, "HOME": home, "LANG": "C.UTF-8"}
+        try:
+            res = subprocess.run([str(exe), *tool.version_args], capture_output=True, text=True, env=env, cwd=home,
+                                 timeout=VERSION_TIMEOUT)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise Refused(f"{exe.name} se ne može pokrenuti: {exc}") from exc
+    out = (res.stdout + res.stderr).strip()
+    if res.returncode != 0 or tool.version not in out:
+        raise Refused(f"{exe.name} {' '.join(tool.version_args)} ne javlja verziju {tool.version} ({out[:200]!r})")
+    return out.splitlines()[0] if out else ""
+
+
+def install_binary(tool: standard.Tool, archive: Path, dest: Path) -> str:
+    target = dest / tool.dest
+    staging = target.with_name(f".{target.name}.new")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with tarfile.open(archive, "r:gz") as tf:
+            try:
+                member = tf.getmember(tool.member)
+            except KeyError as exc:
+                raise Refused(f"arhiva nema {tool.member}") from exc
+            if not member.isfile():
+                raise Refused(f"{tool.member} u arhivi nije običan fajl")
+            src = tf.extractfile(member)
+            with staging.open("wb") as fh:
+                shutil.copyfileobj(src, fh)
+    except (tarfile.TarError, OSError) as exc:
+        staging.unlink(missing_ok=True)
+        raise Refused(f"arhiva se ne može pročitati: {exc}") from exc
+    staging.chmod(0o755)
+    try:
+        line = run_version(staging, tool)
+    except Refused:
+        staging.unlink(missing_ok=True)
+        raise
+    os.replace(staging, target)
+    return line
+
+
+def npm_members(tf: tarfile.TarFile) -> dict[str, tarfile.TarInfo]:
+    files = {}
+    for m in tf.getmembers():
+        parts = PurePosixPath(m.name).parts
+        if not parts or parts[0] != "package" or m.name.startswith("/") or ".." in parts:
+            raise Refused(f"nedopušten član npm arhive: {m.name}")
+        if m.isdir():
+            continue
+        if not m.isfile():
+            raise Refused(f"član npm arhive nije običan fajl: {m.name}")
+        rel = PurePosixPath(*parts[1:])
+        if not rel.parts:
+            raise Refused(f"nedopušten član npm arhive: {m.name}")
+        files[str(rel)] = m
+    return files
+
+
+def tree_matches(tf: tarfile.TarFile, files: dict, target: Path) -> bool:
+    if not target.is_dir():
+        return False
+    on_disk = {str(p.relative_to(target).as_posix()) for p in target.rglob("*") if p.is_file() or p.is_symlink()}
+    if on_disk != set(files):
+        return False
+    for rel, m in files.items():
+        path = target / rel
+        if path.is_symlink() or sha256(tf.extractfile(m).read()) != sha256_file(path):
+            return False
+    return True
+
+
+def install_npm(tool: standard.Tool, archive: Path, dest: Path) -> str:
+    target = dest / tool.dest
+    try:
+        with tarfile.open(archive, "r:gz") as tf:
+            files = npm_members(tf)
+            if "package.json" not in files:
+                raise Refused("npm arhiva nema package/package.json")
+            meta = json.loads(tf.extractfile(files["package.json"]).read())
+            if meta.get("version") != tool.version:
+                raise Refused(f"package.json javlja verziju {meta.get('version')}, lock {tool.version}")
+            if tree_matches(tf, files, target):
+                return f"{tool.name} {tool.version} već instaliran (sadržaj = arhiva)"
+            staging = target.with_name(f".{target.name}.new")
+            if staging.exists():
+                shutil.rmtree(staging)
+            for rel, m in sorted(files.items()):
+                out = staging / rel
+                out.parent.mkdir(parents=True, exist_ok=True)
+                with out.open("wb") as fh:
+                    shutil.copyfileobj(tf.extractfile(m), fh)
+                out.chmod(0o755 if m.mode & 0o111 else 0o644)
+    except (tarfile.TarError, OSError, json.JSONDecodeError) as exc:
+        raise Refused(f"npm arhiva se ne može pročitati: {exc}") from exc
+    old = target.with_name(f".{target.name}.old")
+    if target.exists():
+        os.replace(target, old)
+    os.replace(staging, target)
+    if old.exists():
+        shutil.rmtree(old)
+    return f"{tool.name} {tool.version} instaliran"
+
+
+def install_one(tool: standard.Tool, dest: Path) -> str:
+    if tool.platform and tool.platform != PLATFORM:
+        raise Refused(f"lock je za {tool.platform}, ovaj sustav je {PLATFORM}")
+    archive = verified_archive(tool, dest)
+    if tool.kind == "npm":
+        return install_npm(tool, archive, dest)
+    return f"{tool.name} {tool.version} instaliran → {tool.dest} ({install_binary(tool, archive, dest)})"
+
+
+def cmd_install_tools(args) -> int:
+    lock = standard.load_lock(Path(args.lock))
+    unknown = sorted(set(args.only or ()) - set(lock.tools))
+    if unknown:
+        raise MeasureError(f"nema u locku: {', '.join(unknown)}")
+    dest = Path(args.dest).resolve()
+    worst = 0
+    for name in sorted(lock.tools):
+        if args.only and name not in args.only:
+            continue
+        tool = lock.tools[name]
+        try:
+            say(install_one(tool, dest))
+        except Refused as exc:
+            say(f"odbijeno: {name} {tool.version}: {exc}")
+            worst = max(worst, 1)
+        except MeasureError as exc:
+            say(f"nije dohvaćeno: {name} {tool.version}: {exc}")
+            worst = 2
+    return worst
+
+
+def has_key(path: Path, dotted: str) -> bool:
+    if not path.is_file():
+        return False
+    try:
+        if path.suffix == ".cfg":
+            cfg = configparser.ConfigParser()
+            cfg.read(path, encoding="utf-8")
+            return cfg.has_section(dotted)
+        data = tomllib.loads(path.read_text(encoding="utf-8")) if path.suffix == ".toml" else \
+            json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, configparser.Error, tomllib.TOMLDecodeError, json.JSONDecodeError) as exc:
+        raise MeasureError(f"{path}: ne mogu pročitati ({exc})") from exc
+    for part in dotted.split("."):
+        if not isinstance(data, dict) or part not in data:
+            return False
+        data = data[part]
+    return True
+
+
+def measure(root: Path, check: str, langs) -> tuple[bool | None, dict]:
+    per = {}
+    for lang in sorted(langs):
+        spec = MARKERS[check].get(lang)
+        if spec is None:
+            continue
+        files, keys = spec
+        per[lang] = any((root / f).is_file() for f in files) or any(has_key(root / f, k) for f, k in keys)
+    return (all(per.values()) if per else None), per
+
+
+def status_row(repo: standard.Repo) -> dict:
+    row = {"id": repo.id, "name": repo.name, "tier": repo.tier, "enforce_as": repo.enforce_as, "path": str(repo.path),
+           "langs": list(repo.langs), "proof": bool(repo.proof)}
+    if not repo.path.is_dir():
+        row.update(lint=None, format=None, typecheck=None, code_check=None, detail={}, trust="nije izmjereno",
+                   trust_reason=f"putanja ne postoji: {repo.path}")
+        return row
+    detail = {}
+    for check in ("lint", "format", "typecheck"):
+        row[check], detail[check] = measure(repo.path, check, standard.code_langs(repo))
+    row["code_check"] = any((repo.path / m).is_file() for m in CODE_CHECK_MARKERS)
+    row["detail"] = detail
+    missing = [k for k in ("proof", "lint", "format", "code_check") if row[k] is False]
+    if missing:
+        row["trust"], row["trust_reason"] = "R0", "R1 traži proof, lint, formatter i code-check; fali: " + ", ".join(missing)
+    else:
+        row["trust"], row["trust_reason"] = "neizmjereno", "R1+ traži zelene provjere na bazi; mjeri se od F2"
+    return row
+
+
+def mark(value) -> str:
+    return {True: "da", False: "ne", None: "n/a"}[value]
+
+
+def cmd_status(args) -> int:
+    rows = [status_row(r) for r in standard.load_repos(Path(args.repos))]
+    if args.json:
+        say(json.dumps({"repos": rows}, ensure_ascii=False, indent=2, sort_keys=True))
+    else:
+        say(f"{'repo':<14} {'tier':<5} {'proof':<6} {'lint':<5} {'format':<7} {'typecheck':<10} {'code-check':<11} razina")
+        for r in rows:
+            say(f"{r['id']:<14} {r['tier'] + '/' + r['enforce_as']:<5} {mark(r['proof']):<6} {mark(r['lint']):<5} "
+                f"{mark(r['format']):<7} {mark(r['typecheck']):<10} {mark(r['code_check']):<11} {r['trust']} "
+                f"({r['trust_reason']})")
+    return 2 if any(r["trust"] == "nije izmjereno" for r in rows) else 0
+
+
+def find_repo(args) -> standard.Repo:
+    repos = {r.id: r for r in standard.load_repos(Path(args.repos))}
+    if args.repo not in repos:
+        raise MeasureError(f"nema repoa {args.repo} u {args.repos} (ima: {', '.join(sorted(repos))})")
+    repo = repos[args.repo]
+    if not repo.path.is_dir():
+        raise MeasureError(f"putanja repoa ne postoji: {repo.path}")
+    return repo
+
+
+def sync_target(repo: standard.Repo, into: str | None) -> Path:
+    """Korijen u koji sync piše: repo iz repos/<id>.toml ili, uz --into, vrh worktreea istog repoa (isti git common
+    dir). Drugi repo ili poddirektorij se odbija, jer bi kopija završila tamo gdje je CI ne čita."""
+    if into is None:
+        return repo.path
+    target = Path(into).resolve()
+    if not target.is_dir():
+        raise MeasureError(f"--into ne postoji: {target}")
+
+    def common(root: Path) -> tuple[str, str]:
+        git = gitsafe.Git(root)
+        return (git.text("rev-parse", "--path-format=absolute", "--show-toplevel"),
+                git.text("rev-parse", "--path-format=absolute", "--git-common-dir"))
+    top, target_common = common(target)
+    if Path(top).resolve() != target:
+        raise Refused(f"--into mora biti vrh worktreea, a {target} je unutar {top}")
+    if Path(target_common).resolve() != Path(common(repo.path)[1]).resolve():
+        raise Refused(f"--into {target} nije worktree repoa {repo.id} ({repo.path})")
+    return target
+
+
+def sync_refusals(factory: Path, payload: dict[str, bytes]) -> tuple[dict[str, str], list[str]]:
+    """Stari manifest i razlozi odbijanja: simbolička veza na putu, ručno izmijenjena upravljana datoteka, ili tuđa
+    datoteka na putanji koju bi sync prepisao. Datoteke koje nisu u manifestu ni u payloadu (baseline) se ne diraju."""
+    if factory.is_symlink():
+        return {}, [f"{layout.SYNC_DIR} je simbolička veza"]
+    links = sorted(p.relative_to(factory).as_posix() for p in factory.rglob("*") if p.is_symlink()) \
+        if factory.is_dir() else []
+    if links:
+        return {}, [f"simbolička veza u {layout.SYNC_DIR}: {rel}" for rel in links]
+    source = factory / "SOURCE"
+    old = standard.parse_source(source.read_text(encoding="utf-8"), str(source)) if source.is_file() else {}
+    problems = []
+    for rel, digest in sorted(old.items()):
+        path = factory / rel
+        if path.is_file() and sha256_file(path) != digest:
+            problems.append(f"ručno izmijenjena kopija: {layout.SYNC_DIR}/{rel} → izmjenu napravi u Harnessu")
+    for rel in sorted(payload):
+        if rel not in old and (factory / rel).exists():
+            problems.append(f"tuđa datoteka na putanji kopije: {layout.SYNC_DIR}/{rel}")
+    return old, problems
+
+
+def write_file(target: Path, data: bytes, mode: int) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    staging = target.with_name(f".{target.name}.factory-new")
+    staging.unlink(missing_ok=True)
+    with os.fdopen(os.open(staging, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode), "wb") as fh:
+        fh.write(data)
+    staging.chmod(mode)
+    os.replace(staging, target)
+
+
+def apply_sync(factory: Path, payload: dict[str, bytes], old: dict[str, str], source: str) -> dict[str, int]:
+    """Upiše payload, obriše upravljane datoteke kojih više nema, pa SOURCE kao zadnji, da prekinut sync ostavi stari
+    manifest i sljedeći ga prepozna."""
+    counts = {"novo": 0, "izmijenjeno": 0, "isto": 0, "obrisano": 0}
+    for rel, data in payload.items():
+        path = factory / rel
+        mode = 0o755 if rel in standard.SYNC_EXECUTABLE else 0o644
+        if path.is_file() and sha256_file(path) == sha256(data) and (path.stat().st_mode & 0o777) == mode:
+            counts["isto"] += 1
+            continue
+        counts["izmijenjeno" if path.exists() else "novo"] += 1
+        write_file(path, data, mode)
+    for rel in sorted(set(old) - set(payload)):
+        path = factory / rel
+        if path.is_file():
+            path.unlink()
+            counts["obrisano"] += 1
+        parent = path.parent
+        while parent != factory and parent.is_dir() and not any(parent.iterdir()):
+            parent.rmdir()
+            parent = parent.parent
+    target = factory / "SOURCE"
+    if not (target.is_file() and target.read_text(encoding="utf-8") == source):
+        write_file(target, source.encode("utf-8"), 0o644)
+    return counts
+
+
+def cmd_sync(args) -> int:
+    repo = find_repo(args)
+    if repo.path == layout.ROOT:
+        raise Refused("Harness je izvor standarda; sync ide samo u druge repoe")
+    if repo.tier == "B" and not repo.consent:
+        raise Refused("tier B: naši fajlovi u klijentskom stablu samo uz dogovor (consent = true u repos/<id>.toml)")
+    root = sync_target(repo, args.into)
+    payload = standard.sync_payload(repo)
+    git = gitsafe.Git(layout.ROOT)
+    commit, dirty = git.text("rev-parse", "HEAD"), bool(git.text("status", "--porcelain"))
+    factory = root / layout.SYNC_DIR
+    source = standard.sync_source(payload, commit, dirty)
+    if args.apply:
+        if dirty:
+            raise Refused("Harness ima necommitane izmjene → commitaj ih prije synca, da SOURCE imenuje stvaran commit")
+        old, problems = sync_refusals(factory, payload)
+        if problems:
+            for line in problems:
+                say(f"  {line}")
+            raise Refused(f"sync {repo.id} → {factory}: ništa nije zapisano")
+        counts = apply_sync(factory, payload, old, source)
+        changed = counts["novo"] + counts["izmijenjeno"] + counts["obrisano"]
+        say(f"sync {repo.id} → {factory}: " + (", ".join(f"{k} {v}" for k, v in counts.items()) if changed
+                                                else f"bez promjena ({counts['isto']} datoteka)"))
+        say(f"  harness {commit}")
+        return 0
+    say(f"dry-run: sync {repo.id} → {factory} (ništa se ne piše; upis uz --apply)")
+    for rel, data in payload.items():
+        say(f"  {layout.SYNC_DIR}/{rel} {sha256(data)}")
+    say(f"  {layout.SYNC_DIR}/SOURCE:")
+    for line in source.splitlines():
+        say(f"    {line}")
+    if dirty:
+        say("Harness ima necommitane izmjene → commitaj ih prije synca")
+    return 2 if dirty else 0
+
+
+def hooks_dir(root: Path) -> Path:
+    dotgit = root / ".git"
+    if dotgit.is_dir():
+        return dotgit / "hooks"
+    if not dotgit.is_file():
+        raise MeasureError(f"{root} nije git repo")
+    text = dotgit.read_text(encoding="utf-8").strip()
+    if not text.startswith("gitdir:"):
+        raise MeasureError(f"{dotgit}: neočekivan sadržaj")
+    gitdir = standard.resolve_path(text.split(":", 1)[1].strip(), root)
+    common = gitdir / "commondir"
+    if common.is_file():
+        gitdir = standard.resolve_path(common.read_text(encoding="utf-8").strip(), gitdir)
+    return gitdir / "hooks"
+
+
+def hooks_path_settings(root: Path) -> list[str]:
+    """core.hooksPath kako ga vidi korisnikov git u tom repou: sve razine, s `[include]` i `[includeIf]`.
+
+    Pita se git hosta s korisnikovom okolinom (bez GIT_DIR, GIT_WORK_TREE i GIT_INDEX_FILE) iz vrha repoa, jer tek tako
+    vrijede uvjeti `includeIf` (gitdir, onbranch, hasconfig). `git config` samo čita konfiguraciju: ne pokreće hookove,
+    fsmonitor ni filtere. Redak je „vrijednost (razina, izvor)“, a izvor je datoteka u kojoj je postavka, i kad je
+    uključena iz druge.
+    """
+    env = {k: v for k, v in os.environ.items() if k not in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE")}
+    argv = [gitsafe.executable(), "--no-pager", "-C", str(root), "config", "-z", "--show-scope", "--show-origin",
+            "--includes", "--get-all", "core.hooksPath"]
+    try:
+        res = subprocess.run(argv, cwd=root, env=env, capture_output=True, timeout=VERSION_TIMEOUT)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise MeasureError(f"git config core.hooksPath se ne može pročitati: {exc}") from exc
+    if res.returncode not in (0, 1):
+        raise MeasureError(f"git config core.hooksPath nije uspio: {res.stderr.decode(errors='replace').strip()[:200]}")
+    fields = res.stdout.decode("utf-8", "surrogateescape").split("\0")[:-1]
+    if len(fields) % 3:
+        raise MeasureError(f"git config core.hooksPath je vratio neočekivan izlaz: {res.stdout[:200]!r}")
+    return [f"{value} ({scope}, {origin})" for scope, origin, value in zip(*[iter(fields)] * 3)]
+
+
+def symlinked_hooks_dir(hooks: Path) -> str | None:
+    """Stvarno odredište kad je direktorij hookova simbolička veza (hook bi završio izvan repoa), inače None."""
+    return os.path.realpath(hooks) if os.path.islink(hooks) else None
+
+
+def hook_state(target: Path, content: str) -> str:
+    """"novi", "isti" ili "naš" (stariji vlastiti hook); tuđi hook ili simbolička veza je "tuđi"."""
+    if not os.path.lexists(target):
+        return "novi"
+    if target.is_symlink() or not target.is_file():
+        return "tuđi"
+    have = target.read_bytes()
+    if have == content.encode("utf-8"):
+        return "isti"
+    lines = have.split(b"\n", 2)
+    return "naš" if len(lines) > 1 and lines[1].startswith(standard.HOOK_MARKER.encode()) else "tuđi"
+
+
+def show_foreign(target: Path, shown) -> None:
+    say(f"odbijeno: {shown} postoji i nije hook tvornice (nema oznake „{standard.HOOK_MARKER}“), pa ga ne prepisujem")
+    say("→ spoji ga ručno s hookom tvornice ili ga ukloni, pa ponovi install-hooks")
+    if target.is_symlink():
+        say(f"{shown} je simbolička veza na {os.readlink(target)}")
+        return
+    data = target.read_bytes() if target.is_file() else b""
+    say(f"--- {shown} ({len(data)} bajtova) ---")
+    sys.stdout.write(sandbox.printable(data[:FOREIGN_SHOWN]).decode("utf-8"))
+    say(f"\n--- kraj ({'skraćeno' if len(data) > FOREIGN_SHOWN else 'cijelo'}) ---")
+
+
+def write_hook(target: Path, content: str) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    staging = target.with_name(f".{target.name}.factory-new")
+    staging.unlink(missing_ok=True)
+    with os.fdopen(os.open(staging, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o755), "w", encoding="utf-8") as fh:
+        fh.write(content)
+    staging.chmod(0o755)
+    os.replace(staging, target)
+
+
+def cmd_install_hooks(args) -> int:
+    repo = find_repo(args)
+    target = hooks_dir(repo.path) / "pre-commit"
+    shown = target.relative_to(repo.path) if target.is_relative_to(repo.path) else target
+    settings = hooks_path_settings(repo.path)
+    if settings:
+        raise Refused(f"core.hooksPath je postavljen ({'; '.join(settings)}), pa {shown} nije aktivan → ukloni "
+                      "core.hooksPath ili sam pozovi code-check iz tog hooka")
+    real = symlinked_hooks_dir(target.parent)
+    if real is not None:
+        raise Refused(f"{shown.parent} je simbolička veza na {real}, pa bi hook završio u direktoriju koji mogu "
+                      "koristiti i drugi repoi → zamijeni vezu običnim direktorijem ili sam pozovi code-check iz tog hooka")
+    content = standard.pre_commit_hook(layout.ROOT)
+    state = hook_state(target, content)
+    if state == "tuđi":
+        show_foreign(target, shown)
+        return 2
+    if not args.apply:
+        say(f"dry-run: install-hooks {repo.id} → {shown} ({state}); ništa se ne piše, upis uz --apply")
+        say(f"hook pokreće code-check diff --staged --repo <vrh repoa> iz {layout.ROOT}; bez Harnessa javnu kopiju "
+            f"{layout.SYNC_DIR}/{layout.rel(layout.CODE_CHECK)}, a bez ičega blokira commit")
+        say(f"--- {shown} ---")
+        sys.stdout.write(content)
+        say("--- kraj ---")
+        return 0
+    if state == "isti":
+        say(f"{shown} je već aktualan")
+        return 0
+    write_hook(target, content)
+    say(f"zapisano: {shown} ({'ažuriran vlastiti hook' if state == 'naš' else 'novi hook'})")
+    return 0
+
+
+def parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(prog="standard", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = p.add_subparsers(dest="cmd", required=True)
+    g = sub.add_parser("gen")
+    g.add_argument("--check", action="store_true")
+    g.add_argument("--rules", default=str(layout.RULES))
+    g.add_argument("--out", default=str(layout.STANDARD / "STANDARD.md"))
+    i = sub.add_parser("install-tools")
+    i.add_argument("--lock", default=str(layout.LOCK))
+    i.add_argument("--dest", default=str(layout.TOOLS))
+    i.add_argument("--only", nargs="+")
+    s = sub.add_parser("status")
+    s.add_argument("--json", action="store_true")
+    s.add_argument("--repos", default=str(layout.REPOS))
+    for name in ("sync", "install-hooks"):
+        c = sub.add_parser(name)
+        c.add_argument("repo")
+        c.add_argument("--repos", default=str(layout.REPOS))
+        c.add_argument("--apply", action="store_true")
+        if name == "sync":
+            c.add_argument("--into", metavar="WORKTREE")
+    return p
+
+
+COMMANDS = {"gen": cmd_gen, "install-tools": cmd_install_tools, "status": cmd_status, "sync": cmd_sync,
+            "install-hooks": cmd_install_hooks}
+
+
+def main(argv=None) -> int:
+    args = parser().parse_args(argv)
+    try:
+        return COMMANDS[args.cmd](args)
+    except Refused as exc:
+        say(f"odbijeno: {exc}")
+        return 1
+    except MeasureError as exc:
+        say(f"nije moguće izmjeriti: {exc}")
+        return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())

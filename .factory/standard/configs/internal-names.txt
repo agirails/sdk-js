@@ -1,0 +1,2 @@
+# K9: javna kopija ne nosi interna imena ni njihove otiske, jer se kratko ime iz otiska vraća
+# rječnikom. Interna imena provjerava code-check iz Harnessa nad ovim repoom.

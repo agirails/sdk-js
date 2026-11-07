@@ -1,0 +1,65 @@
+locked = 2026-11-06
+
+[tool.actionlint]
+version = "1.7.12"
+kind = "tar.gz"
+platform = "linux-x86_64"
+url = "https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz"
+sha256 = "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"
+checksum_source = "https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_checksums.txt"
+provenance = "GitHub artifact attestation, SLSA v1, rhysd/actionlint/.github/workflows/release.yaml@refs/tags/v1.7.12"
+member = "actionlint"
+dest = "bin/actionlint"
+version_args = ["-version"]
+released = 2026-03-30
+
+[tool.gitleaks]
+version = "8.30.1"
+kind = "tar.gz"
+platform = "linux-x86_64"
+url = "https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz"
+sha256 = "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+checksum_source = "https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_checksums.txt"
+provenance = "nepotpisan checksums.txt; nema GitHub attestationa"
+member = "gitleaks"
+dest = "bin/gitleaks"
+version_args = ["version"]
+released = 2026-03-21
+
+[tool.shellcheck]
+version = "0.11.0"
+kind = "tar.gz"
+platform = "linux-x86_64"
+url = "https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.linux.x86_64.tar.gz"
+sha256 = "b7af85e41cc99489dcc21d66c6d5f3685138f06d34651e6d34b42ec6d54fe6f6"
+checksum_source = "https://api.github.com/repos/koalaman/shellcheck/releases/tags/v0.11.0 (assets[].digest)"
+provenance = "nepotpisano; nema GitHub attestationa; izdanje objavio github-actions[bot] iz koalaman/shellcheck"
+member = "shellcheck-v0.11.0/shellcheck"
+dest = "bin/shellcheck"
+version_args = ["--version"]
+released = 2025-08-04
+
+[tool.typescript]
+version = "5.9.3"
+kind = "npm"
+url = "https://registry.npmjs.org/typescript/-/typescript-5.9.3.tgz"
+sha256 = "10e108c9cf7d5f2879053dff18515fb405abf2ccef63eaaf017d9c571687a1d3"
+integrity = "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw=="
+checksum_source = "https://registry.npmjs.org/typescript/5.9.3"
+provenance = "npm registry potpis (dist.signatures); objavio typescript-bot"
+archive = "node/typescript-5.9.3.tgz"
+dest = "node/node_modules/typescript"
+released = 2025-09-30
+
+[tool.zizmor]
+version = "1.31.1"
+kind = "tar.gz"
+platform = "linux-x86_64"
+url = "https://github.com/zizmorcore/zizmor/releases/download/v1.31.1/zizmor-x86_64-unknown-linux-gnu.tar.gz"
+sha256 = "d185f726bdaf92df78273217dfdd24ebcd6b0ef48cf3ce776ff5762b6e138c99"
+checksum_source = "https://api.github.com/repos/zizmorcore/zizmor/releases/tags/v1.31.1 (assets[].digest)"
+provenance = "GitHub artifact attestation, SLSA v1, zizmorcore/zizmor/.github/workflows/release-binaries.yml@refs/tags/v1.31.1"
+member = "zizmor"
+dest = "bin/zizmor"
+version_args = ["--version"]
+released = 2026-10-15
