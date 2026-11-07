@@ -310,6 +310,15 @@ export class MockStateManager {
       throw new MockStateCorruptedError(sanitizePath(this.statePath));
     }
 
+    for (const escrow of Object.values(state.escrows)) {
+      if (!Array.isArray(escrow.transactions) || escrow.transactions.length !== 1) {
+        throw new MockStateCorruptedError(
+          sanitizePath(this.statePath),
+          new Error(`escrow ${String(escrow.id)} must link exactly one transaction`)
+        );
+      }
+    }
+
     // PRD §5.2 migration: transactions persisted by SDK ≤ 3.5.3 lack the
     // `serviceHash` field. Backfill in-place using the same rule as
     // MockRuntime.createTransaction (bytes32 passthrough → keccak256(name)

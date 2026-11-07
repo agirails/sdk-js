@@ -1,6 +1,6 @@
 {
   "version": 3,
-  "commit": "460b62891b13f257a4ad2aeb2f4d1a8e930d4a75",
+  "commit": "9d31bcd4441875bc90ce36491087400fb1b9d2d3",
   "entries": [
     {
       "rule": "S3",
@@ -31212,12 +31212,6 @@
       "rule": "K2",
       "path": "src/runtime/MockRuntime.ts",
       "fp": "ff4d817e5b2f3b60a788a6bf6255e7fd4129d0911d6c89ed95e78d6e86e1cc06",
-      "count": 1
-    },
-    {
-      "rule": "K3",
-      "path": "src/runtime/MockRuntime.ts",
-      "fp": "03391923a149d29aad9e2263f5cf959a3bb74d21093d246bca7ead50fe12cd5a",
       "count": 1
     },
     {
