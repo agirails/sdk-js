@@ -10,7 +10,7 @@
  * - Legacy fallback migration
  */
 
-import { existsSync, rmSync, chmodSync } from 'fs';
+import { existsSync, rmSync, chmodSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { ethers } from 'ethers';
 import {
@@ -47,6 +47,12 @@ const SAMPLE_PENDING: PendingPublish = {
     },
   ],
   createdAt: '2026-02-11T12:00:00.000Z',
+};
+
+const SAMPLE_PENDING_V2: PendingPublish = {
+  ...SAMPLE_PENDING,
+  version: 2,
+  erc8004RegistrationCid: 'bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi',
 };
 
 describe('pendingPublish', () => {
@@ -104,6 +110,19 @@ describe('pendingPublish', () => {
       savePendingPublish(SAMPLE_PENDING);
       expect(existsSync(TEST_DIR)).toBe(true);
     });
+
+    it('should preserve the registration-v1 CID for v2 state', () => {
+      savePendingPublish(SAMPLE_PENDING_V2);
+
+      const loaded = loadPendingPublish();
+      expect(loaded?.version).toBe(2);
+      if (loaded?.version !== 2) {
+        throw new Error('Expected pending publish v2');
+      }
+      expect(loaded.erc8004RegistrationCid).toBe(
+        SAMPLE_PENDING_V2.erc8004RegistrationCid
+      );
+    });
   });
 
   describe('loadPendingPublish()', () => {
@@ -113,6 +132,52 @@ describe('pendingPublish', () => {
 
     it('should return null when network-scoped file does not exist', () => {
       expect(loadPendingPublish('base-sepolia')).toBeNull();
+    });
+
+    it('should reject unknown schema versions', () => {
+      savePendingPublish(SAMPLE_PENDING);
+      writeFileSync(
+        getPendingPublishPath(),
+        JSON.stringify({
+          ...SAMPLE_PENDING,
+          version: 99,
+          serviceDescriptors: [],
+        })
+      );
+
+      expect(() => loadPendingPublish()).toThrow('Unsupported pending publish version: 99');
+    });
+
+    it('should reject v2 state missing the registration-v1 CID', () => {
+      savePendingPublish(SAMPLE_PENDING);
+      writeFileSync(
+        getPendingPublishPath(),
+        JSON.stringify({
+          ...SAMPLE_PENDING,
+          version: 2,
+          serviceDescriptors: [],
+        })
+      );
+
+      expect(() => loadPendingPublish()).toThrow('missing erc8004RegistrationCid');
+    });
+
+    it('should reject malformed v2 registration CIDs before activation', () => {
+      expect(() => savePendingPublish({
+        ...SAMPLE_PENDING_V2,
+        erc8004RegistrationCid: 'not-a-cid',
+      })).toThrow('Invalid CID format');
+
+      savePendingPublish(SAMPLE_PENDING_V2);
+      writeFileSync(
+        getPendingPublishPath(),
+        JSON.stringify({
+          ...SAMPLE_PENDING_V2,
+          erc8004RegistrationCid: 'ipfs://not-bare',
+          serviceDescriptors: [],
+        })
+      );
+      expect(() => loadPendingPublish()).toThrow('Invalid CID format');
     });
   });
 

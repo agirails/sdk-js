@@ -22,22 +22,69 @@ on:
 jobs:
   secret-scan:
     runs-on: ubuntu-latest
-    # gitleaks-action started requiring a paid license for GitHub Organizations
-    # in late 2024 (see https://github.com/gitleaks/gitleaks-action#-announcement).
-    # Until an org-level GITLEAKS_LICENSE secret is provisioned (tracked
-    # separately from this PR), we run the action but don't gate the
-    # pipeline on it — the job becomes a warning rather than a blocker.
-    # Downstream jobs that have `needs: secret-scan` still proceed because
-    # `continue-on-error` reports success-with-errors to dependents.
-    # Revert this once GITLEAKS_LICENSE is configured.
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: gitleaks/gitleaks-action@v2
+
+      # gitleaks-action v2 requires a separate license for organization
+      # repositories. Run a digest-pinned open-source image directly so this
+      # remains a real merge gate rather than an always-red warning.
+      - name: Verify pinned Gitleaks scanner
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_IMAGE: 'ghcr.io/gitleaks/gitleaks:v8.30.0@sha256:691af3c7c5a48b16f187ce3446d5f194838f91238f27270ed36eef6359a574d9'
+        run: |
+          docker pull "$GITLEAKS_IMAGE"
+          docker run --rm "$GITLEAKS_IMAGE" version
+
+          # A scanner that starts but silently misses secrets is not a gate.
+          # Build the canary at runtime so it is never committed as one token.
+          canary_dir="$RUNNER_TEMP/gitleaks-canary"
+          mkdir -p "$canary_dir"
+          printf '%s%s\n' 'api_token = "Zf3D0LXCM3EIM' 'bgJpUNnkRtOfOueHznB"' \
+            > "$canary_dir/secret.txt"
+
+          set +e
+          docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            --volume "$canary_dir:/canary:ro" \
+            "$GITLEAKS_IMAGE" dir \
+            --no-banner \
+            --no-color \
+            --redact \
+            /canary
+          canary_status=$?
+          set -e
+
+          if [[ "$canary_status" -ne 1 ]]; then
+            echo "Pinned Gitleaks image failed its detection canary (status: $canary_status)" >&2
+            exit 2
+          fi
+
+      - name: Scan commits introduced by this event
+        env:
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          GITLEAKS_IMAGE: 'ghcr.io/gitleaks/gitleaks:v8.30.0@sha256:691af3c7c5a48b16f187ce3446d5f194838f91238f27270ed36eef6359a574d9'
+        run: |
+          if [[ ! "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]] || [[ ! "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Invalid Git commit range supplied by the workflow event" >&2
+            exit 2
+          fi
+          if [[ "$BASE_SHA" == '0000000000000000000000000000000000000000' ]]; then
+            BASE_SHA="$(git rev-parse "$HEAD_SHA^")"
+          fi
+          docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            --volume "$GITHUB_WORKSPACE:/repo:ro" \
+            --workdir /repo \
+            "$GITLEAKS_IMAGE" git \
+            --no-banner \
+            --no-color \
+            --redact \
+            --verbose \
+            --log-opts="$BASE_SHA..$HEAD_SHA" \
+            /repo
 
   lint-build-test:
     needs: secret-scan

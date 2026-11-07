@@ -206,11 +206,26 @@ function buildV4Config(
     max_price: getNumber(pricingRaw, 'max_price') ?? base,
   };
 
-  // Network
+  // Network. The manifest vocabulary is mock | testnet | mainnet. Older
+  // wizard-generated files used chain labels, so preserve those two known
+  // aliases explicitly. Never reinterpret an unknown authored value as mock.
   const networkRaw = getString(fm, 'network') || V4_DEFAULTS.network;
-  const network = V4_CONSTRAINTS.VALID_NETWORKS.includes(networkRaw as 'mock' | 'testnet' | 'mainnet')
-    ? (networkRaw as 'mock' | 'testnet' | 'mainnet')
-    : V4_DEFAULTS.network;
+  const normalizedNetwork = networkRaw.trim().toLowerCase();
+  const legacyNetworkAliases: Readonly<Record<string, 'testnet' | 'mainnet'>> = {
+    'base-sepolia': 'testnet',
+    'base-mainnet': 'mainnet',
+  };
+  const network = V4_CONSTRAINTS.VALID_NETWORKS.includes(
+    normalizedNetwork as 'mock' | 'testnet' | 'mainnet'
+  )
+    ? (normalizedNetwork as 'mock' | 'testnet' | 'mainnet')
+    : legacyNetworkAliases[normalizedNetwork];
+  if (!network) {
+    throw new Error(
+      `Invalid network: "${networkRaw}". Expected mock | testnet | mainnet ` +
+        '(legacy aliases: base-sepolia | base-mainnet).'
+    );
+  }
 
   // SLA
   const slaRaw = getObject(fm, 'sla');

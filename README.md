@@ -342,7 +342,18 @@ actp pull [--network base-sepolia]
 
 # Compare local config vs on-chain
 actp diff [--network base-sepolia]
+
+# Read-only ERC-8004 migration evidence (repeat --agent-id as needed)
+actp erc8004 inventory --network base-sepolia --agent-id 6732 \
+  --output erc8004-inventory.json
+actp erc8004 migration-plan --input erc8004-inventory.json \
+  --output erc8004-migration-plan.json
 ```
+
+The inventory and migration-plan commands never upload, sign, or submit a
+transaction. Review the generated per-agent before/after evidence before any
+separate on-chain `setAgentURI` operation. See
+[ERC-8004 registration and migration](docs/ERC8004-REGISTRATION-V1.md).
 
 ### Deployment Security (AIP-13)
 
