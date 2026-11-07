@@ -27,7 +27,7 @@ import { UMAHelper } from '../src/dispute/UMAHelper';
 import { DisputeSplitIndexer } from '../src/reputation/DisputeSplitIndexer';
 
 // PARITY: test_dispute_client.py — same fixture, same assertions.
-const VECTORS_DIR = path.resolve(__dirname, '../../../DISPUTE SYSTEM/test-vectors');
+const VECTORS_DIR = path.resolve(__dirname, '../test-vectors');
 const FIXTURE = JSON.parse(
   fs.readFileSync(path.join(VECTORS_DIR, 'dispute-client-status-vectors.json'), 'utf-8')
 );

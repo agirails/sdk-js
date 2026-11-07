@@ -31,7 +31,7 @@ import { ReputationReporter, IERC8004ReputationRegistry } from '../src/erc8004/R
 import { ACTP_FEEDBACK_TAGS } from '../src/types/erc8004';
 
 // PARITY: test_dispute_split_indexer.py — same fixture, same assertions.
-const VECTORS_DIR = path.resolve(__dirname, '../../../DISPUTE SYSTEM/test-vectors');
+const VECTORS_DIR = path.resolve(__dirname, '../test-vectors');
 const FIXTURE = JSON.parse(
   fs.readFileSync(path.join(VECTORS_DIR, 'dispute-split-indexer-vectors.json'), 'utf-8')
 );

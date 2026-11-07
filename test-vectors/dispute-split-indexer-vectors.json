@@ -1,0 +1,86 @@
+{
+  "_comment": "PRD P2-8 shared cross-SDK golden fixture for DisputeSplitIndexer. Consumed byte-identically by sdk-js/tests/dispute-split-indexer.test.ts and python-sdk-v2/tests/test_reputation/test_dispute_split_indexer.py. The headline fixture is the AIP-14b §3.4 '~14%' case: a single agent resolved 7 disputes, 1 of which ended in a SPLIT (the other 6 SETTLED), so split-rate = 1/7 = ~14.29%. Per OQ-11 (normative default) the split is counted at IDENTICAL weight whether it came from CompositeMediator's DisputeSplitRecorded OR a kernel DISPUTED->CANCELLED (admin-CANCELLED). The fixture exercises BOTH: the single split here is an admin-CANCELLED (kernel) one, proving admin-CANCELLED IS counted in the headline rate (R11 under-count trap closed). The zero-remaining rows carry a phantom 1-wei sentinel in a proof field; the indexer MUST derive split classification from event semantics + escrow remaining, NEVER read the proof amount as a payout.",
+
+  "agent": "0x2222222222222222222222222222222222222222",
+  "counterparty": "0x1111111111111111111111111111111111111111",
+
+  "headlineFourteenPercent": {
+    "_comment": "1 split / 6 settled = 1/7 disputes for this agent end in a split. The split is an admin-CANCELLED (kernel DISPUTED->CANCELLED), proving OQ-11 counts admin-CANCELLED at identical weight in the HEADLINE rate.",
+    "outcomes": [
+      { "name": "d1_admin_cancelled_split", "provider": "0x2222222222222222222222222222222222222222", "requester": "0x1111111111111111111111111111111111111111", "kind": "kernelDisputedToCancelled", "remaining": "1000000" },
+      { "name": "d2_settled", "provider": "0x2222222222222222222222222222222222222222", "requester": "0x1111111111111111111111111111111111111111", "kind": "settled", "remaining": "1000000" },
+      { "name": "d3_settled", "provider": "0x2222222222222222222222222222222222222222", "requester": "0x1111111111111111111111111111111111111111", "kind": "settled", "remaining": "1000000" },
+      { "name": "d4_settled", "provider": "0x2222222222222222222222222222222222222222", "requester": "0x1111111111111111111111111111111111111111", "kind": "settled", "remaining": "1000000" },
+      { "name": "d5_settled", "provider": "0x2222222222222222222222222222222222222222", "requester": "0x1111111111111111111111111111111111111111", "kind": "settled", "remaining": "1000000" },
+      { "name": "d6_settled", "provider": "0x2222222222222222222222222222222222222222", "requester": "0x1111111111111111111111111111111111111111", "kind": "settled", "remaining": "1000000" },
+      { "name": "d7_settled", "provider": "0x2222222222222222222222222222222222222222", "requester": "0x1111111111111111111111111111111111111111", "kind": "settled", "remaining": "1000000" }
+    ],
+    "expected": {
+      "agentId": "0x2222222222222222222222222222222222222222",
+      "splitCount": 1,
+      "totalDisputes": 7,
+      "splitRate": 0.14285714285714285,
+      "approxPercent": 14
+    }
+  },
+
+  "mixedSourceEqualWeight": {
+    "_comment": "Proves DisputeSplitRecorded (mediator) and kernel DISPUTED->CANCELLED (admin) are weighted IDENTICALLY: 1 mediator-split + 1 admin-split + 5 settled = 2/7 splits.",
+    "outcomes": [
+      { "name": "mediator_split", "provider": "0x2222222222222222222222222222222222222222", "requester": "0x1111111111111111111111111111111111111111", "kind": "disputeSplitRecorded", "splitBps": 5000, "remaining": "1000000" },
+      { "name": "admin_split", "provider": "0x2222222222222222222222222222222222222222", "requester": "0x1111111111111111111111111111111111111111", "kind": "kernelDisputedToCancelled", "remaining": "1000000" },
+      { "name": "s1", "provider": "0x2222222222222222222222222222222222222222", "requester": "0x1111111111111111111111111111111111111111", "kind": "settled", "remaining": "1000000" },
+      { "name": "s2", "provider": "0x2222222222222222222222222222222222222222", "requester": "0x1111111111111111111111111111111111111111", "kind": "settled", "remaining": "1000000" },
+      { "name": "s3", "provider": "0x2222222222222222222222222222222222222222", "requester": "0x1111111111111111111111111111111111111111", "kind": "settled", "remaining": "1000000" },
+      { "name": "s4", "provider": "0x2222222222222222222222222222222222222222", "requester": "0x1111111111111111111111111111111111111111", "kind": "settled", "remaining": "1000000" },
+      { "name": "s5", "provider": "0x2222222222222222222222222222222222222222", "requester": "0x1111111111111111111111111111111111111111", "kind": "settled", "remaining": "1000000" }
+    ],
+    "expected": {
+      "splitCount": 2,
+      "totalDisputes": 7,
+      "splitRate": 0.2857142857142857,
+      "mediatorSplitCount": 1,
+      "adminSplitCount": 1
+    }
+  },
+
+  "drainedSplitNoPhantomPayout": {
+    "_comment": "ZERO-REMAINING CONSUMER RULE: a split where escrow was fully milestone-drained (remaining==0). The on-chain proof carries a phantom 1-wei sentinel. The indexer MUST classify this as a split from EVENT SEMANTICS + remaining==0, and MUST NOT report any 1-wei payout. The split STILL counts toward the rate (the dispute resolved as a split regardless of drained escrow).",
+    "outcomes": [
+      { "name": "drained_admin_split", "provider": "0x2222222222222222222222222222222222222222", "requester": "0x1111111111111111111111111111111111111111", "kind": "kernelDisputedToCancelled", "remaining": "0", "proof": "0x00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000" },
+      { "name": "drained_mediator_split", "provider": "0x2222222222222222222222222222222222222222", "requester": "0x1111111111111111111111111111111111111111", "kind": "disputeSplitRecorded", "splitBps": 0, "remaining": "0", "proof": "0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000" }
+    ],
+    "expected": {
+      "splitCount": 2,
+      "totalDisputes": 2,
+      "splitRate": 1.0,
+      "phantomPayoutReported": false,
+      "_comment": "Both surface 0 payout for BOTH parties (never 1 wei), yet both still count as splits."
+    }
+  },
+
+  "perAgentScoping": {
+    "_comment": "Outcomes for a DIFFERENT agent must NOT pollute the queried agent's rate. Agent A has 1 split / 2 disputes; agent B (counterparty as provider) has its own outcomes ignored when querying A.",
+    "outcomes": [
+      { "name": "A_split", "provider": "0x2222222222222222222222222222222222222222", "requester": "0x1111111111111111111111111111111111111111", "kind": "kernelDisputedToCancelled", "remaining": "1000000" },
+      { "name": "A_settled", "provider": "0x2222222222222222222222222222222222222222", "requester": "0x1111111111111111111111111111111111111111", "kind": "settled", "remaining": "1000000" },
+      { "name": "B_split", "provider": "0x3333333333333333333333333333333333333333", "requester": "0x1111111111111111111111111111111111111111", "kind": "disputeSplitRecorded", "splitBps": 4000, "remaining": "1000000" }
+    ],
+    "queryAgent": "0x2222222222222222222222222222222222222222",
+    "expected": {
+      "splitCount": 1,
+      "totalDisputes": 2,
+      "splitRate": 0.5
+    }
+  },
+
+  "zeroDisputesNoDivByZero": {
+    "outcomes": [],
+    "queryAgent": "0x2222222222222222222222222222222222222222",
+    "expected": {
+      "splitCount": 0,
+      "totalDisputes": 0,
+      "splitRate": 0.0
+    }
+  }
+}

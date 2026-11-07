@@ -154,7 +154,7 @@ type _TypeParityGuard = [
   ProposeDirectlyRecommendation, EvaluatorClientConfig, EvaluatorPaymentClient
 ];
 
-const VECTORS_DIR = path.resolve(__dirname, '../../../DISPUTE SYSTEM/test-vectors/dispute');
+const VECTORS_DIR = path.resolve(__dirname, '../test-vectors/dispute');
 const SURFACE = JSON.parse(fs.readFileSync(path.join(VECTORS_DIR, 'parity-surface.json'), 'utf-8'));
 const GOLDEN = JSON.parse(fs.readFileSync(path.join(VECTORS_DIR, 'golden-vectors.json'), 'utf-8'));
 

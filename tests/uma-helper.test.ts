@@ -35,7 +35,7 @@ import {
 } from '../src/dispute/UMAHelper';
 
 // PARITY: test_uma_helper.py — same fixture, same assertions.
-const VECTORS_DIR = path.resolve(__dirname, '../../../DISPUTE SYSTEM/test-vectors');
+const VECTORS_DIR = path.resolve(__dirname, '../test-vectors');
 const FIXTURE = JSON.parse(
   fs.readFileSync(path.join(VECTORS_DIR, 'uma-self-dispute-vectors.json'), 'utf-8')
 );

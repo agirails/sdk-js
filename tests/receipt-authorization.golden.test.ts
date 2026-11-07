@@ -4,7 +4,7 @@ import { TypedDataEncoder, verifyTypedData, Wallet } from 'ethers';
 import { receiptAuthorizationTypedData, type ReceiptAuthorizationInput } from '../src/dispute/ReceiptAuthorization';
 
 const vector = JSON.parse(readFileSync(resolve(__dirname,
-  '../../../DISPUTE SYSTEM/test-vectors/dispute/receipt-authorization-v1.json'), 'utf8')) as {
+  '../test-vectors/dispute/receipt-authorization-v1.json'), 'utf8')) as {
   input: ReceiptAuthorizationInput;
   typedData: ReturnType<typeof receiptAuthorizationTypedData>;
   digest: string;

@@ -1,0 +1,47 @@
+{
+  "input": {
+    "chainId": 84532,
+    "verifyingContract": "0x3333333333333333333333333333333333333333",
+    "quoteHash": "0x4444444444444444444444444444444444444444444444444444444444444444",
+    "disputeNonce": "dn_non_bytes32",
+    "txHash": "0x5555555555555555555555555555555555555555555555555555555555555555",
+    "payer": "0x1a642f0E3c3aF545E7AcBD38b07251B3990914F1"
+  },
+  "typedData": {
+    "domain": {
+      "name": "AGIRAILS Evaluator Receipt",
+      "version": "1",
+      "chainId": 84532,
+      "verifyingContract": "0x3333333333333333333333333333333333333333"
+    },
+    "primaryType": "ReceiptAuthorization",
+    "types": {
+      "ReceiptAuthorization": [
+        {
+          "name": "quoteHash",
+          "type": "bytes32"
+        },
+        {
+          "name": "disputeNonce",
+          "type": "string"
+        },
+        {
+          "name": "txHash",
+          "type": "bytes32"
+        },
+        {
+          "name": "payer",
+          "type": "address"
+        }
+      ]
+    },
+    "message": {
+      "quoteHash": "0x4444444444444444444444444444444444444444444444444444444444444444",
+      "disputeNonce": "dn_non_bytes32",
+      "txHash": "0x5555555555555555555555555555555555555555555555555555555555555555",
+      "payer": "0x1a642f0E3c3aF545E7AcBD38b07251B3990914F1"
+    }
+  },
+  "digest": "0xede815b81386b967a23f0cd270da9c952a03349e8bdf3cc34647f568eff588a6",
+  "signature": "0xb948f4649e551ebe501cddc109ddd18e31ab782111cfe463918f920e8790b6d33bd0ad5b202d9726477e840eb7c2fcf458ef66414b981e3dd3e7f0806661c0b51b"
+}

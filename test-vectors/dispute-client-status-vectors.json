@@ -1,0 +1,55 @@
+{
+  "_comment": "Cross-SDK golden fixture for the DisputeClient facade (PRD P2-9). Consumed byte-identically by jest (tests/dispute-client.test.ts) and pytest (tests/test_dispute/test_dispute_client.py). Each row maps a raw on-chain `disputes(bytes32)` tuple (AIP-14b §7.3 field order) to the canonical §9 sub-state string `DisputeClient.getDisputeStatus()` MUST return. The decode is pure (no chain) and MUST be identical across both SDKs. §9 sub-state machine: UNINITIALIZED -> OPENED(tier0) -> PROPOSED(tier1) -> ESCALATED(tier2) -> RESOLVED. CHALLENGED is NOT a distinct on-chain field (challenge() keeps tier==1), so a tier-1 unresolved dispute decodes to PROPOSED.",
+  "_tupleFields": ["transactionId", "currentRuling", "splitBps", "currentBond", "accumulatedBonds", "livenessEnd", "disputedAt", "lastProposer", "tier", "resolved", "winnerPaid", "originalPool", "escrowAmount"],
+  "_substates": ["UNINITIALIZED", "OPENED", "PROPOSED", "ESCALATED", "RESOLVED"],
+  "vectors": [
+    {
+      "name": "never-opened: disputedAt==0 -> UNINITIALIZED",
+      "disputeId": "0x9b477800000000000000000000000000000000000000000000000000000be365",
+      "tuple": ["0x0000000000000000000000000000000000000000000000000000000000000000", 0, 0, "0", "0", 0, 0, "0x0000000000000000000000000000000000000000", 0, false, false, "0", "0"],
+      "expected": { "substate": "UNINITIALIZED", "tier": 0, "resolved": false, "ruling": 0, "splitBps": 0 }
+    },
+    {
+      "name": "opened only (tier0, disputedAt set) -> OPENED",
+      "disputeId": "0x1111111111111111111111111111111111111111111111111111111111111111",
+      "tuple": ["0xaaaa000000000000000000000000000000000000000000000000000000000001", 0, 0, "0", "0", 0, 1718000000, "0x0000000000000000000000000000000000000000", 0, false, false, "0", "5000000"],
+      "expected": { "substate": "OPENED", "tier": 0, "resolved": false, "ruling": 0, "splitBps": 0 }
+    },
+    {
+      "name": "tier1 direct/AI proposal live (unresolved) -> PROPOSED",
+      "disputeId": "0x2222222222222222222222222222222222222222222222222222222222222222",
+      "tuple": ["0xaaaa000000000000000000000000000000000000000000000000000000000002", 1, 0, "1000000", "1000000", 1718003600, 1718000000, "0x00000000000000000000000000000000000000A1", 1, false, false, "0", "5000000"],
+      "expected": { "substate": "PROPOSED", "tier": 1, "resolved": false, "ruling": 1, "splitBps": 0 }
+    },
+    {
+      "name": "tier1 after challenge (still tier1, unresolved) -> PROPOSED (challenge not a distinct on-chain field)",
+      "disputeId": "0x3333333333333333333333333333333333333333333333333333333333333333",
+      "tuple": ["0xaaaa000000000000000000000000000000000000000000000000000000000003", 0, 0, "2000000", "3000000", 1718007200, 1718000000, "0x00000000000000000000000000000000000000B2", 1, false, false, "0", "5000000"],
+      "expected": { "substate": "PROPOSED", "tier": 1, "resolved": false, "ruling": 0, "splitBps": 0 }
+    },
+    {
+      "name": "tier2 escalated to UMA (unresolved) -> ESCALATED",
+      "disputeId": "0x4444444444444444444444444444444444444444444444444444444444444444",
+      "tuple": ["0xaaaa000000000000000000000000000000000000000000000000000000000004", 0, 0, "500000000", "500000000", 1718010800, 1718000000, "0x00000000000000000000000000000000000000C3", 2, false, false, "0", "30000000000"],
+      "expected": { "substate": "ESCALATED", "tier": 2, "resolved": false, "ruling": 0, "splitBps": 0 }
+    },
+    {
+      "name": "resolved winner-takes-all (ruling 0) -> RESOLVED",
+      "disputeId": "0x5555555555555555555555555555555555555555555555555555555555555555",
+      "tuple": ["0xaaaa000000000000000000000000000000000000000000000000000000000005", 0, 0, "0", "0", 1718003600, 1718000000, "0x00000000000000000000000000000000000000D4", 1, true, true, "1000000", "5000000"],
+      "expected": { "substate": "RESOLVED", "tier": 1, "resolved": true, "ruling": 0, "splitBps": 0 }
+    },
+    {
+      "name": "resolved split (ruling 2) -> RESOLVED (resolved dominates tier)",
+      "disputeId": "0x6666666666666666666666666666666666666666666666666666666666666666",
+      "tuple": ["0xaaaa000000000000000000000000000000000000000000000000000000000006", 2, 5000, "0", "1500000", 1718003600, 1718000000, "0x00000000000000000000000000000000000000E5", 1, true, false, "3000000", "5000000"],
+      "expected": { "substate": "RESOLVED", "tier": 1, "resolved": true, "ruling": 2, "splitBps": 5000 }
+    },
+    {
+      "name": "resolved from tier2/UMA (ruling 1) -> RESOLVED",
+      "disputeId": "0x7777777777777777777777777777777777777777777777777777777777777777",
+      "tuple": ["0xaaaa000000000000000000000000000000000000000000000000000000000007", 1, 0, "0", "0", 1718010800, 1718000000, "0x00000000000000000000000000000000000000F6", 2, true, true, "500000000", "30000000000"],
+      "expected": { "substate": "RESOLVED", "tier": 2, "resolved": true, "ruling": 1, "splitBps": 0 }
+    }
+  ]
+}

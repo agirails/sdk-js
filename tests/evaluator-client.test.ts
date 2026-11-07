@@ -45,7 +45,7 @@ beforeAll(() => {
 });
 
 // PARITY: test_evaluator_client.py — same fixtures, same assertions, same signers.
-const VECTORS_DIR = path.resolve(__dirname, '../../../DISPUTE SYSTEM/test-vectors');
+const VECTORS_DIR = path.resolve(__dirname, '../test-vectors');
 const FIXTURE = JSON.parse(
   fs.readFileSync(path.join(VECTORS_DIR, 'evaluator-client-vectors.json'), 'utf-8')
 );

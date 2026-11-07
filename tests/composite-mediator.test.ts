@@ -33,7 +33,7 @@ import { EventMonitor } from '../src/protocol/EventMonitor';
 import { State } from '../src/types/state';
 
 // PARITY: test_composite_mediator.py — same fixture, same assertions.
-const VECTORS_DIR = path.resolve(__dirname, '../../../DISPUTE SYSTEM/test-vectors');
+const VECTORS_DIR = path.resolve(__dirname, '../test-vectors');
 const FIXTURE = JSON.parse(
   fs.readFileSync(path.join(VECTORS_DIR, 'composite-mediator-vectors.json'), 'utf-8')
 );

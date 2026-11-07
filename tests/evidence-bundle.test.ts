@@ -45,7 +45,7 @@ beforeAll(() => {
 // Shared cross-SDK fixture (byte-identical to the copy the pytest suite loads)
 // ---------------------------------------------------------------------------
 
-const VECTORS_DIR = path.resolve(__dirname, '../../../DISPUTE SYSTEM/test-vectors');
+const VECTORS_DIR = path.resolve(__dirname, '../test-vectors');
 const FIXTURE_PATH = path.join(VECTORS_DIR, 'bundle-vectors.json');
 const FIXTURE = JSON.parse(fs.readFileSync(FIXTURE_PATH, 'utf-8'));
 
