@@ -31,7 +31,7 @@ import tomllib
 from pathlib import Path, PurePosixPath
 from typing import Iterable
 
-from .. import layout, pins, standard
+from .. import baseline, layout, pins, standard
 from ..model import FileView, Finding, MeasureError, normalize, ordered, sha256
 
 TOOLS = layout.TOOL_BIN
@@ -273,20 +273,11 @@ BASELINE_DIGEST = re.compile(r'("key": ")([0-9a-f]{64})(")')
 
 
 def _baseline_redacted(text: str) -> str | None:
-    try:
-        data = json.loads(text)
-    except ValueError:
+    if not baseline.canonical(text):
         return None
-    if not isinstance(data, dict):
-        return None
-    entries = data.get("entries")
-    fields = {"rule", "path", "key", "count"}
-    if (set(data) - {"version", "commit", "entries"} or data.get("version") != 2 or not isinstance(entries, list)
-            or not all(isinstance(e, dict) and set(e) == fields and isinstance(e["key"], str)
-                       and re.fullmatch(r"[0-9a-f]{64}", e["key"]) for e in entries)):
-        return None
+    entries = len(json.loads(text)["entries"])
     redacted, count = BASELINE_DIGEST.subn(lambda m: m.group(1) + "0" * 64 + m.group(3), text)
-    return redacted if count == len(entries) else None
+    return redacted if count == entries else None
 
 
 def _secret_input(view: FileView) -> str | bytes:
@@ -304,9 +295,10 @@ def check_secrets(views: Iterable[FileView], repo_root: Path, tools_dir: Path = 
     """S1: gitleaks nad cijelim datotekama, a nad izvornim bajtovima kad tekst nije točan sadržaj (`raw`). Je li nalaz
     nov, odlučuje usporedba s bazom u codecheck.
 
-    Ključ unosa baselinea je sha256 otisak nalaza pod imenom `key`, koji gitleaks čita kao tajnu. Zato u valjanom
-    `.factory/baseline.json` (version 2, samo polja rule, path, key i count, ključ točno 64 hex) gitleaks vidi kopiju u
-    kojoj su samo te vrijednosti nule, i samo kad je broj zamjena jednak broju unosa. Putanju, pravilo i commit vidi
+    Ključ unosa baselinea je sha256 otisak nalaza pod imenom `key`, koji gitleaks čita kao tajnu. Zato u
+    `.factory/baseline.json` koji je bajt-identičan onome što `baseline.write` zapisuje (`baseline.canonical`: bez
+    ponovljenih JSON ključeva, escapeova i drukčijih razmaka) gitleaks vidi kopiju u kojoj su samo vrijednosti `key`
+    nule, i samo kad je broj zamjena jednak broju unosa. Putanju, pravilo i commit vidi
     neizmijenjene, a baseline na drugoj putanji ili neispravan baseline skenira se kakav jest. Novi ključ (pa ni lažni
     unos koji bi sakrio 64-hex vrijednost) ne ulazi u baseline bez odobrene izmjene baze: CI uspoređuje baseline glave
     s baselineom baze (`code-check full --base-baseline`)."""

@@ -2,11 +2,12 @@ name: factory
 
 # The required check for main. It has no path filters, so every pull request runs it.
 #
-# The checker, its rules and both baselines come from the pull request base, not from the
-# pull request itself: a change to .factory/ only takes effect after it is merged. The one
-# exception is the first run on a base without .factory/ (bootstrap), which uses this commit's
-# copy and says so. Changes to this workflow, .factory/, eslint.config.mjs and package.json need
-# a code owner's approval (CODEOWNERS), because a pull request can edit them.
+# The checker, its rules, the lint rules and both baselines come from the pull request base,
+# not from the pull request itself: a change to .factory/ only takes effect after it is merged.
+# The one exception is bootstrap: a base whose history never had .factory/SOURCE uses this
+# commit's copy and says so. A base that had it and lost it fails. eslint.config.mjs and
+# package.json are read from the pull request; they, this workflow and .factory/ need a code
+# owner's approval (CODEOWNERS).
 #
 # publish.yml only publishes a commit on main for which this workflow passed on push
 # (.github/scripts/release-gate.sh).
@@ -19,8 +20,10 @@ on:
 permissions:
   contents: read
 
+# Pull requests share a group per branch and cancel stale runs. Every push to main gets its own
+# group, so no commit on main loses its run (publish.yml needs it).
 concurrency:
-  group: factory-${{ github.ref }}
+  group: factory-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -56,13 +59,20 @@ jobs:
           if [[ "$base" == 0000000000000000000000000000000000000000 ]]; then
             base="$(git rev-parse HEAD^)"
           fi
+          if ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+            echo "::error::base commit $base is not in the fetched history" >&2
+            exit 2
+          fi
           dest="$RUNNER_TEMP/factory-base"
           mkdir -p "$dest"
           if git cat-file -e "$base:.factory/SOURCE" 2>/dev/null; then
             git archive "$base" .factory | tar -x -C "$dest"
             echo "bootstrap=false" >> "$GITHUB_OUTPUT"
+          elif [[ -n "$(git log -1 --format=%H "$base" -- .factory/SOURCE)" ]]; then
+            echo "::error::base $base lost .factory/SOURCE; restore it, bootstrap is only for a base that never had it" >&2
+            exit 1
           else
-            echo "::warning::base $base has no .factory/; this bootstrap run uses the checker from this commit"
+            echo "::warning::base $base never had .factory/; this bootstrap run uses the checker from this commit"
             git archive HEAD .factory | tar -x -C "$dest"
             echo "bootstrap=true" >> "$GITHUB_OUTPUT"
           fi
@@ -94,11 +104,12 @@ jobs:
       - name: Typecheck
         run: npx tsc --noEmit
 
-      - name: Lint (suppressions from the base may only shrink)
+      - name: Lint (rules and suppressions from the base; suppressions may only shrink)
         env:
           FACTORY: ${{ steps.base.outputs.dir }}
         run: |
           set -euo pipefail
+          cp -R "$FACTORY/standard/configs/." .factory/standard/configs/
           npx eslint src --suppressions-location "$FACTORY/eslint-suppressions.json" --pass-on-unpruned-suppressions
           npm run lint
 

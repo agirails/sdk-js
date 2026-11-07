@@ -161,6 +161,30 @@ def growth(head: dict[Key, int], base: dict[Key, int]) -> list[Entry]:
                            if count > base.get(key, 0))
 
 
+def _unique_pairs(pairs: list[tuple[str, object]]) -> dict:
+    keys = [key for key, _ in pairs]
+    if len(keys) != len(set(keys)):
+        raise ValueError("ključ se ponavlja u JSON objektu")
+    return dict(pairs)
+
+
+def canonical(text: str) -> bool:
+    """Je li tekst baseline točno onako kako ga `write` zapisuje: valjan dokument bez ponovljenih JSON ključeva, čija je
+    ponovna serijalizacija bajt-identična tekstu. Escapeovi, drukčiji razmaci i ponovljeni ključevi nisu kanonski."""
+    try:
+        data = json.loads(text, object_pairs_hook=_unique_pairs)
+    except ValueError:
+        return False
+    if not isinstance(data, dict) or set(data) - {"version", "commit", "entries"} or data.get("version") != VERSION:
+        return False
+    entries, commit = data.get("entries"), data.get("commit")
+    if not isinstance(entries, list) or not all(_valid(item) for item in entries):
+        return False
+    if commit is not None and not isinstance(commit, str):
+        return False
+    return _serialize([Entry(**item) for item in entries], commit) == text
+
+
 def _serialize(entries: list[Entry], commit: str | None) -> str:
     doc = {"version": VERSION, **({"commit": commit} if commit else {}), "entries": [asdict(e) for e in entries]}
     return json.dumps(doc, ensure_ascii=False, indent=2) + "\n"

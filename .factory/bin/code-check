@@ -3,11 +3,11 @@
 code-check — jedini ulaz u provjeru standarda tvornice (pravila: standard/STANDARD.md).
 
   code-check diff     [--repo DIR] [--base REF] [--staged] [--snapshot MANIFEST --base-dir DIR] [--json] [--only RULES]
-  code-check full     [--repo DIR] [--json] [--baseline FILE]
+  code-check full     [--repo DIR] [--json] [--baseline FILE [--base-baseline FILE]]
   code-check baseline --repo DIR --write FILE [--allow-increase --reason TEXT]
 
 diff prijavljuje kršenja na novim i promijenjenim redcima i kršenja nastala brisanjem; full je izvještaj (s --baseline
-pada samo ono iznad baselinea); baseline zapisuje postojeće stanje, a porast traži --allow-increase i razlog.
+pada samo ono iznad baselinea, a s --base-baseline i kad baseline glave raste prema bazi); baseline zapisuje postojeće stanje, a porast traži --allow-increase i razlog.
 Exit: 0 čisto, 1 nova kršenja (upozorenja ne padaju), 2 nije izmjereno (nikad prolaz).
 """
 import sys

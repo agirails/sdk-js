@@ -368,7 +368,8 @@ def sync_target(repo: standard.Repo, into: str | None) -> Path:
 
 def sync_refusals(factory: Path, payload: dict[str, bytes]) -> tuple[dict[str, str], list[str]]:
     """Stari manifest i razlozi odbijanja: simbolička veza na putu, ručno izmijenjena upravljana datoteka, ili tuđa
-    datoteka na putanji koju bi sync prepisao. Datoteke koje nisu u manifestu ni u payloadu (baseline) se ne diraju."""
+    datoteka na putanji koju bi sync prepisao. Upravljana datoteka koja već ima novi sadržaj ostala je od prekinutog
+    synca i nije odbijanje. Datoteke koje nisu u manifestu ni u payloadu (baseline) se ne diraju."""
     if factory.is_symlink():
         return {}, [f"{layout.SYNC_DIR} je simbolička veza"]
     links = sorted(p.relative_to(factory).as_posix() for p in factory.rglob("*") if p.is_symlink()) \
@@ -380,12 +381,26 @@ def sync_refusals(factory: Path, payload: dict[str, bytes]) -> tuple[dict[str, s
     problems = []
     for rel, digest in sorted(old.items()):
         path = factory / rel
-        if path.is_file() and sha256_file(path) != digest:
+        current = sha256_file(path) if path.is_file() else None
+        if current not in (None, digest) and (rel not in payload or current != sha256(payload[rel])):
             problems.append(f"ručno izmijenjena kopija: {layout.SYNC_DIR}/{rel} → izmjenu napravi u Harnessu")
     for rel in sorted(payload):
         if rel not in old and (factory / rel).exists():
             problems.append(f"tuđa datoteka na putanji kopije: {layout.SYNC_DIR}/{rel}")
     return old, problems
+
+
+def untracked_payload(git: gitsafe.Git, payload: dict[str, bytes]) -> list[str]:
+    """Datoteke payloada iz Harnessa koje nisu točno ono što je u HEAD-u: gitignorirane, nepraćene ili izmijenjene.
+    Generirani popisi (`PUBLIC_LISTS`) i `.gitignore` kopije nisu iz stabla, pa se ne gledaju."""
+    generated = {layout.rel(path) for path in standard.PUBLIC_LISTS} | {".gitignore"}
+    tracked = {}
+    for row in git.text("ls-files", "-s", "-z", "--", *sorted(set(payload) - generated)).split("\0"):
+        if row:
+            meta, _, rel = row.partition("\t")
+            tracked[rel] = meta.split()[1]
+    return [rel for rel, data in sorted(payload.items())
+            if rel not in generated and tracked.get(rel) != git.blob_id(data)]
 
 
 def write_file(target: Path, data: bytes, mode: int) -> None:
@@ -441,6 +456,8 @@ def cmd_sync(args) -> int:
         if dirty:
             raise Refused("Harness ima necommitane izmjene → commitaj ih prije synca, da SOURCE imenuje stvaran commit")
         old, problems = sync_refusals(factory, payload)
+        problems += [f"u Harnessu nije iz HEAD-a (gitignorirano, nepraćeno ili izmijenjeno): {rel}"
+                     for rel in untracked_payload(git, payload)]
         if problems:
             for line in problems:
                 say(f"  {line}")

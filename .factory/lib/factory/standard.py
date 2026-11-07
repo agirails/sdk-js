@@ -32,6 +32,7 @@ SYNC_CONFIGS = {
 }
 SYNC_EXECUTABLE = frozenset({layout.rel(layout.CODE_CHECK), layout.rel(layout.STANDARD_BIN)})
 SYNC_IGNORE = "/.tools/\n__pycache__/\n"
+SYNC_MANAGED_DIRS = frozenset({"bin", "lib", "standard"})
 HOOK_MARKER = "# factory-standard pre-commit"
 HOOK_TEMPLATE = """#!/bin/sh
 {marker}: upisuje ga i ažurira `bin/standard install-hooks <repo> --apply` iz Harnessa.
@@ -454,7 +455,8 @@ def sync_source(payload: dict[str, bytes], commit: str, dirty: bool) -> str:
 
 def parse_source(text: str, where: str) -> dict[str, str]:
     """Upravljane datoteke iz `.factory/SOURCE`: relativna putanja → sha256. Putanja mora ostati unutar `.factory/`
-    (bez `..`, apsolutne putanje i praznih dijelova), jer sync briše upravljane datoteke kojih više nema u izvoru."""
+    (bez `..`, apsolutne putanje i praznih dijelova) i u imenima koja sync piše (`.gitignore`, `bin/`, `lib/`,
+    `standard/`), jer sync briše upravljane datoteke kojih više nema u izvoru, a baseline i suppressions ne smije."""
     lines = text.splitlines()
     if not lines or not re.fullmatch(r"harness [0-9a-f]{40}( dirty)?", lines[0]):
         raise MeasureError(f"{where}: prvi redak nije `harness <commit>`")
@@ -463,7 +465,8 @@ def parse_source(text: str, where: str) -> dict[str, str]:
         digest, sep, rel = line.partition("  ")
         parts = rel.split("/")
         if (not sep or not re.fullmatch(r"[0-9a-f]{64}", digest) or rel.startswith("/") or "\\" in rel
-                or any(part in ("", ".", "..") for part in parts) or rel == "SOURCE" or rel in rows):
+                or any(part in ("", ".", "..") for part in parts) or rel in rows
+                or not (rel == ".gitignore" or (len(parts) > 1 and parts[0] in SYNC_MANAGED_DIRS))):
             raise MeasureError(f"{where}:{n}: redak nije `<sha256>  <putanja unutar .factory>`")
         rows[rel] = digest
     return rows
