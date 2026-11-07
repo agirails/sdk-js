@@ -438,10 +438,10 @@ export class MessageSigner {
         const [chainIdStr, address] = parts;
         const chainId = parseInt(chainIdStr, 10);
 
-        if (isNaN(chainId)) {
+        if (!/^\d+$/.test(chainIdStr)) {
           throw new Error(
             `Invalid DID format: ${did}. ` +
-            `Expected did:ethr:<chainId>:<address> but chainId "${chainIdStr}" is not a number.`
+            `Expected did:ethr:<chainId>:<address> but chainId "${chainIdStr}" is not a decimal number.`
           );
         }
 
@@ -452,15 +452,11 @@ export class MessageSigner {
           );
         }
 
-        // SECURITY: Optionally validate chainId matches domain chainId
-        // This prevents cross-chain replay attacks where a message signed for one chain
-        // is replayed on another. For now, we just extract the address but log a warning.
-        if (this.domain && this.domain.chainId !== chainId) {
-          sdkLogger.warn('DID chainId mismatch - potential cross-chain replay attempt', {
-            didChainId: chainId,
-            domainChainId: this.domain.chainId,
-            did,
-          });
+        if (this.domain && Number(this.domain.chainId) !== chainId) {
+          throw new Error(
+            `DID chainId mismatch: ${did} names chain ${chainId}, ` +
+            `but this signer verifies for chain ${this.domain.chainId}.`
+          );
         }
 
         return address;

@@ -492,9 +492,7 @@ describe('MessageSigner', () => {
       expect(isValid).toBe(true);
     });
 
-    it('should warn about cross-chain DID mismatch during verification', async () => {
-      const warnSpy = jest.spyOn(console, 'warn').mockImplementation();
-
+    it('should reject a DID that names another chain during verification', async () => {
       const message: ACTPMessage = {
         type: 'test',
         version: '1.0',
@@ -505,18 +503,42 @@ describe('MessageSigner', () => {
         data: {}
       };
 
-      // Sign the message first
       const signature = await messageSigner.signMessage(message);
 
-      // Verify triggers didToAddress which checks chainId mismatch
-      await messageSigner.verifySignature(message, signature);
+      await expect(messageSigner.verifySignature(message, signature)).rejects.toThrow(/DID chainId mismatch/);
+      await expect(messageSigner.verifySignatureOrThrow(message, signature)).rejects.toThrow(/DID chainId mismatch/);
+    });
 
-      expect(warnSpy).toHaveBeenCalledWith(
-        expect.stringContaining('chainId'),
-        expect.anything()
-      );
+    it('should reject a DID whose chainId is not a decimal number', async () => {
+      const message: ACTPMessage = {
+        type: 'test',
+        version: '1.0',
+        from: `did:ethr:84532junk:${signer.address}`,
+        to: 'did:ethr:0x2222222222222222222222222222222222222222',
+        timestamp: Math.floor(Date.now() / 1000),
+        nonce: generateSecureNonce(),
+        data: {}
+      };
 
-      warnSpy.mockRestore();
+      const signature = await messageSigner.signMessage(message);
+
+      await expect(messageSigner.verifySignature(message, signature)).rejects.toThrow(/not a decimal number/);
+    });
+
+    it('should accept a DID that names the domain chain', async () => {
+      const message: ACTPMessage = {
+        type: 'test',
+        version: '1.0',
+        from: `did:ethr:84532:${signer.address}`,
+        to: 'did:ethr:0x2222222222222222222222222222222222222222',
+        timestamp: Math.floor(Date.now() / 1000),
+        nonce: generateSecureNonce(),
+        data: {}
+      };
+
+      const signature = await messageSigner.signMessage(message);
+
+      await expect(messageSigner.verifySignature(message, signature)).resolves.toBe(true);
     });
 
     it('should accept raw address format', async () => {

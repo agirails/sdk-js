@@ -696,6 +696,7 @@ export {
   InsufficientBalanceError as StorageInsufficientBalanceError,
   SwapExecutionError,
   QueryCapExceededError,
+  OperationNotSupportedError,
 } from './errors';
 
 export { receiptAuthorizationTypedData, authorizePaymentReceipt, postPaidEvaluation } from './dispute/ReceiptAuthorization';
