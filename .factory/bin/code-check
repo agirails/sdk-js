@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """
-code-check — jedini ulaz u provjeru standarda tvornice (pravila: standard/STANDARD.md).
+code-check — the single entry point to the factory standard's check (rules: standard/STANDARD.md).
 
   code-check diff     [--repo DIR] [--base REF] [--staged] [--snapshot MANIFEST --base-dir DIR] [--json] [--only RULES]
   code-check full     [--repo DIR] [--json] [--baseline FILE [--base-baseline FILE]]
   code-check baseline --repo DIR --write FILE [--allow-increase --reason TEXT]
 
-diff prijavljuje kršenja na novim i promijenjenim redcima i kršenja nastala brisanjem; full je izvještaj (s --baseline
-pada samo ono iznad baselinea, a s --base-baseline i kad baseline glave raste prema bazi); baseline zapisuje postojeće stanje, a porast traži --allow-increase i razlog.
-Exit: 0 čisto, 1 nova kršenja (upozorenja ne padaju), 2 nije izmjereno (nikad prolaz).
+diff reports violations on new and changed lines and violations caused by deletion; full is a report (with --baseline
+only what is above the baseline fails, and with --base-baseline also when the head baseline grows against the base);
+baseline writes the current state, and growth needs --allow-increase and a reason.
+Exit: 0 clean, 1 new violations (warnings do not fail), 2 not measured (never a pass).
 """
 import sys
 from pathlib import Path

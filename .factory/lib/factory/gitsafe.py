@@ -1,22 +1,22 @@
-"""Jedino mjesto koje pokreće git nad repoom kojem ne vjerujemo: ništa iz konfiguracije ni atributa repoa se ne
-izvršava.
+"""The only place that runs git on a repo we do not trust: nothing from the repo's configuration or attributes is
+executed.
 
-Okolina gita je prazna osim `ENV_KEYS`: bez sistemske i globalne konfiguracije, HOME je /dev/null, a dopušten je samo
-lokalni protokol. Atributi se čitaju iz praznog stabla (`--attr-source`), pa clean, smudge i process filteri, textconv
-i diff driveri iz `.gitattributes` ne postoje za git. Naredbeni redak gasi fsmonitor, hookove, pager, `core.sshCommand`,
-vanjski diff, editor, pomoćnike za vjerodajnice i automatski gc. Ono što se naredbenim retkom ne može neutralizirati se
-odbija prije prve naredbe: `include.path` i `includeIf` (uključena datoteka nije vidljiva provjeri), `core.worktree`
-koji vodi u direktorij bez `.git` (radno stablo izvan repoa; submodul ostaje dopušten) i neprazan `info/attributes`
-(ne može se zamijeniti praznim stablom).
+The git environment is empty except `ENV_KEYS`: no system or global configuration, HOME is /dev/null, and only the
+local protocol is allowed. Attributes are read from the empty tree (`--attr-source`), so clean, smudge and process
+filters, textconv and diff drivers from `.gitattributes` do not exist for git. The command line disables fsmonitor,
+hooks, the pager, `core.sshCommand`, external diff, the editor, credential helpers and automatic gc. What the command
+line cannot neutralise is refused before the first command: `include.path` and `includeIf` (the included file is not
+visible to the check), a `core.worktree` that leads to a directory without `.git` (a working tree outside the repo; a
+submodule stays allowed) and a non-empty `info/attributes` (it cannot be replaced by the empty tree).
 
-Jedina stvar s hosta je korisnikova datoteka globalnih ignore uzoraka (`$XDG_CONFIG_HOME/git/ignore`): ona samo sužava
-popis nepraćenih datoteka, koje ionako ne ulaze u commit.
+The only thing taken from the host is the user's global ignore-pattern file (`$XDG_CONFIG_HOME/git/ignore`): it only
+narrows the list of untracked files, which never enter a commit anyway.
 
-Iz okoline pozivatelja prolazi samo `GIT_INDEX_FILE`, i to samo za naredbe koje čitaju indeks (`INDEX_READERS`). git ga
-postavlja u pre-commitu: `commit -a` pripremi commit u `.git/index.lock`, a djelomični commit (`git commit <putanja>`)
-u `.git/next-index-<pid>.lock`. Bez njega bi `code-check diff --staged` u hooku čitao `.git/index`, a ne ono što će se
-commitati. Vrijednost mora biti obična datoteka unutar git direktorija tog repoa (`--absolute-git-dir`); drugdje je
-GitError, a ne tihi povratak na `.git/index`.
+From the caller's environment only `GIT_INDEX_FILE` passes, and only for commands that read the index
+(`INDEX_READERS`). git sets it in pre-commit: `commit -a` prepares the commit in `.git/index.lock`, and a partial commit
+(`git commit <path>`) in `.git/next-index-<pid>.lock`. Without it `code-check diff --staged` in the hook would read
+`.git/index`, not what will be committed. The value must be a regular file inside that repo's git directory
+(`--absolute-git-dir`); anything else is a GitError, not a silent fallback to `.git/index`.
 """
 from __future__ import annotations
 
@@ -51,26 +51,26 @@ ENV_KEYS = frozenset({
 
 
 class GitError(MeasureError):
-    """git nije uspio ili je konfiguracija repoa odbijena. Nikad prolaz."""
+    """git failed or the repo configuration was refused. Never a pass."""
 
 
 @lru_cache(maxsize=1)
 def executable() -> str:
-    """Apsolutna putanja gita iz PATH-a pozivatelja; git koji fali ili je stariji od 2.40 je GitError."""
+    """Absolute path of git from the caller's PATH; a missing git or one older than 2.40 is a GitError."""
     found = shutil.which("git")
     if found is None:
-        raise GitError("git nije instaliran")
+        raise GitError("git is not installed")
     path = str(Path(found).resolve())
     proc = subprocess.run([path, "version"], capture_output=True, env=environment(path), timeout=TIMEOUT)
     match = re.search(rb"(\d+)\.(\d+)", proc.stdout)
     if proc.returncode or not match or (int(match.group(1)), int(match.group(2))) < MIN_VERSION:
         found_version = proc.stdout.decode(errors="replace").strip()
-        raise GitError(f"git {found_version} nema --attr-source; treba git 2.40 ili noviji")
+        raise GitError(f"git {found_version} has no --attr-source; git 2.40 or newer is required")
     return path
 
 
 def environment(git_path: str | None = None) -> dict[str, str]:
-    """Cijela okolina za git: ništa iz okoline pozivatelja osim direktorija gita u PATH-u."""
+    """The whole environment for git: nothing from the caller's environment except git's directory in PATH."""
     bin_dir = str(Path(git_path or executable()).parent)
     return {
         "PATH": os.pathsep.join(dict.fromkeys([bin_dir, *os.defpath.split(os.pathsep)])), "HOME": os.devnull,
@@ -82,7 +82,7 @@ def environment(git_path: str | None = None) -> dict[str, str]:
 
 
 def user_excludes() -> Path | None:
-    """Korisnikova datoteka globalnih ignore uzoraka (zadana XDG putanja gita) ili None kad je nema."""
+    """The user's global ignore-pattern file (git's default XDG path), or None when there is none."""
     home = os.environ.get("HOME")
     base = os.environ.get("XDG_CONFIG_HOME") or (str(Path(home) / ".config") if home else None)
     candidate = Path(base) / "git" / "ignore" if base else None
@@ -101,11 +101,11 @@ def _execute(argv: list[str], name: str, stdin: bytes | None = None, timeout: in
         proc = subprocess.run(argv, input=stdin, capture_output=True, env={**environment(), **(extra_env or {})},
                               timeout=timeout)
     except subprocess.TimeoutExpired as exc:
-        raise GitError(f"git {name} nije završio u {timeout} s") from exc
+        raise GitError(f"git {name} did not finish in {timeout} s") from exc
     except OSError as exc:
-        raise GitError(f"git se ne može pokrenuti: {exc.strerror}") from exc
+        raise GitError(f"git cannot be started: {exc.strerror}") from exc
     if ok is not None and proc.returncode not in ok:
-        raise GitError(f"git {name} nije uspio: {proc.stderr.decode(errors='replace').strip()}")
+        raise GitError(f"git {name} failed: {proc.stderr.decode(errors='replace').strip()}")
     return proc
 
 
@@ -121,8 +121,8 @@ def _index_override(git_dir: Path) -> dict[str, str]:
     given = Path(os.path.abspath(raw))
     real = given.resolve()
     if given.is_symlink() or not real.is_file() or git_dir.resolve() not in real.parents:
-        raise GitError(f"{INDEX_FILE}={raw} nije obična datoteka unutar git direktorija repoa ({git_dir}) → "
-                       f"pokreni provjeru bez {INDEX_FILE} ili iz hooka tog repoa")
+        raise GitError(f"{INDEX_FILE}={raw} is not a regular file inside the repo's git directory ({git_dir}) → "
+                       f"run the check without {INDEX_FILE} or from that repo's hook")
     return {INDEX_FILE: str(real)}
 
 
@@ -132,14 +132,14 @@ def _attributes_refusal(path: Path) -> str | None:
     except FileNotFoundError:
         return None
     except OSError as exc:
-        return f"{path.name} nije čitljiv ({exc.strerror})"
+        return f"{path.name} is not readable ({exc.strerror})"
     if any(row.strip() and not row.lstrip().startswith("#") for row in rows):
-        return "info/attributes repoa postavlja atribute koje prazno stablo ne gasi"
+        return "the repo's info/attributes sets attributes the empty tree does not disable"
     return None
 
 
 class Git:
-    """git nad jednim repoom. Konfiguracija se provjerava jednom, pri stvaranju; odbijena je GitError."""
+    """git on one repo. The configuration is checked once, at creation; a refused one is a GitError."""
 
     def __init__(self, repo: Path):
         self.repo = Path(repo)
@@ -149,21 +149,21 @@ class Git:
             self.inside, self.object_format, self.prefix, self.index_env = False, None, self.base, {}
             return
         if probe.returncode:
-            raise GitError(f"git rev-parse nije uspio: {probe.stderr.decode(errors='replace').strip()}")
+            raise GitError(f"git rev-parse failed: {probe.stderr.decode(errors='replace').strip()}")
         self.inside = probe.stdout.strip() == b"true"
         keys = _config_keys(self._plain("config", "--list", "-z", "--no-includes"))
         refused = [key for key in keys if REFUSED_KEYS.match(key)]
         if "core.worktree" in keys and not self._own_worktree():
             refused.append("core.worktree")
         if refused:
-            raise GitError(f"konfiguracija repoa sadrži {', '.join(refused)}, a to se ne može neutralizirati → "
-                           "ukloni ga iz .git/config ili provjeri kopiju repoa bez njega")
+            raise GitError(f"repo configuration contains {', '.join(refused)}, which cannot be neutralised → "
+                           "remove it from .git/config or check a copy of the repo without it")
         self.object_format = self._plain("rev-parse", "--show-object-format").decode().strip()
         info = Path(self._plain("rev-parse", "--path-format=absolute", "--git-path", "info/attributes")
                     .decode("utf-8", "surrogateescape").strip())
         reason = _attributes_refusal(info)
         if reason:
-            raise GitError(f"{reason} → isprazni {info.name} ili provjeri kopiju repoa bez njega")
+            raise GitError(f"{reason} → empty {info.name} or check a copy of the repo without it")
         git_dir = Path(self._plain("rev-parse", "--absolute-git-dir").decode("utf-8", "surrogateescape").strip())
         self.index_env = _index_override(git_dir)
         self.prefix = [*self.base[:-2], f"--attr-source={self.empty_tree()}", *self.base[-2:]]
@@ -176,23 +176,23 @@ class Git:
         return _execute([*self.base, *args], args[0]).stdout
 
     def empty_tree(self) -> str:
-        """Ime praznog stabla u formatu objekata repoa (sha1 ili sha256)."""
+        """Name of the empty tree in the repo's object format (sha1 or sha256)."""
         return hashlib.new(self.object_format, b"tree 0\0").hexdigest()
 
     def blob_id(self, data: bytes) -> str:
-        """Ime bloba koji bi git zapisao za ove bajtove, bez ijedne pretvorbe."""
+        """Name of the blob git would write for these bytes, without any conversion."""
         return hashlib.new(self.object_format, b"blob %d\0" % len(data) + data).hexdigest()
 
     def run(self, *args: str, ok: tuple[int, ...] = (0,), stdin: bytes | None = None,
             timeout: int = TIMEOUT) -> subprocess.CompletedProcess:
-        """Pokreni `git <args>` i vrati izlaz u bajtovima; izlazni kod izvan `ok` je GitError s porukom gita."""
+        """Run `git <args>` and return the output in bytes; an exit code outside `ok` is GitError with git's message."""
         if not args:
-            raise GitError("nema git naredbe")
+            raise GitError("no git command")
         extra = ["--no-ext-diff", "--no-textconv"] if args[0] in NO_EXTERNAL else []
         index = self.index_env if args[0] in INDEX_READERS else None
         return _execute([*self.prefix, args[0], *extra, *args[1:]], args[0], stdin, timeout, ok, index)
 
     def text(self, *args: str) -> str:
-        """Izlaz naredbe kao tekst bez završnog praznog prostora."""
+        """Command output as text without trailing whitespace."""
         return self.run(*args).stdout.decode("utf-8", "surrogateescape").strip()
 

@@ -1,11 +1,11 @@
-"""Opseg provjere: koje datoteke code-check gleda, kakve su bile u bazi i koji su im redci novi (diff prema bazi, cijeli
-repo, snapshot).
+"""Check scope: which files code-check looks at, what they were in the base and which of their lines are new (diff
+against the base, whole repo, snapshot).
 
-Radno stablo se čita izravno s diska i uspoređuje s blobom baze po imenu bloba, pa atribut repoa (ident, eol, filter)
-ne može sakriti promjenu. Simbolička veza je preskočena datoteka čiji su bajtovi njezin cilj, pa je S1 ipak čita.
-Git se pokreće samo kroz `gitsafe`. Novi redci računaju se istim algoritmom u svim načinima.
-Snapshot je točno manifest: ništa se ne ignorira. Hod po direktoriju izvan gita preskače generirane mape samo u
-korijenu (`ignored_for_full` ih imenuje), a metapodatke verzija i predmemoriju interpretera na svakoj dubini.
+The working tree is read directly from disk and compared with the base blob by blob id, so a repo attribute (ident,
+eol, filter) cannot hide a change. A symbolic link is a skipped file whose bytes are its target, so S1 still reads it.
+Git runs only through `gitsafe`. New lines are computed with the same algorithm in every mode.
+A snapshot is exactly its manifest: nothing is ignored. A directory walk outside git skips generated directories only
+at the root (`ignored_for_full` names them), and version-control metadata and interpreter caches at any depth.
 """
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ GITLINK, SYMLINK = "160000", "120000"
 DIFF_FLAGS = ("-M", "--relative", "--text", "--no-color", "--diff-algorithm=myers")
 GENERATED = frozenset({"pnpm-lock.yaml", "package-lock.json", "yarn.lock", "Cargo.lock", "poetry.lock", "uv.lock",
                        "composer.lock", "Gemfile.lock"})
-UNREADABLE = {"oversized": "veća od 1 MB", "binary": "sadrži NUL bajt", "not_utf8": "nije u deklariranom kodiranju"}
+UNREADABLE = {"oversized": "larger than 1 MB", "binary": "contains a NUL byte", "not_utf8": "not in declared encoding"}
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 RENAME_SCORE = 0.5
 
@@ -82,7 +82,7 @@ def _decode(data: bytes, path: str = "") -> tuple[str | None, str | None]:
 
 
 def unreadable(views: list[FileView]) -> list[str]:
-    """Datoteke koda ili dokumentacije koje se ne mogu pročitati, s razlogom; njih provjera ne smije preskočiti."""
+    """Code or documentation files that cannot be read, with the reason; the check must not skip them."""
     return sorted(f"{view.path} ({UNREADABLE[view.meta['skipped']]})" for view in views
                   if view.meta.get("skipped") in UNREADABLE and lang_of(view.path) is not None)
 
@@ -140,15 +140,15 @@ def _read_disk(root: Path, rel: str) -> bytes | str:
 
 
 def resolve_base(repo: Path, base: str | None, git: gitsafe.Git | None = None) -> tuple[str, str, str | None]:
-    """Ime baze, njezin commit i napomena kad je zadana baza zamijenjena. Bez baze → MeasureError."""
+    """Base name, its commit and a note when the default base was replaced. No base → MeasureError."""
     git = git or gitsafe.Git(Path(repo))
     candidates = [base] if base else [DEFAULT_BASE, FALLBACK_BASE]
     for name in candidates:
         proc = git.run("rev-parse", "--verify", "--quiet", "--end-of-options", f"{name}^{{commit}}", ok=(0, 1))
         if proc.returncode == 0:
-            note = None if name in (base, DEFAULT_BASE) else f"{DEFAULT_BASE} ne postoji; baza je {name}"
+            note = None if name in (base, DEFAULT_BASE) else f"{DEFAULT_BASE} does not exist; base is {name}"
             return name, proc.stdout.decode().strip(), note
-    raise MeasureError(f"baza {' ni '.join(candidates)} ne postoji u repou")
+    raise MeasureError(f"base {' nor '.join(candidates)} does not exist in the repo")
 
 
 def _changes(git: gitsafe.Git, *rev: str) -> list[_Change]:
@@ -157,7 +157,7 @@ def _changes(git: gitsafe.Git, *rev: str) -> list[_Change]:
     while i < len(tokens):
         fields = tokens[i].lstrip(":").split(" ")
         if len(fields) != 5 or i + 1 >= len(tokens):
-            raise MeasureError(f"neočekivan izlaz git diff --raw: {tokens[i]!r}")
+            raise MeasureError(f"unexpected git diff --raw output: {tokens[i]!r}")
         status = fields[4][0]
         if status in "RC":
             old, path, i = tokens[i + 1], tokens[i + 2], i + 3
@@ -177,7 +177,7 @@ def _blobs(git: gitsafe.Git, shas: set[str]) -> dict[str, bytes]:
         end = data.index(b"\n", pos)
         header = data[pos:end].split(b" ")
         if len(header) != 3 or header[1] != b"blob":
-            raise MeasureError(f"git cat-file nije vratio blob {sha}")
+            raise MeasureError(f"git cat-file did not return blob {sha}")
         size = int(header[2])
         out[sha] = data[end + 1:end + 1 + size]
         pos = end + 1 + size + 1
@@ -190,7 +190,7 @@ def _entries(output: bytes, sha_field: int) -> dict[str, _Entry]:
         info, _, path = record.partition("\t")
         fields = info.split(" ")
         if len(fields) != 3 or not path:
-            raise MeasureError(f"neočekivan izlaz gita: {record!r}")
+            raise MeasureError(f"unexpected git output: {record!r}")
         out.setdefault(path, _Entry(fields[0], fields[sha_field]))
     return out
 
@@ -232,8 +232,8 @@ def _renames(git: gitsafe.Git, rev: tuple[str, ...], added: set[str], gone: set[
 
 
 def views_for_diff(repo: Path, base: str | None = None, staged: bool = False) -> list[FileView]:
-    """Datoteke promijenjene od merge-basea HEAD-a i baze. Glava je disk (ili indeks uz `staged`), baza je blob
-    merge-basea; `added` su redci glave kojih u bazi nema, a `base` je pogled na datoteku u bazi."""
+    """Files changed since the merge base of HEAD and the base. The head is the disk (or the index with `staged`), the
+    base is the merge-base blob; `added` are head lines absent from the base, `base` is the view of the base file."""
     repo = Path(repo)
     git = gitsafe.Git(repo)
     base_ref, base_commit, note = resolve_base(repo, base, git)
@@ -271,15 +271,20 @@ def views_for_diff(repo: Path, base: str | None = None, staged: bool = False) ->
 
 
 def head(repo: Path) -> str | None:
-    """Commit HEAD-a za zapis baselinea; None izvan gita ili u repou bez commita."""
+    """HEAD commit for the baseline record; None outside git or in a repo without commits."""
     git = gitsafe.Git(Path(repo))
     if not git.inside:
         return None
     return git.run("rev-parse", "--verify", "--quiet", "HEAD", ok=(0, 1)).stdout.decode().strip() or None
 
 
+def has_commit(repo: Path, rev: str) -> bool:
+    """Whether commit `rev` is in the repo history (e.g. a baseline commit after a squash merge or a deleted branch)."""
+    return gitsafe.Git(Path(repo)).run("cat-file", "-e", f"{rev}^{{commit}}", ok=(0, 1, 128)).returncode == 0
+
+
 def renames_since(repo: Path, rev: str) -> dict[str, str]:
-    """Preimenovanja od `rev` do radnog stabla, stara putanja → nova, za prenošenje baselinea."""
+    """Renames from `rev` to the working tree, old path → new, for carrying the baseline over."""
     return {c.old_path: c.path for c in _changes(gitsafe.Git(Path(repo)), rev) if c.status == "R" and c.old_path}
 
 
@@ -304,21 +309,21 @@ def _walk(root: Path, ignore: bool) -> tuple[list[str], list[str]]:
 
 
 def ignored_for_full(repo: Path) -> list[str]:
-    """Što hod po direktoriju izvan gita ne gleda: generirane mape u korijenu po putanji, a metapodatke verzija i
-    predmemoriju interpretera po imenu (na svakoj dubini). U gitu je prazno, jer opseg tada određuje `git ls-files`."""
+    """What a directory walk outside git skips: generated root directories by path, and version-control metadata and
+    interpreter caches by name (at any depth). Empty inside git, because `git ls-files` then defines the scope."""
     repo = Path(repo)
     if gitsafe.Git(repo).inside:
         return []
     skipped = _walk(repo, ignore=True)[1]
     rooted = [f"{rel}/" for rel in skipped if PurePosixPath(rel).name not in ANY_DEPTH_DIRS]
-    anywhere = sorted({f"{PurePosixPath(rel).name}/ (na svakoj dubini)" for rel in skipped
+    anywhere = sorted({f"{PurePosixPath(rel).name}/ (at any depth)" for rel in skipped
                        if PurePosixPath(rel).name in ANY_DEPTH_DIRS})
     return rooted + anywhere
 
 
 def views_for_full(repo: Path) -> list[FileView]:
-    """Cijeli repo: praćene i nepraćene neignorirane datoteke iz `git ls-files`, a izvan gita hod po stablu bez
-    generiranih mapa u korijenu. added=None."""
+    """Whole repo: tracked and untracked non-ignored files from `git ls-files`, and outside git a tree walk without
+    the generated root directories. added=None."""
     repo = Path(repo)
     git = gitsafe.Git(repo)
     listed = ("ls-files", "-z", "--cached", "--others", "--exclude-standard")
@@ -337,15 +342,15 @@ def _manifest(path: Path) -> dict[str, str]:
     try:
         files = json.loads(Path(path).read_text())["files"]
     except (OSError, ValueError, KeyError, TypeError) as exc:
-        raise MeasureError(f"manifest {Path(path).name} nije čitljiv: {exc}") from exc
+        raise MeasureError(f"manifest {Path(path).name} is not readable: {exc}") from exc
     if not isinstance(files, dict):
-        raise MeasureError("manifest: polje files nije objekt")
+        raise MeasureError("manifest: field files is not an object")
     for rel, digest in files.items():
         parts = PurePosixPath(rel).parts
         if not isinstance(digest, str) or not SHA256.match(digest):
-            raise MeasureError(f"manifest: {rel} nema ispravan sha256")
+            raise MeasureError(f"manifest: {rel} has no valid sha256")
         if not parts or PurePosixPath(rel).is_absolute() or ".." in parts or "\\" in rel:
-            raise MeasureError(f"manifest: putanja {rel} izlazi iz kandidata")
+            raise MeasureError(f"manifest: path {rel} leaves the candidate")
     return files
 
 
@@ -361,9 +366,9 @@ def _added_against(old_text: str, new_text: str) -> set[int]:
 def _snapshot_view(candidate: Path, base: Path, rel: str, digest: str, source: str | None) -> FileView:
     data = _read_disk(candidate, rel)
     if isinstance(data, str):
-        raise MeasureError(f"{rel}: kandidat sadrži {data}, a ne običnu datoteku")
+        raise MeasureError(f"{rel}: the candidate contains a {data}, not a regular file")
     if sha256(data) != digest:
-        raise MeasureError(f"{rel}: sha256 se ne slaže s manifestom")
+        raise MeasureError(f"{rel}: sha256 does not match the manifest")
     old = _read_disk(base, source or rel)
     old = old if isinstance(old, bytes) else None
     view = _pair(rel, data, old, {"snapshot": True, **({"renamed_from": source} if source else {})})
@@ -411,21 +416,21 @@ def _snapshot_renames(candidate: Path, base: Path, added: list[str], gone: list[
 
 
 def views_for_snapshot(candidate_dir: Path, manifest_path: Path, base_dir: Path) -> list[FileView]:
-    """Kandidat bez gita kao diff prema base_dir: opseg je točno manifest i svaka datoteka mora odgovarati sha256 iz
-    manifesta. Novi redci se računaju prema istoj putanji u base_dir; datoteka jednaka bazi ostaje u opsegu s
-    `meta["unchanged"]`, a datoteka koje ima samo u base_dir dolazi kao obrisana (osim metapodataka verzija,
-    predmemorije interpretera i generiranih mapa u korijenu koje kandidat ne nosi, jer base_dir smije biti checkout
-    s instaliranim ovisnostima). Nova putanja sa sadržajem barem RENAME_SCORE sličnim obrisanoj je preimenovanje
-    (`meta["renamed_from"]`) kao u `git diff -M`: najsličniji par prvi, svaka putanja u najviše jednom paru, a prazne
-    datoteke i one veće od 1 MB se ne spajaju. U kandidatu se ništa ne ignorira."""
+    """A candidate without git as a diff against base_dir: the scope is exactly the manifest and every file must match
+    its manifest sha256. New lines are computed against the same path in base_dir; a file equal to the base stays in
+    scope with `meta["unchanged"]`, and a file present only in base_dir comes as deleted (except version-control
+    metadata, interpreter caches and generated root directories the candidate does not carry, because base_dir may be
+    a checkout with installed dependencies). A new path whose content is at least RENAME_SCORE similar to a deleted
+    one is a rename (`meta["renamed_from"]`) as in `git diff -M`: most similar pair first, each path in at most one
+    pair, and empty files and files larger than 1 MB are not paired. Nothing in the candidate is ignored."""
     candidate, base = Path(candidate_dir), Path(base_dir)
     expected = _manifest(manifest_path)
     present = _walk(candidate, ignore=False)[0]
     extra, absent = sorted(set(present) - set(expected)), sorted(set(expected) - set(present))
     if extra:
-        raise MeasureError(f"{', '.join(extra)}: datoteka kandidata nije u manifestu")
+        raise MeasureError(f"{', '.join(extra)}: candidate file is not in the manifest")
     if absent:
-        raise MeasureError(f"{', '.join(absent)}: datoteka iz manifesta ne postoji u kandidatu")
+        raise MeasureError(f"{', '.join(absent)}: manifest file does not exist in the candidate")
     gone = sorted(set(_base_files(base, expected)) - set(expected))
     renames = _snapshot_renames(candidate, base, [rel for rel in present if not os.path.lexists(base / rel)], gone)
     views = [_snapshot_view(candidate, base, rel, expected[rel], renames.get(rel)) for rel in present]

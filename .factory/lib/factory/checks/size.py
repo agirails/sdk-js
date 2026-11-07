@@ -1,11 +1,11 @@
-"""K13: datoteka preko 800 redaka ili funkcija preko 120 redaka. Pada samo rast u odnosu na staru verziju.
+"""K13: a file over 800 lines or a function over 120 lines. Only growth against the old version fails.
 
-Ključ nalaza funkcije je njeno ime, a redak u imenu anonimne TS funkcije (`anonimna@<redak>`) se ne broji, pa redak
-dodan iznad ne mijenja ključ. Svaka funkcija glave uparuje se s jednom funkcijom baze istog imena: jedina s jedinom, a
-kad ih je više (getter i setter, overload, povratne funkcije istog poziva), s onom čiji su redci najvećim dijelom ostali
-u njoj. Rast bez novog retka u funkciji (brisanje pripoji tijelo sljedeće) baza ima pod istim imenom, pa ključ takvog
-rasta nosi i staru duljinu i uparivanje s bazom ga ne guta. Baza koja se ne može parsirati nema funkcija: codecheck je
-javlja napomenom i sve nalaze u njoj drži novima."""
+A function finding's key is its name, and the line in an anonymous TS function's name (`anonimna@<line>`) is not
+counted, so a line added above does not change the key. Each head function is matched with one base function of the
+same name: the only one with the only one, and when there are several (getter and setter, overload, callbacks of the
+same call), with the one that kept most of its lines. Growth without a new line in the function (a deletion joins the
+next body) has the same name in the base, so its key also carries the old length and the base match does not absorb
+it. An unparsable base has no functions: codecheck reports it with a note and treats all its findings as new."""
 from __future__ import annotations
 
 import ast
@@ -19,8 +19,8 @@ from . import CODE_LANGS, anchor
 
 FILE_LIMIT = 800
 FUNCTION_LIMIT = 120
-FIX_FILE = "podijeli datoteku po odgovornostima prije dodavanja"
-FIX_FUNCTION = "izdvoji dijelove u zasebne funkcije čije ime kaže što rade"
+FIX_FILE = "split the file by responsibility before adding to it"
+FIX_FUNCTION = "extract parts into separate functions whose names say what they do"
 ANONYMOUS = re.compile(r"anonimna@\d+")
 Span = tuple[str, int, int]
 
@@ -45,7 +45,7 @@ def _python_spans(path: str, text: str) -> list[tuple[str, int, int]]:
 
 
 def spans(lang: str, path: str, text: str) -> list[tuple[str, int, int]]:
-    """Funkcije kao (ime, prvi redak, zadnji redak) za py, ts i sol; za ostale jezike prazno."""
+    """Functions as (name, first line, last line) for py, ts and sol; empty for other languages."""
     if lang == "py":
         return _python_spans(path, text)
     if lang == "ts":
@@ -63,8 +63,8 @@ def _file(view: FileView) -> list[Finding]:
     if view.added is not None and not view.added:
         return []
     line = FILE_LIMIT + 1 if view.added is None else min(view.added)
-    before = "" if old is None else f", prije {old}"
-    return [Finding("K13", view.path, line, f"datoteka ima {count} redaka (granica {FILE_LIMIT}{before})", FIX_FILE,
+    before = "" if old is None else f", before {old}"
+    return [Finding("K13", view.path, line, f"file has {count} lines (limit {FILE_LIMIT}{before})", FIX_FILE,
                     "datoteka")]
 
 
@@ -135,8 +135,8 @@ def _functions(view: FileView) -> list[Finding]:
         line = anchor(view, start, end)
         if line is None:
             continue
-        before = "" if old is None else f", prije {old}"
-        message = f"funkcija {name} (redak {start}) ima {length} redaka (granica {FUNCTION_LIMIT}{before})"
+        before = "" if old is None else f", before {old}"
+        message = f"function {name} (line {start}) has {length} lines (limit {FUNCTION_LIMIT}{before})"
         out.append(Finding("K13", view.path, line, message, FIX_FUNCTION, _key(view, _identity(name), line, old)))
     return out
 
@@ -148,7 +148,7 @@ def _key(view: FileView, name: str, line: int, old: int | None) -> str:
 
 
 def check(view: FileView) -> list[Finding]:
-    """K13 nalazi za datoteku koda; dokumentacija i nepoznati jezici se ne mjere."""
+    """K13 findings for a code file; documentation and unknown languages are not measured."""
     if view.lang not in CODE_LANGS:
         return []
     return ordered(_file(view) + _functions(view))

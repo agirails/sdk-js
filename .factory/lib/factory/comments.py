@@ -1,15 +1,15 @@
-"""K2/K3 provjera komentara, uz oblik direktiva (K5) i oznaku zastarjelosti bez datuma uklanjanja (K15).
+"""K2/K3 comment check, plus directive shape (K5) and deprecation markers without a removal date (K15).
 
-Komentari se nalaze tokenizerom po jeziku, nikad regexom po retku: Python `tokenize` + `ast`, TS/JS kroz
-`tsfacts` (pinani TypeScript, jedan node proces po pozivu), Solidity kroz `sol_lex`, YAML kroz `yaml_lex`, a shell
-te `#` komentari TOML-a i Makefilea kroz male lexere ovdje. Uzastopni redni komentari su jedan komentar. Dopušteni
-su doc komentari na javnom API-ju, dokumentacija modula, direktive s pravilom i razlogom, `factory-allow` i
-`EXTERNAL(<ovisnost>): <pravilo> <url>`; sve ostalo je K2. U konfiguraciji (YAML, TOML, Makefile) vrijedi samo K3.
-Datoteka koju parser ili lexer ne pročita do kraja je MeasureError, jer bi komentari iza mjesta greške ostali
-neprovjereni. Isključenje ispravnosnog pravila (standard/configs/rule-classes.toml; pravilo ili alat kojeg tamo nema
-vrijedi kao ispravnosno) traži `factory-allow` (K5). mypy direktivu čita kao mypy: redak koji počinje s `# mypy: `
-vrijedi i unutar višerednog stringa, a opcije se dijele zarezom izvan dvostrukih navodnika (jednostruki su obični
-znak). K3 fraza se traži preko granica redaka; riječ prelomljena crticom na kraju retka je jedna riječ.
+Comments are found with a per-language tokenizer, never a per-line regex: Python `tokenize` + `ast`, TS/JS via
+`tsfacts` (pinned TypeScript, one node process per call), Solidity via `sol_lex`, YAML via `yaml_lex`, and shell plus
+`#` comments in TOML and Makefiles via small lexers here. Consecutive line comments are one comment. Allowed are doc
+comments on public API, module documentation, directives with a rule and a reason, `factory-allow` and
+`EXTERNAL(<dependency>): <rule> <url>`; everything else is K2. In configuration (YAML, TOML, Makefile) only K3 applies.
+A file the parser or lexer does not read to the end is a MeasureError, because comments after the error would stay
+unchecked. Disabling a correctness rule (standard/configs/rule-classes.toml; a rule or tool not listed there counts as
+correctness) needs `factory-allow` (K5). A mypy directive is read as mypy reads it: a line starting with `# mypy: `
+counts inside a multi-line string too, and options split on commas outside double quotes (single quotes are ordinary
+characters). A K3 phrase is matched across line breaks; a word hyphenated at the end of a line is one word.
 """
 from __future__ import annotations
 
@@ -47,18 +47,18 @@ EXTERNAL = re.compile(r"EXTERNAL\([^)\s]+\):\s*\S.*?\s(https?://\S+)", re.S)
 ALLOW_FIELD = re.compile(r"\b(razlog|do|odobrio)=")
 RULE_ID = re.compile(r"[KSP]\d+")
 
-FIX_K3 = "riješi to u kodu ili otvori issue, pa obriši komentar"
-FIX_K2 = "izrazi to imenom, strukturom ili testom; pozadinu odluke zapiši u zapis odluke, pa obriši komentar"
-FIX_CONSTRAINT = "kodiraj ograničenje (tip, assert, test, lint), pa obriši komentar"
-FIX_DOC = "dokumentiraj samo javni API; ovdje namjeru izrazi imenom ili testom, pa obriši komentar"
-FIX_ORPHAN = "premjesti ga neposredno iznad javne deklaracije ili ga obriši"
-FIX_EXTERNAL = "napiši EXTERNAL(<ovisnost>): <pravilo> <url> ili ograničenje kodiraj tipom, assertom ili testom"
-FIX_ALLOW = "napiši factory-allow <PRAVILO> razlog=<zašto> do=YYYY-MM-DD odobrio=<ime>"
-FIX_ESLINT = "napiši eslint-disable-next-line <pravilo> -- <razlog>"
-FIX_CORRECTNESS = ("popravi kod umjesto isključenja; ako je isključenje nužno, iznad njega napiši "
-                   "factory-allow K5 razlog=<zašto> do=YYYY-MM-DD odobrio=<ime>")
-FIX_FILE_TYPES = "ispravi tipove i obriši direktivu"
-FIX_BIOME = "napiši biome-ignore <kategorija>: <razlog>"
+FIX_K3 = "resolve it in code or open an issue, then delete the comment"
+FIX_K2 = "express it as a name, structure or test; put the decision background in a decision record, then delete it"
+FIX_CONSTRAINT = "encode the constraint (type, assert, test, lint), then delete the comment"
+FIX_DOC = "document only public API; here express the intent with a name or test, then delete the comment"
+FIX_ORPHAN = "move it directly above a public declaration or delete it"
+FIX_EXTERNAL = "write EXTERNAL(<dependency>): <rule> <url> or encode the constraint as a type, assert or test"
+FIX_ALLOW = "write factory-allow <RULE> razlog=<why> do=YYYY-MM-DD odobrio=<name>"
+FIX_ESLINT = "write eslint-disable-next-line <rule> -- <reason>"
+FIX_CORRECTNESS = ("fix the code instead of disabling the rule; if disabling is necessary, write above it "
+                   "factory-allow K5 razlog=<why> do=YYYY-MM-DD odobrio=<name>")
+FIX_FILE_TYPES = "fix the types and delete the directive"
+FIX_BIOME = "write biome-ignore <category>: <reason>"
 ESLINT_RULES = re.compile(r"\s+([@\w][@\w/-]*(?:\s*,\s*[@\w][@\w/-]*)*)")
 ESLINT_ITEM = re.compile(r",\s*(?=[@\w][@\w/-]*\s*:)")
 ESLINT_ON = re.compile(r"""(?:"error"|'error'|error|2|\[\s*(?:"error"|'error'|2)\s*\])""")
@@ -91,16 +91,16 @@ def _named(tool: str, pattern: str, message: str, fix: str):
 
 @lru_cache(maxsize=1)
 def rule_classes(path: Path = RULE_CLASSES) -> dict[str, dict[str, frozenset[str]]]:
-    """Stilska i ispravnosna pravila po alatu iz rule-classes.toml; nečitljiva datoteka je MeasureError."""
+    """Style and correctness rules per tool from rule-classes.toml; an unreadable file is a MeasureError."""
     try:
         data = tomllib.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, tomllib.TOMLDecodeError) as exc:
-        raise MeasureError(f"{Path(path).name} nije čitljiv: {exc}") from exc
+        raise MeasureError(f"{Path(path).name} is not readable: {exc}") from exc
     out = {}
     for tool in ("eslint", "ruff", "biome"):
         section = data.get(tool)
         if not isinstance(section, dict) or not all(isinstance(section.get(k), list) for k in ("style", "correctness")):
-            raise MeasureError(f"{Path(path).name}: [{tool}] mora imati popise style i correctness")
+            raise MeasureError(f"{Path(path).name}: [{tool}] must have style and correctness lists")
         out[tool] = {k: frozenset(section[k]) for k in ("style", "correctness")}
     return out
 
@@ -117,30 +117,30 @@ def _is_style(tool: str, rule: str) -> bool:
 
 
 def _correctness(tool: str, rules: Iterable[str]) -> list[tuple[str, str]]:
-    return [(f"isključenje ispravnosnog pravila {rule} bez factory-allow", FIX_CORRECTNESS)
+    return [(f"correctness rule {rule} disabled without factory-allow", FIX_CORRECTNESS)
             for rule in rules if not _is_style(tool, rule)]
 
 
 def _eslint(rest: str):
     names = ESLINT_RULES.match(rest)
     if not names:
-        return [("eslint-disable bez imena pravila", FIX_ESLINT)]
+        return [("eslint-disable without a rule name", FIX_ESLINT)]
     if not re.search(r"\s--\s*\S", rest):
-        return [("eslint-disable bez razloga", FIX_ESLINT)]
+        return [("eslint-disable without a reason", FIX_ESLINT)]
     return _correctness("eslint", re.split(r"\s*,\s*", names.group(1)))
 
 
 def _noqa(rest: str):
     codes = NOQA_CODES.match(rest)
     if not codes:
-        return [("noqa bez koda pravila", "napiši # noqa: <KOD>")]
+        return [("noqa without a rule code", "write # noqa: <CODE>")]
     return _correctness("ruff", re.split(r"[\s,]+", codes.group(1)))
 
 
 def _eslint_config(rest: str):
     config, _, reason = rest.partition("--")
     if not reason.strip():
-        return [("eslint konfiguracija u komentaru bez razloga", FIX_ESLINT)]
+        return [("eslint configuration in a comment without a reason", FIX_ESLINT)]
     items = [item.split(":", 1) for item in ESLINT_ITEM.split(config.strip())]
     return _correctness("eslint", [name.strip() for name, value in items if not ESLINT_ON.fullmatch(value.strip())])
 
@@ -148,15 +148,15 @@ def _eslint_config(rest: str):
 def _typed(name: str):
     def check(rest: str):
         if not TYPE_CODES.match(rest):
-            return [(f"{name} bez koda greške", f"napiši # {name}[<kod>] ili ispravi tip")]
-        return [(f"isključenje provjere tipova ({name}) bez factory-allow", FIX_CORRECTNESS)]
+            return [(f"{name} without an error code", f"write # {name}[<code>] or fix the type")]
+        return [(f"type check disabled ({name}) without factory-allow", FIX_CORRECTNESS)]
     return check
 
 
 def _expect_error(rest: str):
     if not REASON.match(rest):
-        return [("@ts-expect-error bez razloga", "napiši @ts-expect-error <razlog>")]
-    return [("isključenje provjere tipova (@ts-expect-error) bez factory-allow", FIX_CORRECTNESS)]
+        return [("@ts-expect-error without a reason", "write @ts-expect-error <reason>")]
+    return [("type check disabled (@ts-expect-error) without factory-allow", FIX_CORRECTNESS)]
 
 
 def _mypy_strong(name: str, value: str | None) -> bool:
@@ -177,12 +177,12 @@ def _pyright_strong(name: str, value: str | None) -> bool:
 def _whole_file(tool: str, strong, rest: str):
     items = [item.strip() for item in OPTION_ITEM.findall(rest) if item.strip()]
     if not items:
-        return [(f"{tool}: direktiva bez opcija", FIX_FILE_TYPES)]
+        return [(f"{tool}: directive without options", FIX_FILE_TYPES)]
     weak = [item for item, option in ((item, OPTION.fullmatch(item)) for item in items)
             if not option or not strong(option.group(1), option.group(2))]
     if not weak:
         return []
-    return [(f"{tool}: {', '.join(weak)} isključuje provjeru tipova za cijelu datoteku", FIX_FILE_TYPES)]
+    return [(f"{tool}: {', '.join(weak)} disables type checking for the whole file", FIX_FILE_TYPES)]
 
 
 def _mypy(rest: str):
@@ -196,9 +196,9 @@ def _pyright(rest: str):
 def _biome(rest: str):
     match = BIOME.match(rest)
     if not match or not match.group(1):
-        return [("biome-ignore bez imena pravila", FIX_BIOME)]
+        return [("biome-ignore without a rule name", FIX_BIOME)]
     if not match.group(2):
-        return [("biome-ignore bez razloga", FIX_BIOME)]
+        return [("biome-ignore without a reason", FIX_BIOME)]
     return _correctness("biome", [re.sub(r"\(.*\)$", "", name) for name in match.group(1).split()])
 
 
@@ -208,10 +208,10 @@ def _ok(rest: str):
 
 DIRECTIVES = (
     (re.compile(r"eslint-disable(?:-next-line|-line)?\b(.*)", re.S), _eslint),
-    (re.compile(r"@ts-ignore\b(.*)", re.S), _problem("@ts-ignore isključuje provjeru tipova bez razloga",
-                                                    "ispravi tip ili napiši @ts-expect-error <razlog>")),
-    (re.compile(r"@ts-nocheck\b(.*)", re.S), _problem("@ts-nocheck isključuje provjeru tipova za cijelu datoteku",
-                                                     "ispravi tipove i obriši direktivu")),
+    (re.compile(r"@ts-ignore\b(.*)", re.S), _problem("@ts-ignore disables type checking without a reason",
+                                                    "fix the type or write @ts-expect-error <reason>")),
+    (re.compile(r"@ts-nocheck\b(.*)", re.S), _problem("@ts-nocheck disables type checking for the whole file",
+                                                     "fix the types and delete the directive")),
     (re.compile(r"@ts-expect-error\b(.*)", re.S), _expect_error),
     (re.compile(r"eslint\s+([@\w][@\w/-]*\s*:.*)", re.S), _eslint_config),
     (re.compile(r"biome-ignore(?:-all|-start)?(?![\w-])(.*)", re.S), _biome),
@@ -221,19 +221,19 @@ DIRECTIVES = (
     (re.compile(r"mypy:(.*)", re.S), _mypy),
     (re.compile(r"pyright:(.*)", re.S), _pyright),
     (re.compile(r"pylint:\s*disable(?:-next)?\b(.*)", re.S), _named(
-        "pylint", r"\s*=\s*([\w-]+(?:\s*,\s*[\w-]+)*)", "pylint: disable bez imena pravila",
-        "napiši # pylint: disable=<pravilo>")),
+        "pylint", r"\s*=\s*([\w-]+(?:\s*,\s*[\w-]+)*)", "pylint: disable without a rule name",
+        "write # pylint: disable=<rule>")),
     (re.compile(r"solhint-disable(?:-next-line|-line)?\b(.*)", re.S), _named(
-        "solhint", r"\s+([\w-]+(?:\s*,\s*[\w-]+)*)", "solhint-disable bez imena pravila",
-        "napiši solhint-disable-next-line <pravilo>")),
+        "solhint", r"\s+([\w-]+(?:\s*,\s*[\w-]+)*)", "solhint-disable without a rule name",
+        "write solhint-disable-next-line <rule>")),
     (re.compile(r"slither-disable(?:-next-line|-start|-end)?\b(.*)", re.S), _named(
-        "slither", r"\s+([\w-]+(?:\s*,\s*[\w-]+)*)", "slither-disable bez imena detektora",
-        "napiši slither-disable-next-line <detektor>")),
+        "slither", r"\s+([\w-]+(?:\s*,\s*[\w-]+)*)", "slither-disable without a detector name",
+        "write slither-disable-next-line <detector>")),
     (re.compile(r"shellcheck\s+disable\b(.*)", re.S), _named(
-        "shellcheck", r"=(SC\d+(?:\s*,\s*SC\d+)*)", "shellcheck disable bez koda",
-        "napiši # shellcheck disable=SC<broj>")),
+        "shellcheck", r"=(SC\d+(?:\s*,\s*SC\d+)*)", "shellcheck disable without a code",
+        "write # shellcheck disable=SC<number>")),
     (re.compile(r"nosec\b(.*)", re.S), _named(
-        "bandit", r"[\s:]+([A-Z]+\d+(?:[\s,]+[A-Z]+\d+)*)", "nosec bez koda pravila", "napiši # nosec <KOD>")),
+        "bandit", r"[\s:]+([A-Z]+\d+(?:[\s,]+[A-Z]+\d+)*)", "nosec without a rule code", "write # nosec <CODE>")),
     (re.compile(r"""(?:eslint-enable|eslint-env\s|@ts-check\b|prettier-ignore|(?:istanbul|c8|v8)\s+ignore
         |@(?:vitest|jest)-environment\s|biome-ignore-end\s|type:\s|pragma:|fmt:\s*(?:off|on|skip)|isort:
         |(?:-\*-\s*)?coding[:=]\s*[-\w.]+(?:\s*-\*-)?\s*$|SPDX-License-Identifier:|solhint-enable|forge-lint:
@@ -245,7 +245,7 @@ DIRECTIVES = (
 
 @dataclass(frozen=True)
 class FactoryAllow:
-    """Iznimka `factory-allow <PRAVILO> razlog=<..> do=YYYY-MM-DD odobrio=<..>`; polje koje fali je None."""
+    """Exception `factory-allow <RULE> razlog=<..> do=YYYY-MM-DD odobrio=<..>`; a missing field is None."""
     rule: str | None
     reason: str | None
     until: str | None
@@ -254,18 +254,18 @@ class FactoryAllow:
     own_line: bool = False
 
     def problems(self, today: date) -> list[str]:
-        """Što iznimku čini nevaljanom na dan `today`; prazno znači da vrijedi."""
-        missing = [name for name, value in (("pravilo", self.rule), ("razlog=", self.reason), ("do=", self.until),
+        """What makes the exception invalid on day `today`; empty means it is valid."""
+        missing = [name for name, value in (("rule", self.rule), ("razlog=", self.reason), ("do=", self.until),
                                             ("odobrio=", self.approver)) if not value]
         if missing:
-            return [f"factory-allow bez polja {', '.join(missing)}"]
+            return [f"factory-allow without field {', '.join(missing)}"]
         until = self._until()
         if until is None:
-            return [f"factory-allow s neispravnim datumom do={self.until}"]
-        return [f"factory-allow istekao {self.until}"] if until < today else []
+            return [f"factory-allow with an invalid date do={self.until}"]
+        return [f"factory-allow expired {self.until}"] if until < today else []
 
     def expired(self, today: date) -> bool:
-        """Istekla iznimka je kršenje i na retku koji se nije mijenjao."""
+        """An expired exception is a violation even on a line that did not change."""
         until = self._until()
         return until is not None and until < today
 
@@ -277,7 +277,7 @@ class FactoryAllow:
 
 
 def parse_allow(body: str) -> FactoryAllow | None:
-    """Pročitaj tijelo komentara (bez oznake komentara) kao factory-allow; None ako to nije factory-allow."""
+    """Read a comment body (without the comment marker) as factory-allow; None if it is not factory-allow."""
     text = body.strip()
     if not text.startswith("factory-allow"):
         return None
@@ -422,7 +422,7 @@ def _py_comments(view: FileView) -> list[_Comment]:
     try:
         tokens = list(tokenize.generate_tokens(io.StringIO(view.text).readline))
     except (tokenize.TokenError, SyntaxError) as exc:
-        raise MeasureError(f"{view.path}: Python tokenizer nije pročitao datoteku: {exc}") from exc
+        raise MeasureError(f"{view.path}: the Python tokenizer did not read the file: {exc}") from exc
     raw = [_Comment(tok.start[0], tok.start[0], tok.string, _marker(tok.string) if tok.start == (1, 0) else "#",
                     not tok.line[:tok.start[1]].strip(), start=tok.start[1])
            for tok in tokens if tok.type == tokenize.COMMENT]
@@ -466,7 +466,7 @@ def _sol_comments(view: FileView) -> list[_Comment]:
     text = view.text
     lexed = sol_lex.lex(text)
     if lexed.problem:
-        raise MeasureError(f"{view.path}: Solidity lexer nije pročitao datoteku: {lexed.problem}")
+        raise MeasureError(f"{view.path}: the Solidity lexer did not read the file: {lexed.problem}")
     raw = [token for token in lexed.tokens if token.kind == "comment"]
     spans = [(token.start, token.stop) for token in lexed.tokens if token.kind in ("comment", "string")]
     lines, masked = _Lines(text), _mask(text, spans)
@@ -593,7 +593,7 @@ def _sh_comments(view: FileView) -> list[_Comment]:
     text = view.text
     raw, broken = _sh_lex(text)
     if broken:
-        raise MeasureError(f"{view.path}: shell lexer nije pročitao datoteku (navodnik, heredoc ili zagrada bez kraja)")
+        raise MeasureError(f"{view.path}: the shell lexer did not read the file (open quote, heredoc or bracket)")
     lines = _Lines(text)
     comments = _group([_Comment(lines.line(start), lines.line(start), text[start:stop], _marker(text[start:stop]),
                                 lines.own(start), "header" if header else None, start=start, stop=stop,
@@ -614,7 +614,7 @@ def _ts_extract(views: list[FileView]) -> list[list[_Comment]]:
     for view in views:
         data = tsfacts.file_facts(view.path, view.text)
         if data["uncertain"]:
-            raise MeasureError(f"TypeScript parser nije pročitao datoteku: {data['error']}")
+            raise MeasureError(f"the TypeScript parser did not read the file: {data['error']}")
         out.append(_group([_Comment(c["line"], c["end"], c["text"], _marker(c["text"]), c["own"], c["place"])
                            for c in data["comments"]]))
     return out
@@ -655,7 +655,7 @@ def _config_lex(text: str, lang: str) -> list[tuple[int, int]]:
         else:
             i += 1
     if quote and len(quote) == 3:
-        raise MeasureError(f"TOML string {quote} bez kraja")
+        raise MeasureError(f"unterminated TOML string {quote}")
     return raw
 
 
@@ -699,14 +699,14 @@ def _kind(comment: _Comment, body: str, today: date) -> tuple[str, list[tuple[st
 
 def _k2_text(comment: _Comment, kind: str) -> tuple[str, str]:
     if kind == "external":
-        return "EXTERNAL komentar bez ovisnosti, pravila ili URL-a", FIX_EXTERNAL
+        return "EXTERNAL comment without a dependency, rule or URL", FIX_EXTERNAL
     if comment.marker == "str":
-        return "tekst kao naredba izvan docstringa", FIX_K2
+        return "string statement outside a docstring", FIX_K2
     if comment.place == "private":
-        return "doc komentar na privatnom ili lokalnom simbolu", FIX_DOC
+        return "doc comment on a private or local symbol", FIX_DOC
     if comment.place == "orphan":
-        return "doc komentar koji ne stoji neposredno iznad deklaracije", FIX_ORPHAN
-    return "objašnjavajući komentar u tijelu koda", FIX_K2
+        return "doc comment not directly above a declaration", FIX_ORPHAN
+    return "explanatory comment in a code body", FIX_K2
 
 
 COMMENT_MARK = re.compile(r"^\s*(?:/\*+!?|\*+(?!/)|/{2,}|#+)?")
@@ -752,20 +752,20 @@ def _judge(view: FileView, comment: _Comment, today: date) -> list[Finding]:
     out = [finding(rule, comment.line, message, fix) for rule, message, fix in problems]
     flat, starts = _flat(text)
     k3 = _per_line(K3, flat, starts, comment.line, new, everywhere)
-    out += [finding("K3", line, f"komentar o zaobilasku („{term}“)", FIX_K3) for line, term in k3]
+    out += [finding("K3", line, f"workaround comment (\"{term}\")", FIX_K3) for line, term in k3]
     if comment.place == "config":
         return out
     constraint = _per_line(CONSTRAINT, flat, starts, comment.line, new, everywhere)
     if not k3 and constraint:
         line, term = constraint[0]
-        out.append(finding("K2", line, f"komentar čuva ograničenje („{term}“)", FIX_CONSTRAINT))
+        out.append(finding("K2", line, f"comment holds a constraint (\"{term}\")", FIX_CONSTRAINT))
     elif not k3 and kind != "allowed":
         out.append(finding("K2", min(new, default=comment.line), *_k2_text(comment, kind)))
     for match in DEPRECATED.finditer(text):
         if not ISO_DATE.search(match.group(2)):
             out.append(finding("K15", comment.line + text.count("\n", 0, match.start(1)),
-                               f"{match.group(1)} bez datuma uklanjanja",
-                               f"upiši datum uklanjanja (YYYY-MM-DD) uz {match.group(1)} i otvori issue za brisanje"))
+                               f"{match.group(1)} without a removal date",
+                               f"add a removal date (YYYY-MM-DD) to {match.group(1)} and open a removal issue"))
     return out
 
 
@@ -776,7 +776,7 @@ def _extract_all(views: list[FileView]) -> list[list[_Comment]]:
 
 
 def allowances(view: FileView) -> list[FactoryAllow]:
-    """Sve factory-allow iznimke u datoteci, s retkom i oznakom stoji li komentar sam u retku (za druge provjere)."""
+    """All factory-allow exceptions in a file, with the line and whether the comment stands alone on it."""
     found = []
     for file_comments in _extract_all([view]):
         for comment in file_comments:
@@ -787,7 +787,7 @@ def allowances(view: FileView) -> list[FactoryAllow]:
 
 
 def scan_many(views: Iterable[FileView]) -> list[Finding]:
-    """K2/K3/K5/K15 nalazi za sve datoteke; TS/JS ide kroz jedan node proces. Exit 2 put je MeasureError."""
+    """K2/K3/K5/K15 findings for all files; TS/JS goes through one node process. The exit 2 path is MeasureError."""
     views = list(views)
     findings = [f for view, comments in zip(views, _extract_all(views)) for c in comments
                 for f in _judge(view, c, _today(view))]
@@ -795,6 +795,6 @@ def scan_many(views: Iterable[FileView]) -> list[Finding]:
 
 
 def scan(view: FileView) -> list[Finding]:
-    """Nalazi za jednu datoteku. Kad `view.added` nije None, a datoteka nema bazu, javljaju se samo komentari koji
-    diraju dodane retke; istekla factory-allow iznimka javlja se uvijek."""
+    """Findings for one file. When `view.added` is not None and the file has no base, only comments that touch
+    added lines are reported; an expired factory-allow exception is always reported."""
     return scan_many([view])

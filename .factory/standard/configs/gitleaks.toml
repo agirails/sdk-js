@@ -193,7 +193,7 @@ regex = '''bedrock-api-key-YmVkcm9jay5hbWF6b25hd3MuY29t'''
 entropy = 3
 keywords = ["bedrock-api-key-"]
 [[rules.allowlists]]
-description = "deklaracija pravila u ovoj datoteci nije tajna"
+description = "the rule declaration in this file is not a secret"
 regexTarget = "line"
 regexes = ["^\\n?regex = '{3}bedrock\\-api\\-key\\-YmVkcm9jay5hbWF6b25hd3MuY29t'{3}$"]
 

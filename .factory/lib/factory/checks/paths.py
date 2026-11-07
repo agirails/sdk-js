@@ -1,8 +1,8 @@
-"""K9: lokalne putanje i imena interne infrastrukture u isporučenom kodu i dokumentaciji.
+"""K9: local paths and internal infrastructure names in shipped code and documentation.
 
-Popis internih imena je standard/configs/internal-names.txt. Redak je ime (`Moje Ime`) ili njegov otisak
-`sha256:<hex>`; otisak je sha256 riječi imena malim slovima, odvojenih jednim razmakom. Kopija koja ide u javni repo
-nosi samo otiske, pa sam popis ne otkriva imena. Ime se traži po riječima, pa `ime-x`, `ime_x` i `Ime X` su isto.
+The list of internal names is standard/configs/internal-names.txt. A line is a name (`My Name`) or its fingerprint
+`sha256:<hex>`; the fingerprint is the sha256 of the name's lowercase words, separated by one space. The public copy
+carries only fingerprints, so the list does not reveal names. Names match by words: `name-x`, `name_x`, `Name X` match.
 """
 from __future__ import annotations
 
@@ -29,22 +29,22 @@ ROOT_PREFIX = (rf"file://(?:localhost)?|vscode://file|/mnt/[A-Za-z](?={SEP})|/[A
 LOCAL_PATH = re.compile(
     rf"\b[A-Za-z]:{WIN_SEP}(?i:users){WIN_SEP}{WIN_USER}"
     rf"|(?<![\w.~/\\-])(?:{ROOT_PREFIX})?(?:{SEP}(?i:home|users|var{SEP}home){SEP}{UNIX_USER}|/root/[\w.-])")
-FIX_PATH = "izvedi putanju iz HOME, argumenta ili korijena repoa"
-FIX_NAME = "ukloni ime ili premjesti sadržaj u privatni repo"
+FIX_PATH = "derive the path from HOME, an argument or the repo root"
+FIX_NAME = "remove the name or move the content to a private repo"
 
 
 def digest(name: str) -> str:
-    """Otisak imena za internal-names.txt: sha256 riječi malim slovima odvojenih razmakom."""
+    """Fingerprint of a name for internal-names.txt: sha256 of its lowercase words joined by one space."""
     return sha256(" ".join(word.lower() for word in WORD.findall(name)))
 
 
 @lru_cache(maxsize=8)
 def load_names(path: Path = NAMES_FILE) -> frozenset[str]:
-    """Otisci internih imena; nečitljiv popis ili neispravan redak je MeasureError."""
+    """Fingerprints of internal names; an unreadable list or an invalid line is a MeasureError."""
     try:
         raw = Path(path).read_text(encoding="utf-8")
     except OSError as exc:
-        raise MeasureError(f"popis internih imena nije čitljiv ({Path(path).name}): {exc.strerror}") from exc
+        raise MeasureError(f"list of internal names is not readable ({Path(path).name}): {exc.strerror}") from exc
     out = set()
     for number, row in enumerate(raw.splitlines(), 1):
         entry = row.strip()
@@ -52,12 +52,12 @@ def load_names(path: Path = NAMES_FILE) -> frozenset[str]:
             continue
         if entry.startswith("sha256:"):
             if not DIGEST.match(entry):
-                raise MeasureError(f"{Path(path).name}:{number}: otisak mora biti sha256:<64 heksadecimalna znaka>")
+                raise MeasureError(f"{Path(path).name}:{number}: fingerprint must be sha256:<64 hex characters>")
             out.add(entry[len("sha256:"):])
             continue
         words = WORD.findall(entry)
         if not words or len(words) > MAX_WORDS:
-            raise MeasureError(f"{Path(path).name}:{number}: ime mora imati od 1 do {MAX_WORDS} riječi")
+            raise MeasureError(f"{Path(path).name}:{number}: a name must have 1 to {MAX_WORDS} words")
         out.add(digest(entry))
     return frozenset(out)
 
@@ -77,7 +77,7 @@ def _names_in(row: str, names: frozenset[str]) -> list[str]:
 
 
 def check(view: FileView, names_file: Path = NAMES_FILE) -> list[Finding]:
-    """K9 nalazi na novim redcima bilo koje tekstualne datoteke, i u stringovima, jer i oni izlaze iz repoa."""
+    """K9 findings on new lines of any text file, strings included, because they also leave the repo."""
     names = load_names(Path(names_file))
     out = []
     for number, row in enumerate(view.text.split("\n"), 1):
@@ -85,9 +85,9 @@ def check(view: FileView, names_file: Path = NAMES_FILE) -> list[Finding]:
             continue
         for match in LOCAL_PATH.finditer(row):
             text = match.group()
-            out.append(Finding("K9", view.path, number, f"lokalna putanja „{text}“ u isporučenom kodu", FIX_PATH,
+            out.append(Finding("K9", view.path, number, f"local path '{text}' in shipped code", FIX_PATH,
                                f"{normalize(text)}: {normalize(row)}"))
         for text in _names_in(row, names):
-            out.append(Finding("K9", view.path, number, f"ime interne infrastrukture „{text}“ u isporučenom kodu",
+            out.append(Finding("K9", view.path, number, f"internal infrastructure name '{text}' in shipped code",
                                FIX_NAME, f"{normalize(text)}: {normalize(row)}"))
     return ordered(out)

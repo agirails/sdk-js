@@ -1,8 +1,8 @@
-"""Baseline postojećih kršenja: broj pojavljivanja po ključu (pravilo, datoteka, otisak normaliziranog teksta), smije
-samo padati. Datoteka nosi samo otisak (`Finding.key()`), nikad izvorni tekst retka.
+"""Baseline of existing violations: occurrence count per key (rule, file, fingerprint of the normalised text), which
+may only shrink. The file carries only the fingerprint (`Finding.key()`), never the source text of the line.
 
-Isti ključ s višestrukošću odlučuje i u diff načinu: nalaz glave nov je kad je na dodanom retku ili kad mu ključ nema
-par među nalazima baze (`select_new`)."""
+The same key with multiplicity also decides in diff mode: a head finding is new when it is on an added line or when its
+key has no match among the base findings (`select_new`)."""
 from __future__ import annotations
 
 import json
@@ -23,8 +23,8 @@ Key = tuple[str, str, str]
 
 @dataclass(frozen=True)
 class Entry:
-    """Ključ baselinea (`key` je otisak teksta nalaza) s brojem pojavljivanja; u razlici je `count` iznos porasta ili
-    pada."""
+    """Baseline key (`key` is the fingerprint of the finding text) with its occurrence count; in a difference `count` is
+    the amount of growth or shrinkage."""
     rule: str
     path: str
     key: str
@@ -33,7 +33,7 @@ class Entry:
 
 @dataclass(frozen=True)
 class Comparison:
-    """Ishod usporedbe cijelog repoa s baselineom: novi nalazi, upareni nalazi i ključevi koji su nestali."""
+    """Result of comparing the whole repo with the baseline: new findings, matched findings and keys that went away."""
     new: list[Finding]
     matched: list[Finding]
     resolved: list[Entry]
@@ -41,7 +41,7 @@ class Comparison:
 
 @dataclass(frozen=True)
 class WriteResult:
-    """Zapisani baseline, porast koji je dopušten uz razlog, i pad."""
+    """The written baseline, the growth allowed with a reason, and the shrinkage."""
     entries: list[Entry]
     increases: list[Entry]
     resolved: list[Entry]
@@ -49,11 +49,11 @@ class WriteResult:
 
 
 class BaselineIncrease(Exception):
-    """Upis bi povećao baseline, a nema dopuštenja s razlogom. `increases` su ključevi i iznos porasta."""
+    """The write would grow the baseline without an approval with a reason. `increases` are the keys and the growth."""
 
     def __init__(self, increases: list[Entry]):
         names = ", ".join(f"{e.rule} {e.path} +{e.count}" for e in increases)
-        super().__init__(f"baseline bi porastao ({names}) → očisti kršenja ili traži odobrenje s razlogom")
+        super().__init__(f"baseline would grow ({names}) → fix the violations or ask for approval with a reason")
         self.increases = increases
 
 
@@ -62,7 +62,7 @@ def _sorted_entries(entries: Iterable[Entry]) -> list[Entry]:
 
 
 def counts(findings: Iterable[Finding]) -> dict[Key, int]:
-    """Broj pojavljivanja po ključu nalaza."""
+    """Occurrence count per finding key."""
     return dict(Counter(f.key() for f in findings))
 
 
@@ -74,45 +74,45 @@ def _valid(item: object) -> bool:
 
 
 def load(path: Path) -> dict[Key, int]:
-    """Baseline iz JSON-a. Nepostojeća datoteka je prazan baseline; neispravna je MeasureError."""
+    """Baseline from JSON. A missing file is an empty baseline; an invalid one is a MeasureError."""
     path = Path(path)
     if not path.exists():
         return {}
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
-        raise MeasureError(f"baseline {path.name} nije čitljiv: {exc}") from exc
+        raise MeasureError(f"baseline {path.name} is not readable: {exc}") from exc
     if isinstance(data, dict) and data.get("version") == 2:
-        raise MeasureError(f"baseline {path.name} je version 2 (polje key) → prepiši ga: code-check baseline --write")
+        raise MeasureError(f"baseline {path.name} is version 2 (field key) → rewrite it: code-check baseline --write")
     if not isinstance(data, dict) or data.get("version") != VERSION or not isinstance(data.get("entries"), list):
-        raise MeasureError(f"baseline {path.name}: očekuje se version {VERSION} i popis entries")
+        raise MeasureError(f"baseline {path.name}: expected version {VERSION} and a list of entries")
     out: dict[Key, int] = {}
     for item in data["entries"]:
         if not _valid(item):
-            raise MeasureError(f"baseline {path.name}: neispravan unos {item!r}")
+            raise MeasureError(f"baseline {path.name}: invalid entry {item!r}")
         key = (item["rule"], item["path"], item["fp"])
         if key in out:
-            raise MeasureError(f"baseline {path.name}: ključ se ponavlja {key!r}")
+            raise MeasureError(f"baseline {path.name}: duplicate key {key!r}")
         out[key] = item["count"]
     return out
 
 
 def written_at(path: Path) -> str | None:
-    """Commit na kojem je baseline zapisan (polje `commit`), za prenošenje unosa preimenovanih datoteka."""
+    """Commit at which the baseline was written (field `commit`), for carrying over entries of renamed files."""
     path = Path(path)
     if not path.exists():
         return None
     try:
         commit = json.loads(path.read_text(encoding="utf-8")).get("commit")
     except (OSError, ValueError, AttributeError) as exc:
-        raise MeasureError(f"baseline {path.name} nije čitljiv: {exc}") from exc
+        raise MeasureError(f"baseline {path.name} is not readable: {exc}") from exc
     if commit is not None and not (isinstance(commit, str) and re.fullmatch(r"[0-9a-f]{40,64}", commit)):
-        raise MeasureError(f"baseline {path.name}: commit mora biti puni git hash")
+        raise MeasureError(f"baseline {path.name}: commit must be a full git hash")
     return commit
 
 
 def rename(base: dict[Key, int], renames: dict[str, str]) -> dict[Key, int]:
-    """Prenosi unose preimenovanih datoteka na novu putanju (stara → nova, npr. iz `scope.renames_since`)."""
+    """Carries entries of renamed files over to the new path (old → new, e.g. from `scope.renames_since`)."""
     out: Counter = Counter()
     for (rule, path, key), count in base.items():
         out[(rule, renames.get(path, path), key)] += count
@@ -120,14 +120,14 @@ def rename(base: dict[Key, int], renames: dict[str, str]) -> dict[Key, int]:
 
 
 def select_new(head: Iterable[Finding], base: Iterable[Finding], views: Iterable[FileView]) -> list[Finding]:
-    """Diff način. `head` su nalazi nad glavom, `base` nad istim datotekama u bazi. Nov je nalaz na dodanom retku, i kad
-    isti tekst postoji u bazi, i nalaz čiji ključ nema par u bazi (višestrukost se broji jedan-na-jedan), pa se vidi i
-    kršenje nastalo brisanjem. Nalaz izvan opsega je MeasureError."""
+    """Diff mode. `head` are findings on the head, `base` on the same files in the base. A finding is new when it is on
+    an added line, even if the same text exists in the base, and when its key has no match in the base (multiplicity
+    counts one-to-one), so a violation caused by a deletion also shows. A finding outside the scope is MeasureError."""
     head = list(head)
     by_path = {view.path: view for view in views}
     outside = sorted({f.path for f in head if f.path not in by_path})
     if outside:
-        raise MeasureError(f"nalaz za datoteku izvan opsega: {', '.join(outside)}")
+        raise MeasureError(f"finding for a file outside the scope: {', '.join(outside)}")
     left = Counter(f.key() for f in base)
     new = []
     for finding in ordered(head):
@@ -142,8 +142,8 @@ def select_new(head: Iterable[Finding], base: Iterable[Finding], views: Iterable
 
 
 def compare(findings: Iterable[Finding], base: dict[Key, int]) -> Comparison:
-    """Cijeli repo: uparivanje jedan-na-jedan po ključu. Pojavljivanja iznad broja u baselineu su nova (zadnja po
-    retku), a ključevi kojih je manje nego u baselineu su riješeni."""
+    """Whole repo: one-to-one matching by key. Occurrences above the baseline count are new (the last ones by line),
+    and keys with fewer occurrences than in the baseline are resolved."""
     groups: defaultdict[Key, list[Finding]] = defaultdict(list)
     for finding in ordered(findings):
         groups[finding.key()].append(finding)
@@ -158,7 +158,7 @@ def compare(findings: Iterable[Finding], base: dict[Key, int]) -> Comparison:
 
 
 def growth(head: dict[Key, int], base: dict[Key, int]) -> list[Entry]:
-    """Unosi baselinea glave iznad baselinea baze: ključ kojeg u bazi nema ili veći broj pojavljivanja (razlika)."""
+    """Head baseline entries above the base baseline: a key absent from the base or a higher count (the difference)."""
     return _sorted_entries(Entry(*key, count - base.get(key, 0)) for key, count in head.items()
                            if count > base.get(key, 0))
 
@@ -171,8 +171,8 @@ def _serialize(entries: list[Entry], commit: str | None) -> str:
 
 def write(path: Path, findings: Iterable[Finding], previous: dict[Key, int], allow_increase: bool = False,
           reason: str | None = None, commit: str | None = None) -> WriteResult:
-    """Zapisuje baseline iz nalaza. Pad je uvijek dopušten. Porast ili novi ključ traže allow_increase i neprazan
-    razlog, inače BaselineIncrease i datoteka ostaje netaknuta. `commit` je HEAD u trenutku upisa."""
+    """Writes the baseline from the findings. Shrinkage is always allowed. Growth or a new key requires allow_increase
+    and a non-empty reason, otherwise BaselineIncrease and the file stays untouched. `commit` is HEAD at write time."""
     path = Path(path)
     current = counts(findings)
     increases = _sorted_entries(Entry(*key, count - previous.get(key, 0)) for key, count in current.items()
