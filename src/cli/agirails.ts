@@ -574,7 +574,6 @@ if (isMainModule) {
       // but if something escapes (e.g. an import failure) we still want a
       // single-line error rather than a raw stack trace.
       const message = error instanceof Error ? error.message : String(error);
-      // eslint-disable-next-line no-console
       console.error(message);
       process.exit(1);
     });

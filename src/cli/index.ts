@@ -27,7 +27,6 @@ import { join } from 'path';
 // try/catch so a malformed .env never blocks the CLI from starting.
 try {
   // Lazy-load via require so a missing optional dep can't ESM-error here.
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const dotenv = require('dotenv');
   dotenv.config({ path: join(process.cwd(), '.env'), override: false });
 } catch {

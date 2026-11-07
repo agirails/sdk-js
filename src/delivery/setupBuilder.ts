@@ -763,5 +763,4 @@ export type { BuildSetupResult } from './types';
 // lint when the file is built with very aggressive tree-shaking
 // rules; ethers stays imported above for the `Signer` type and as the
 // canonical entry point even if no runtime symbol is consumed).
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const _ethersUsed: typeof ethers = ethers;
