@@ -1,24 +1,24 @@
-"""S1 tajne (gitleaks) i S3 GitHub Actions (zizmor, actionlint) nad diffom, samo pinanim alatima iz .tools/bin.
+"""S1 secrets (gitleaks) and S3 GitHub Actions (zizmor, actionlint) over the diff, only with pinned tools in .tools/bin.
 
-Alati čitaju kopiju u privremenom direktoriju, nikad repo: konfiguracija i iznimke iz repoa (`.gitleaksignore`,
-`zizmor.yml`, `actionlint.yaml`) ne mogu oslabiti provjeru. `.gitleaksignore` iz diffa se u kopiju upisuje pod drugim
-imenom, pa ga gitleaks ne učita, a iz kopije se brišu i iznimke na retku (`gitleaks:allow`, `zizmor: ignore[...]`, u
-workflowima i `shellcheck disable=`). Iznimka za S1 ili S3 ide samo kroz `factory-allow` koji je postojao u bazi.
-Okolina alata je prazna osim HOME-a, bez mreže (`zizmor --offline`). zizmor radi sa `--strict-collection`, pa
-neispravan workflow ili action.yml nije prolaz, a actionlint `run:` skripte provjerava pinanim shellcheckom.
+The tools read a copy in a temporary directory, never the repo: configuration and exceptions from the repo
+(`.gitleaksignore`, `zizmor.yml`, `actionlint.yaml`) cannot weaken the check. A `.gitleaksignore` from the diff goes to
+the copy under another name, so gitleaks does not load it, and inline exceptions are removed from the copy
+(`gitleaks:allow`, `zizmor: ignore[...]`, in workflows also `shellcheck disable=`). An S1 or S3 exception goes only
+through a `factory-allow` that existed in the base. The tool environment is empty except HOME, with no network
+(`zizmor --offline`). zizmor runs with `--strict-collection`, so an invalid workflow or action.yml is not a pass.
 
-gitleaks ulazi u arhive (`--max-archive-depth`), a UTF-16 tekst čita pretvoren u UTF-8. Ključ S1 nalaza je pravilo i
-otisak točnih bajtova redaka tajne (bez spuštanja slova i sažimanja razmaka) iz kopije koju je gitleaks čitao, a za
-datoteku s NUL bajtom ili član arhive otisak cijele datoteke, pa tajna koja zamijeni staru tajnu nije uparena s bazom.
-Vrijednost tajne se ne čita iz izvještaja, a poruke alata izlaze bez navedenih vrijednosti i dugih nizova
-(`public_text`), jer alat u poruku prepisuje izvor.
+actionlint checks `run:` scripts with the pinned shellcheck. gitleaks enters archives (`--max-archive-depth`) and reads
+UTF-16 text converted to UTF-8. An S1 finding's key is the rule and the fingerprint of the exact bytes of the secret's
+lines (no lowercasing or whitespace collapsing) in the copy gitleaks read, and for a file with a NUL byte or an archive
+member the whole file's fingerprint, so a secret that replaces an old one is not matched with the base. The secret
+value is not read from the report; tool messages go out without quoted values and long strings (`public_text`).
 
-`standard/configs/gitleaks.toml` je zadana konfiguracija pinanog gitleaksa bez allowlista putanja (vendor,
-node_modules, lockfileovi), jer tajna u lockfileu je stvaran slučaj. `[extend] useDefault` ih ne može izostaviti, pa se
-datoteka generira (`gitleaks_config`) iz zadane konfiguracije ugrađene u pinani binarni fajl, s otiskom po verziji.
-Pravilo koje prepoznaje vlastitu deklaraciju dobiva allowlist samo za točan redak `regex = '''…'''` te deklaracije,
-s escapeanom interpunkcijom, pa ni redak izuzeća ne sadrži prepoznati niz. Ista vrijednost u drugom retku je nalaz.
-Zato je i deklaracija prilagođenog pravila u gitleaks konfiguraciji repoa S1 nalaz, a prolaz je `factory-allow` iz baze.
+`standard/configs/gitleaks.toml` is the pinned gitleaks default configuration without path allowlists (vendor,
+node_modules, lockfiles), because a secret in a lockfile is a real case. `[extend] useDefault` cannot leave them out, so
+the file is generated (`gitleaks_config`) from the default in the pinned binary, with a fingerprint per version.
+A rule that matches its own declaration gets an allowlist only for that declaration's exact `regex = '''…'''` line,
+with escaped punctuation, so the exclusion line does not contain the matched string. The same value elsewhere is a
+finding, so a custom rule's declaration in a repo's gitleaks config is an S1 finding; a base `factory-allow` passes it.
 """
 from __future__ import annotations
 
@@ -44,7 +44,7 @@ REPO_CONFIGS = frozenset({".github/actionlint.yaml", ".github/actionlint.yml", "
 WALK_SKIP = frozenset({".git", "node_modules", ".factory", ".tools"})
 ZIZMOR_OK = frozenset({0, 10, 11, 12, 13, 14})
 BLOCKING = frozenset({"high", "medium"})
-FIX_SECRET = "ukloni tajnu iz koda, opozovi je i učitavaj je iz okoline ili spremišta tajni"
+FIX_SECRET = "remove the secret from the code, revoke it and load it from the environment or a secret store"
 INLINE_IGNORES = re.compile(rb"gitleaks:allow|zizmor:[ \t]*ignore\[[^\]\n]*\]", re.I)
 WORKFLOW_IGNORES = re.compile(INLINE_IGNORES.pattern + rb"|shellcheck[ \t]+disable[ \t]*=[ \t]*[\w,-]*", re.I)
 ARCHIVE_DEPTH = 8
@@ -65,19 +65,19 @@ TABLE = re.compile(r"^\[\[?([\w.]+)\]\]?\s*$")
 
 
 def tool(name: str, tools_dir: Path = TOOLS) -> Path:
-    """Putanja pinanog alata; alat koji nije instaliran je MeasureError. Alat iz .tools/bin mora biti bajt za bajt iz
-    arhive iz tools.lock (`pins`); drugi direktorij je samo za testne zamjene."""
+    """Path of a pinned tool; a tool that is not installed is a MeasureError. A tool from .tools/bin must match the
+    archive from tools.lock byte for byte (`pins`); another directory is only for test substitutes."""
     path = Path(tools_dir) / name
     if not (path.is_file() and os.access(path, os.X_OK)):
-        raise MeasureError(f"alat {name} nije instaliran u .tools/bin; pokreni standard install-tools")
+        raise MeasureError(f"tool {name} is not installed in .tools/bin; run standard install-tools")
     if Path(tools_dir) == TOOLS and pins.verified(name, TOOLS.parent) != path:
-        raise MeasureError(f"alat {name} nije na putanji iz tools.lock")
+        raise MeasureError(f"tool {name} is not at the path from tools.lock")
     return path
 
 
 def public_text(text: str) -> str:
-    """Poruka alata bez vrijednosti iz izvora: navedeni dijelovi i nizovi od 20 i više znakova sa slovom i znamenkom
-    postaju `…`."""
+    """Tool message without values from the source: quoted parts and strings of 20 or more characters with a letter and
+    a digit become `…`."""
     text = QUOTED.sub(lambda m: m.group()[0] + "…" + m.group()[0], text)
     return LONG_TOKEN.sub(lambda m: "…" if re.search(r"\d", m.group()) and re.search(r"[A-Za-z]", m.group())
                           else m.group(), text)
@@ -89,18 +89,18 @@ def _run(argv: list[str], cwd: Path, ok: frozenset[int]) -> subprocess.Completed
         proc = subprocess.run(argv, cwd=cwd, env={"HOME": str(cwd), "NO_COLOR": "1"}, capture_output=True,
                               text=True, timeout=TIMEOUT, check=False)
     except subprocess.TimeoutExpired as exc:
-        raise MeasureError(f"{name} nije završio u {TIMEOUT} s") from exc
+        raise MeasureError(f"{name} did not finish in {TIMEOUT} s") from exc
     except OSError as exc:
-        raise MeasureError(f"{name} se ne može pokrenuti: {exc.strerror}") from exc
+        raise MeasureError(f"{name} cannot be started: {exc.strerror}") from exc
     if proc.returncode not in ok:
-        raise MeasureError(f"{name} je završio s kodom {proc.returncode}: {public_text(proc.stderr.strip()[-300:])}")
+        raise MeasureError(f"{name} exited with code {proc.returncode}: {public_text(proc.stderr.strip()[-300:])}")
     return proc
 
 
 def _relative(path: str) -> PurePosixPath:
     rel = PurePosixPath(path)
     if rel.is_absolute() or not rel.parts or ".." in rel.parts:
-        raise MeasureError(f"putanja izvan repoa: {path}")
+        raise MeasureError(f"path outside the repo: {path}")
     return rel
 
 
@@ -115,7 +115,7 @@ def _stage(root: Path, files: Iterable[tuple[str, bytes]]) -> None:
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(data)
     except OSError as exc:
-        raise MeasureError(f"kopija za provjeru nije napravljena: {exc.strerror} ({exc.filename})") from exc
+        raise MeasureError(f"copy for the check was not created: {exc.strerror} ({exc.filename})") from exc
 
 
 def _from_root(path: str, root: Path) -> str:
@@ -132,16 +132,16 @@ def _leaks(records: list, base: Path | None) -> list[tuple[str, str, int, int]]:
             rule_id, path, line = str(record["RuleID"]), str(record["File"]), int(record["StartLine"])
             end = int(record.get("EndLine") or line)
         except (KeyError, TypeError, ValueError, AttributeError) as exc:
-            raise MeasureError(f"gitleaks izvještaj nema očekivana polja: {exc}") from exc
+            raise MeasureError(f"gitleaks report lacks the expected fields: {exc}") from exc
         rel = _from_root(path, base) if base is not None else _relative(os.path.normpath(path)).as_posix()
         out.append((rule_id, rel, line, max(end, line)))
     return sorted(out)
 
 
 def parse_gitleaks(records: list, base: Path | None = None) -> list[Finding]:
-    """Nalazi iz gitleaks JSON izvještaja. Čitaju se samo RuleID, File, StartLine i EndLine; Secret i Match se ne
-    diraju. Ključ je pravilo; `check_secrets` mu dodaje otisak sadržaja."""
-    return ordered(Finding("S1", rel, line, f"tajna u diffu (gitleaks {rule_id})", FIX_SECRET, rule_id)
+    """Findings from a gitleaks JSON report. Only RuleID, File, StartLine and EndLine are read; Secret and Match are
+    left unread. The key is the rule; `check_secrets` adds the content fingerprint to it."""
+    return ordered(Finding("S1", rel, line, f"secret in the diff (gitleaks {rule_id})", FIX_SECRET, rule_id)
                    for rule_id, rel, line, _ in _leaks(records, base))
 
 
@@ -150,12 +150,12 @@ def _primary(locations: list) -> dict:
         if location.get("symbolic", {}).get("kind") == "Primary":
             return location
     if not locations:
-        raise MeasureError("zizmor nalaz nema lokaciju")
+        raise MeasureError("zizmor finding has no location")
     return locations[0]
 
 
 def parse_zizmor(records: list, base: Path | None = None) -> list[Finding]:
-    """Nalazi iz `zizmor --format json` (format pinane verzije): primarna lokacija, redak od 1, High i Medium blokiraju."""
+    """Findings from `zizmor --format json` (pinned format): primary location, line from 1, High and Medium block."""
     out = []
     for record in records or []:
         try:
@@ -165,25 +165,25 @@ def parse_zizmor(records: list, base: Path | None = None) -> list[Finding]:
             ident, desc, url = record["ident"], record["desc"], record["url"]
             severity = str(record["determinations"]["severity"]).lower()
         except (KeyError, TypeError, ValueError) as exc:
-            raise MeasureError(f"zizmor izvještaj nema očekivana polja: {exc}") from exc
+            raise MeasureError(f"zizmor report lacks the expected fields: {exc}") from exc
         rel = _from_root(path, base) if base is not None else _relative(path).as_posix()
         feature = normalize(str(location["concrete"].get("feature", "")))
-        out.append(Finding("S3", rel, line, f"nesiguran GitHub Actions uzorak ({ident}: {desc})", f"ispravi prema {url}",
+        out.append(Finding("S3", rel, line, f"unsafe GitHub Actions pattern ({ident}: {desc})", f"fix per {url}",
                            f"{ident}: {feature}", "error" if severity in BLOCKING else "warning"))
     return ordered(out)
 
 
 def parse_actionlint(records: list | None, base: Path | None = None) -> list[Finding]:
-    """Nalazi iz `actionlint -format '{{json .}}'`; prazan izlaz ili `null` znači da nalaza nema."""
+    """Findings from `actionlint -format '{{json .}}'`; empty output or `null` means there are no findings."""
     out = []
     for record in records or []:
         try:
             path, line, kind, message = record["filepath"], int(record["line"]), record["kind"], record["message"]
         except (KeyError, TypeError, ValueError) as exc:
-            raise MeasureError(f"actionlint izvještaj nema očekivana polja: {exc}") from exc
+            raise MeasureError(f"actionlint report lacks the expected fields: {exc}") from exc
         rel = _from_root(path, base) if base is not None else _relative(path).as_posix()
-        out.append(Finding("S3", rel, line, f"neispravan workflow ({kind}: {public_text(message)})",
-                           "ispravi workflow prema poruci actionlinta", f"{kind}: {normalize(message)}"))
+        out.append(Finding("S3", rel, line, f"invalid workflow ({kind}: {public_text(message)})",
+                           "fix the workflow according to the actionlint message", f"{kind}: {normalize(message)}"))
     return ordered(out)
 
 
@@ -191,7 +191,7 @@ def _json(text: str, name: str) -> list | None:
     try:
         return json.loads(text) if text.strip() else None
     except json.JSONDecodeError as exc:
-        raise MeasureError(f"{name} nije vratio JSON: {exc.msg}") from exc
+        raise MeasureError(f"{name} did not return JSON: {exc.msg}") from exc
 
 
 def _staged_names(paths: list[str]) -> dict[str, str]:
@@ -200,7 +200,7 @@ def _staged_names(paths: list[str]) -> dict[str, str]:
         rel = PurePosixPath(path)
         staged[rel.with_name(STAGED_IGNORE).as_posix() if rel.name == GITLEAKS_IGNORE else path] = path
     if len(staged) != len(paths) or any(name in paths and staged[name] != name for name in staged):
-        raise MeasureError(f"diff već ima datoteku {STAGED_IGNORE}, pa {GITLEAKS_IGNORE} nema slobodno ime u kopiji")
+        raise MeasureError(f"diff already has {STAGED_IGNORE}, so {GITLEAKS_IGNORE} has no free name in the copy")
     return staged
 
 
@@ -250,7 +250,7 @@ def _scan(binary: Path, config: Path, staged: dict[str, bytes]) -> list[tuple[st
         try:
             records = _json(report.read_text(encoding="utf-8"), "gitleaks")
         except OSError as exc:
-            raise MeasureError(f"gitleaks nije zapisao izvještaj: {exc.strerror}") from exc
+            raise MeasureError(f"gitleaks did not write a report: {exc.strerror}") from exc
         return _leaks(records or [], root)
 
 
@@ -262,7 +262,7 @@ def _gitleaks(binary: Path, config: Path, files: list[tuple[str, str | bytes]]) 
     for rule_id, rel, line, end in _scan(binary, config, staged):
         outer, member = _member(rel, staged)
         data = staged.get(outer, b"")
-        message = f"tajna u arhivi (gitleaks {rule_id})" if member else f"tajna u diffu (gitleaks {rule_id})"
+        message = f"secret in an archive (gitleaks {rule_id})" if member else f"secret in the diff (gitleaks {rule_id})"
         out.append(Finding("S1", names.get(outer, outer), 0 if member else line, message, FIX_SECRET,
                            _content_key(rule_id, data, line, end, member)))
     return ordered(out)
@@ -270,8 +270,8 @@ def _gitleaks(binary: Path, config: Path, files: list[tuple[str, str | bytes]]) 
 
 def check_secrets(views: Iterable[FileView], repo_root: Path, tools_dir: Path = TOOLS,
                   config: Path = CONFIGS / "gitleaks.toml") -> list[Finding]:
-    """S1: gitleaks nad cijelim datotekama, a nad izvornim bajtovima kad tekst nije točan sadržaj (`raw`). Je li nalaz
-    nov, odlučuje usporedba s bazom u codecheck."""
+    """S1: gitleaks over whole files, and over the original bytes when the text is not the exact content (`raw`). The
+    base comparison in codecheck decides whether a finding is new."""
     views = [view for view in views if not view.meta.get("deleted")]
     if not views:
         return []
@@ -298,8 +298,8 @@ def _github_files(repo_root: Path, views: list[FileView]) -> Iterable[tuple[str,
 
 def check_workflows(views: Iterable[FileView], repo_root: Path, tools_dir: Path = TOOLS,
                     config: Path = CONFIGS / "zizmor.yml") -> list[Finding]:
-    """S3: zizmor (svi workflowi i action.yml) i actionlint (workflowi) nad workflowima iz opsega. Je li nalaz nov,
-    odlučuje usporedba s bazom u codecheck."""
+    """S3: zizmor (all workflows and action.yml) and actionlint (workflows) over the workflows in scope. The base
+    comparison in codecheck decides whether a finding is new."""
     views = [view for view in views if (WORKFLOW.match(view.path) or ACTION.search(view.path))
              and not view.meta.get("deleted")]
     if not views:
@@ -321,26 +321,26 @@ def check_workflows(views: Iterable[FileView], repo_root: Path, tools_dir: Path 
 
 
 def check_repo(views: Iterable[FileView], repo_root: Path, tools_dir: Path = TOOLS) -> list[Finding]:
-    """S1 i S3 zajedno nad istim diffom."""
+    """S1 and S3 together over the same diff."""
     views = list(views)
     return ordered(check_secrets(views, repo_root, tools_dir) + check_workflows(views, repo_root, tools_dir))
 
 
 def gitleaks_default(tools_dir: Path = TOOLS) -> bytes:
-    """Zadana konfiguracija ugrađena u pinani gitleaks, bajt za bajt; verzija bez otiska ili drugi bajtovi su
-    MeasureError."""
+    """Default configuration embedded in the pinned gitleaks, byte for byte; a version without a fingerprint or other
+    bytes are a MeasureError."""
     version = standard.load_lock(pins.LOCK).tools["gitleaks"].version
     if version not in GITLEAKS_DEFAULT:
-        raise MeasureError(f"gitleaks {version} nema otisak zadane konfiguracije u GITLEAKS_DEFAULT")
+        raise MeasureError(f"gitleaks {version} has no default configuration fingerprint in GITLEAKS_DEFAULT")
     size, digest = GITLEAKS_DEFAULT[version]
     try:
         data = tool("gitleaks", tools_dir).read_bytes()
     except OSError as exc:
-        raise MeasureError(f"gitleaks se ne može pročitati: {exc.strerror}") from exc
+        raise MeasureError(f"gitleaks cannot be read: {exc.strerror}") from exc
     start = data.find(GITLEAKS_DEFAULT_START)
     found = data[start:start + size] if start >= 0 and data.count(GITLEAKS_DEFAULT_START) == 1 else b""
     if sha256(found) != digest:
-        raise MeasureError(f"gitleaks {version} ne nosi zadanu konfiguraciju s otiskom {digest}")
+        raise MeasureError(f"gitleaks {version} does not carry the default configuration with fingerprint {digest}")
     return found
 
 
@@ -376,8 +376,8 @@ def _without_path_allowlists(data: dict) -> dict:
 
 
 def gitleaks_config(default: bytes | None = None) -> str:
-    """Sadržaj standard/configs/gitleaks.toml: zadana konfiguracija pinanog gitleaksa bez komentara i bez allowlista
-    putanja. Rezultat se provjerava prema zadanoj konfiguraciji kroz tomllib; razlika je MeasureError."""
+    """Content of standard/configs/gitleaks.toml: the pinned gitleaks default configuration without comments or path
+    allowlists. The result is checked against the default configuration via tomllib; a difference is a MeasureError."""
     raw = gitleaks_default() if default is None else default
     digest, version = sha256(raw), standard.load_lock(pins.LOCK).tools["gitleaks"].version
     out = [f"# Generirano iz zadane konfiguracije gitleaksa {version} bez allowlista putanja.",
@@ -395,9 +395,9 @@ def gitleaks_config(default: bytes | None = None) -> str:
     try:
         upstream, ours = tomllib.loads(raw.decode("utf-8")), tomllib.loads(text)
     except tomllib.TOMLDecodeError as exc:
-        raise MeasureError(f"generirana gitleaks konfiguracija nije ispravan TOML: {exc}") from exc
+        raise MeasureError(f"generated gitleaks configuration is not valid TOML: {exc}") from exc
     if ours != _without_path_allowlists(upstream):
-        raise MeasureError("generirana gitleaks konfiguracija se razlikuje od zadane osim allowlista putanja")
+        raise MeasureError("generated gitleaks configuration differs from the default beyond path allowlists")
     return _own_lines_allowed(text)
 
 
@@ -420,15 +420,15 @@ def _own_lines_allowed(text: str) -> str:
         while end > at and not lines[end - 1].strip():
             end -= 1
         exact = OWN_RULE_LINE.format(ASCII_PUNCT.sub(lambda m: "\\" + m.group(), regexes[rule]))
-        lines[end:end] = ["[[rules.allowlists]]", 'description = "deklaracija pravila u ovoj datoteci nije tajna"',
+        lines[end:end] = ["[[rules.allowlists]]", 'description = "the rule declaration in this file is not a secret"',
                           'regexTarget = "line"', f"regexes = [{json.dumps(exact)}]"]
     text = "\n".join(lines)
     left = _scan_config(text)
     if left:
-        raise MeasureError(f"gitleaks javlja vlastitu konfiguraciju: {', '.join(left)}")
+        raise MeasureError(f"gitleaks reports its own configuration: {', '.join(left)}")
     return text
 
 
 def write_gitleaks_config(path: Path = CONFIGS / "gitleaks.toml") -> None:
-    """Upiši `gitleaks_config()` u standard/configs/gitleaks.toml."""
+    """Write `gitleaks_config()` to standard/configs/gitleaks.toml."""
     Path(path).write_text(gitleaks_config(), encoding="utf-8")

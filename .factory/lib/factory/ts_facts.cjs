@@ -1,12 +1,12 @@
 /**
- * Jedini TypeScript pomoćnik code-checka: komentari (K2/K3/K5/K15) i činjenice iz AST-a (K4, K13, K19) za TS/JS.
+ * The only TypeScript helper of code-check: comments (K2/K3/K5/K15) and AST facts (K4, K13, K19) for TS/JS.
  *
- * Ulaz na stdin: {"files": [{"path", "text"}]}. Izlaz na stdout: jedan JSON {"ok": true, "files": [...]} ili
- * {"ok": false, "error"} uz exit 2. Svaka datoteka daje {comments, uncertain, error, functions, handlers, skips,
- * assertions}; kad parser javi grešku, `error` je opis prve, a AST činjenice su prazne. Komentare nalazi
- * ts.createScanner samo u razmacima između čvorova AST-a, pa string, template literal, regex i JSX tekst nikad nisu
- * komentar. TypeScript se učitava isključivo s apsolutne putanje iz argv[2] (pinana verzija pozivatelja).
- * Redak se broji po znaku LF, kao u gitu, a ne po TypeScriptu, koji i samostalni CR, U+2028 i U+2029 broji kao kraj retka.
+ * Input on stdin: {"files": [{"path", "text"}]}. Output on stdout: one JSON {"ok": true, "files": [...]} or
+ * {"ok": false, "error"} with exit 2. Each file gives {comments, uncertain, error, functions, handlers, skips,
+ * assertions}; when the parser reports an error, `error` describes the first one and the AST facts are empty.
+ * ts.createScanner finds comments only in the gaps between AST nodes, so a string, template literal, regex or JSX text
+ * is never a comment. TypeScript is loaded only from the absolute path in argv[2] (the caller's pinned version).
+ * Lines are counted by LF, as in git, not by TypeScript, which also counts a lone CR, U+2028 and U+2029 as a line end.
  */
 'use strict';
 
@@ -38,7 +38,7 @@ const SCOPE_STOPS = ['ClassExpression', 'Block', 'ModuleBlock', 'SourceFile', 'O
 function kindSets(ts) {
   const of = names => new Set(names.map(name => {
     const kind = ts.SyntaxKind[name];
-    if (typeof kind !== 'number') throw new Error(`TypeScript nema SyntaxKind.${name}`);
+    if (typeof kind !== 'number') throw new Error(`TypeScript has no SyntaxKind.${name}`);
     return kind;
   }));
   return {
@@ -293,7 +293,7 @@ function sourceFile(ts, file) {
   const kind = /\.(tsx|jsx)$/i.test(file.path) ? ts.ScriptKind.TSX
     : /\.(js|cjs|mjs)$/i.test(file.path) ? ts.ScriptKind.JS : ts.ScriptKind.TS;
   const sf = ts.createSourceFile(file.path, file.text, ts.ScriptTarget.Latest, true, kind);
-  if (!Array.isArray(sf.parseDiagnostics)) throw new Error('TypeScript nema parseDiagnostics');
+  if (!Array.isArray(sf.parseDiagnostics)) throw new Error('TypeScript has no parseDiagnostics');
   return sf;
 }
 
@@ -315,13 +315,13 @@ function fail(message) {
 function main() {
   const tsDir = process.argv[2];
   if (!tsDir || !path.isAbsolute(tsDir)) {
-    fail('putanja do TypeScripta mora biti apsolutna');
+    fail('the path to TypeScript must be absolute');
     return;
   }
   const ts = require(tsDir);
   const input = JSON.parse(fs.readFileSync(0, 'utf8'));
   if (!Array.isArray(input.files) || !input.files.every(f => typeof f.path === 'string' && typeof f.text === 'string')) {
-    fail('ulaz mora biti {files: [{path, text}]}');
+    fail('input must be {files: [{path, text}]}');
     return;
   }
   const kinds = kindSets(ts);

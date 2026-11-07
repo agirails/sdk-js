@@ -1,2 +1,2 @@
-# sandbox-run: javna kopija ne nosi privatna stabla ni njihove otiske, jer se kratka putanja
-# iz otiska vraća rječnikom. Popis vrijedi samo u izvoru standarda.
+# sandbox-run: the public copy has no private trees or their fingerprints, since a short path can
+# be recovered from its fingerprint with a word list. The list applies only in the source.

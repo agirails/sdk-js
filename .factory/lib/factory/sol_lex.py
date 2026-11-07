@@ -1,6 +1,6 @@
-"""Jedini Solidity lexer u code-checku: tokeni koda, komentari s dubinom vitičastih zagrada i rasponi stringova.
+"""The only Solidity lexer in code-check: code tokens, comments with curly-brace depth, and string spans.
 
-Koriste ga provjera komentara (K2/K3) i provjere funkcija i poziva (K13, K19), pa string i komentar svi čitaju isto.
+Used by the comment check (K2/K3) and the function and call checks (K13, K19), so all read strings and comments alike.
 """
 from __future__ import annotations
 
@@ -17,8 +17,8 @@ FUNCTION_WORDS = frozenset({"function", "modifier", "constructor", "fallback", "
 
 
 class Token(NamedTuple):
-    """Token: vrsta (`ident`, `number`, `string`, `punct`, `comment`), tekst (prazan za string), redak početka,
-    raspon znakova [start, stop) i dubina vitičastih zagrada na početku tokena."""
+    """Token: kind (`ident`, `number`, `string`, `punct`, `comment`), text (empty for a string), start line,
+    character span [start, stop) and curly-brace depth at the start of the token."""
     kind: str
     text: str
     line: int
@@ -28,7 +28,7 @@ class Token(NamedTuple):
 
 
 class Lexed(NamedTuple):
-    """Svi tokeni s komentarima i prvi problem (string ili blok komentar bez kraja); None kad problema nema."""
+    """All tokens with comments, and the first problem (unclosed string or block comment); None when there is none."""
     tokens: list[Token]
     problem: str | None
 
@@ -51,7 +51,7 @@ def _comment_end(text: str, start: int) -> tuple[int, bool]:
 
 
 def lex(text: str) -> Lexed:
-    """Tokeni cijelog teksta, i komentari. String bez kraja ide do kraja retka, blok komentar do kraja teksta."""
+    """Tokens of the whole text, and comments. An unclosed string runs to line end, a block comment to text end."""
     out: list[Token] = []
     problem: str | None = None
     index, size, line, depth = 0, len(text), 1, 0
@@ -63,11 +63,11 @@ def lex(text: str) -> Lexed:
         if text.startswith(("//", "/*"), index):
             stop, closed = _comment_end(text, index)
             out.append(Token("comment", text[index:stop], line, index, stop, depth))
-            problem = problem or (None if closed else f"blok komentar bez kraja u retku {line}")
+            problem = problem or (None if closed else f"unclosed block comment on line {line}")
         elif char in "\"'":
             stop, closed = _string_end(text, index)
             out.append(Token("string", "", line, index, stop, depth))
-            problem = problem or (None if closed else f"string bez kraja u retku {line}")
+            problem = problem or (None if closed else f"unclosed string on line {line}")
         elif (match := IDENT.match(text, index)) is not None:
             stop = match.end()
             if not (match.group() in STRING_PREFIXES and stop < size and text[stop] in "\"'"):
@@ -85,7 +85,7 @@ def lex(text: str) -> Lexed:
 
 
 def tokens(text: str) -> list[Token]:
-    """Tokeni koda bez komentara. String ili blok komentar bez kraja je MeasureError."""
+    """Code tokens without comments. An unclosed string or block comment is a MeasureError."""
     lexed = lex(text)
     if lexed.problem:
         raise MeasureError(f"Solidity: {lexed.problem}")
@@ -122,7 +122,7 @@ def _closing(toks: list[Token], open_index: int) -> int:
             depth -= 1
             if depth == 0:
                 return index
-    raise MeasureError(f"Solidity: vitičasta zagrada bez para u retku {toks[open_index].line}")
+    raise MeasureError(f"Solidity: unmatched curly brace on line {toks[open_index].line}")
 
 
 def _name(toks: list[Token], index: int) -> str:
@@ -133,7 +133,7 @@ def _name(toks: list[Token], index: int) -> str:
 
 
 def functions(text: str) -> list[tuple[str, int, int]]:
-    """Funkcije s tijelom kao (ime, prvi redak, zadnji redak); ime je `Ugovor.funkcija` unutar ugovora."""
+    """Functions with a body as (name, first line, last line); the name is `Contract.function` inside a contract."""
     toks = tokens(text)
     out: list[tuple[str, int, int]] = []
     scopes: list[tuple[str, int]] = []
@@ -161,7 +161,7 @@ def functions(text: str) -> list[tuple[str, int, int]]:
 
 
 def calls(text: str, receiver: str, method: str) -> list[int]:
-    """Retci poziva `receiver.method(` po tokenima, pa tekst u stringu ili komentaru ne broji."""
+    """Lines of `receiver.method(` calls by tokens, so text in a string or comment does not count."""
     toks = tokens(text)
     return [toks[i].line for i in range(len(toks) - 3)
             if toks[i].kind == "ident" and toks[i].text == receiver and _is(toks[i + 1], ".")
@@ -169,7 +169,7 @@ def calls(text: str, receiver: str, method: str) -> list[int]:
 
 
 def assertion_count(text: str) -> int:
-    """Broj poziva `assert*(` i `vm.expectRevert(`/`vm.expectEmit(` u forge testu."""
+    """Count of `assert*(` and `vm.expectRevert(`/`vm.expectEmit(` calls in a forge test."""
     toks = tokens(text)
     count = 0
     for index in range(len(toks) - 1):

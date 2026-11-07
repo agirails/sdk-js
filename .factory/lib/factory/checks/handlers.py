@@ -1,5 +1,5 @@
-"""K4: greška se ne guta. Python kroz `pyast`, TypeScript kroz `tsfacts` (ts_facts.cjs), jer eslint `no-empty` izuzima
-tijela funkcija."""
+"""K4: an error is not swallowed. Python through `pyast`, TypeScript through `tsfacts` (ts_facts.cjs), because eslint
+`no-empty` exempts function bodies."""
 from __future__ import annotations
 
 import ast
@@ -9,20 +9,20 @@ from .. import pyast, tsfacts
 from . import anchor, line_text
 
 BROAD = frozenset({"Exception", "BaseException"})
-FIX_RAISE = "obradi grešku ili je podigni dalje; očekivanu grešku hvataj kao konkretan tip"
+FIX_RAISE = "handle the error or re-raise it; catch an expected error as a specific type"
 MESSAGES = {
-    "bare": ("goli except bez ponovnog podizanja guta svaku grešku", "hvataj konkretnu grešku i obradi je ili je podigni dalje"),
-    "base": ("except BaseException bez ponovnog podizanja guta i KeyboardInterrupt i SystemExit",
-             "hvataj konkretnu grešku ili završi rukovatelj s raise"),
-    "empty": ("prazan except {name} guta grešku", FIX_RAISE),
-    "fallback": ("except {name} vraća stalnu vrijednost i guta svaku grešku", FIX_RAISE),
-    "suppress": ("contextlib.suppress({name}) guta svaku grešku", "navedi konkretnu grešku koju očekuješ"),
-    "catch": ("catch blok bez obrade (prazan ili vraća stalnu vrijednost) guta grešku",
-              "obradi grešku ili je baci dalje"),
-    "catch-callback": (".catch() rukovatelj bez obrade (prazan ili vraća stalnu vrijednost) guta odbijeni Promise",
-                       "obradi ili zapiši grešku, ili je proslijedi dalje"),
-    "then-rejection": ("rukovatelj odbijanja u .then() bez obrade (prazan ili vraća stalnu vrijednost) guta grešku",
-                       "obradi ili zapiši grešku, ili je proslijedi dalje"),
+    "bare": ("bare except without re-raise swallows every error", "catch a specific error and handle or re-raise it"),
+    "base": ("except BaseException without re-raise swallows KeyboardInterrupt and SystemExit too",
+             "catch a specific error or end the handler with raise"),
+    "empty": ("empty except {name} swallows the error", FIX_RAISE),
+    "fallback": ("except {name} returns a constant and swallows every error", FIX_RAISE),
+    "suppress": ("contextlib.suppress({name}) swallows every error", "name the specific error you expect"),
+    "catch": ("catch block without handling (empty or returns a constant) swallows the error",
+              "handle the error or rethrow it"),
+    "catch-callback": (".catch() handler without handling (empty or returns a constant) swallows the rejected Promise",
+                       "handle or log the error, or pass it on"),
+    "then-rejection": ("rejection handler in .then() without handling (empty or returns a constant) swallows the error",
+                       "handle or log the error, or pass it on"),
 }
 
 
@@ -69,7 +69,7 @@ def _python(view: FileView) -> list[tuple[str, str, int, int]]:
     for node in ast.walk(tree):
         if isinstance(node, ast.ExceptHandler):
             caught = _names(node.type)
-            label = (caught[0] if len(caught) == 1 else f"({', '.join(caught)})") if caught else "bez tipa"
+            label = (caught[0] if len(caught) == 1 else f"({', '.join(caught)})") if caught else "without type"
             if node.type is None and not _reraises(node):
                 out.append(("bare", label, node.lineno, node.end_lineno or node.lineno))
             elif "BaseException" in caught and not _reraises(node):
@@ -89,8 +89,8 @@ def _typescript(view: FileView) -> list[tuple[str, str, int, int]]:
 
 
 def check(view: FileView) -> list[Finding]:
-    """K4 nalazi za Python i TypeScript/JavaScript datoteku, za svaki rukovatelj koji guta grešku: redak je prvi novi
-    redak rukovatelja, inače njegov početak. Je li nalaz nov, odlučuje usporedba s bazom u codecheck."""
+    """K4 findings for a Python or TypeScript/JavaScript file, one per handler that swallows an error: the line is the
+    handler's first new line, else its start. The base comparison in codecheck decides whether a finding is new."""
     if view.lang == "py":
         found = _python(view)
     elif view.lang == "ts":

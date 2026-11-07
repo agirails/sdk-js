@@ -1,4 +1,4 @@
-description = "K5: isključenje ispravnosnog pravila traži factory-allow; stilsko traži samo ime pravila i razlog. Pravilo kojeg nema na popisu vrijedi kao ispravnosno."
+description = "K5: suppressing a correctness rule requires factory-allow; a style rule requires only the rule name and a reason. A rule that is not on the list counts as a correctness rule."
 default = "correctness"
 
 [eslint]

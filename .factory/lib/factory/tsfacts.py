@@ -1,8 +1,8 @@
-"""TypeScript/JavaScript činjenice iz jedinog pomoćnika (ts_facts.cjs, pinani TypeScript): komentari i AST.
+"""TypeScript/JavaScript facts from the only helper (ts_facts.cjs, pinned TypeScript): comments and AST.
 
-Pinani TypeScript se prije prve uporabe provjerava prema tools.lock (`pins`). Sve datoteke koje pozivatelj najavi kroz
-`prefetch` mjere se jednim node procesom; rezultat ostaje u memoriji po
-(TypeScript, putanja, sha256 teksta), pa provjera komentara i provjere funkcija ne pokreću parser dvaput.
+The pinned TypeScript is verified against tools.lock (`pins`) before first use. All files the caller announces through
+`prefetch` are measured by one node process; the result stays in memory per
+(TypeScript, path, sha256 of the text), so the comment check and the function checks do not run the parser twice.
 """
 from __future__ import annotations
 
@@ -27,13 +27,13 @@ def _key(path: str, text: str) -> tuple[str, str, str]:
 
 def _node() -> str:
     if not (TYPESCRIPT / "package.json").is_file():
-        raise MeasureError(f"TypeScript nije instaliran u {TYPESCRIPT.relative_to(TYPESCRIPT.parents[3])}; "
-                           "pokreni standard install-tools")
+        raise MeasureError(f"TypeScript is not installed in {TYPESCRIPT.relative_to(TYPESCRIPT.parents[3])}; "
+                           "run standard install-tools")
     if pins.verified("typescript", TYPESCRIPT.parents[2]) != TYPESCRIPT:
-        raise MeasureError(f"TypeScript u {TYPESCRIPT} nije putanja iz tools.lock")
+        raise MeasureError(f"TypeScript in {TYPESCRIPT} is not the path from tools.lock")
     node = shutil.which("node")
     if node is None:
-        raise MeasureError("node nije na PATH-u, pa TS/JS provjere ne mogu izmjeriti")
+        raise MeasureError("node is not on PATH, so the TS/JS checks cannot measure")
     return node
 
 
@@ -43,25 +43,25 @@ def _measure(node: str, files: list[tuple[str, str]]) -> list[dict]:
         proc = subprocess.run([node, str(HELPER), str(TYPESCRIPT)], input=payload, capture_output=True,
                               encoding="utf-8", env={}, cwd=str(layout.ROOT), timeout=TIMEOUT, check=False)
     except subprocess.TimeoutExpired as exc:
-        raise MeasureError(f"ts_facts.cjs nije završio u {TIMEOUT} s") from exc
+        raise MeasureError(f"ts_facts.cjs did not finish in {TIMEOUT} s") from exc
     except OSError as exc:
-        raise MeasureError(f"ts_facts.cjs se ne može pokrenuti: {exc.strerror}") from exc
+        raise MeasureError(f"ts_facts.cjs cannot be started: {exc.strerror}") from exc
     try:
         result = json.loads(proc.stdout)
     except json.JSONDecodeError as exc:
-        raise MeasureError(f"ts_facts.cjs je vratio neispravan izlaz (exit {proc.returncode}): "
+        raise MeasureError(f"ts_facts.cjs returned invalid output (exit {proc.returncode}): "
                            f"{(proc.stderr or proc.stdout)[-2000:]}") from exc
     found = result.get("files") if isinstance(result, dict) else None
     if proc.returncode != 0 or not result.get("ok") or not isinstance(found, list) or len(found) != len(files):
         error = str(result.get("error", "") if isinstance(result, dict) else "")[-2000:]
-        raise MeasureError(f"ts_facts.cjs nije izmjerio (exit {proc.returncode}): {error}")
+        raise MeasureError(f"ts_facts.cjs did not measure (exit {proc.returncode}): {error}")
     if not all(isinstance(item, dict) and set(FIELDS) <= set(item) for item in found):
-        raise MeasureError("ts_facts.cjs je vratio datoteku bez očekivanih polja")
+        raise MeasureError("ts_facts.cjs returned a file without the expected fields")
     return found
 
 
 def prefetch(files: Iterable[tuple[str, str]]) -> None:
-    """Izmjeri jednim node procesom sve (putanja, tekst) parove kojih još nema u memoriji."""
+    """Measure with one node process all (path, text) pairs not yet in memory."""
     node = _node()
     wanted = sorted({(path, text) for path, text in files if _key(path, text) not in _CACHE})
     if wanted:
@@ -70,13 +70,13 @@ def prefetch(files: Iterable[tuple[str, str]]) -> None:
 
 
 def file_facts(path: str, text: str) -> dict:
-    """Svjež rječnik s komentarima i AST činjenicama datoteke; `error` nije None kad parser javi grešku."""
+    """A fresh dict with the file's comments and AST facts; `error` is not None when the parser reports an error."""
     prefetch([(path, text)])
     return json.loads(_CACHE[_key(path, text)])
 
 
 def facts(path: str, text: str) -> dict:
-    """AST činjenice (functions, handlers, skips, assertions). Datoteka koju parser ne pročita je MeasureError."""
+    """AST facts (functions, handlers, skips, assertions). A file the parser cannot read is a MeasureError."""
     data = file_facts(path, text)
     if data["error"]:
         raise MeasureError(f"TypeScript AST: {data['error']}")

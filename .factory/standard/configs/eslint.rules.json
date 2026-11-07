@@ -26,8 +26,8 @@
   "no-new-func": "error",
   "no-restricted-imports": ["error", {
     "paths": [
-      { "name": "child_process", "importNames": ["exec", "execSync"], "message": "S5: execFile ili spawn s nizom argumenata, bez ljuske." },
-      { "name": "node:child_process", "importNames": ["exec", "execSync"], "message": "S5: execFile ili spawn s nizom argumenata, bez ljuske." }
+      { "name": "child_process", "importNames": ["exec", "execSync"], "message": "S5: use execFile or spawn with an argument array, without a shell." },
+      { "name": "node:child_process", "importNames": ["exec", "execSync"], "message": "S5: use execFile or spawn with an argument array, without a shell." }
     ]
   }]
 }

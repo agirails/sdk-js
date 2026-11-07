@@ -1,4 +1,4 @@
-"""Zajednički tipovi za code-check: nalaz, pogled na datoteku i jezik po putanji."""
+"""Shared types for code-check: finding, file view and language by path."""
 from __future__ import annotations
 
 import hashlib
@@ -24,17 +24,17 @@ SHEBANG_LANGS = {"python": "py", "python3": "py", "bash": "sh", "sh": "sh", "zsh
 
 
 class MeasureError(Exception):
-    """Provjera nije mogla izmjeriti (alat fali, parser pao). Vodi na exit 2, nikad na prolaz."""
+    """The check could not measure (tool missing, parser failed). Leads to exit 2, never to a pass."""
 
 
 def sha256(data: bytes | str) -> str:
-    """sha256 bajtova ili teksta (UTF-8, surogati prolaze) kao heksadecimalni zapis. Jedini sha256 u tvornici."""
+    """sha256 of bytes or text (UTF-8, surrogates pass) as hex. The only sha256 in the factory."""
     raw = data.encode("utf-8", "surrogatepass") if isinstance(data, str) else data
     return hashlib.sha256(raw).hexdigest()
 
 
 def sha256_file(path: str | Path) -> str:
-    """sha256 sadržaja datoteke, čitane u blokovima od 1 MiB."""
+    """sha256 of a file's content, read in 1 MiB blocks."""
     digest = hashlib.sha256()
     with Path(path).open("rb") as fh:
         for block in iter(lambda: fh.read(1 << 20), b""):
@@ -44,8 +44,8 @@ def sha256_file(path: str | Path) -> str:
 
 @dataclass(frozen=True)
 class Finding:
-    """Jedno kršenje. `key_text` je normalizirani tekst po kojem se nalaz uparuje s bazom i baselineom; izvan procesa
-    ide samo njegov otisak (`key()`, `public()`), jer redak može nositi tajnu."""
+    """One violation. `key_text` is the normalised text by which the finding is matched with the base and the baseline;
+    only its fingerprint leaves the process (`key()`, `public()`), because the line may carry a secret."""
     rule: str
     path: str
     line: int
@@ -55,29 +55,29 @@ class Finding:
     severity: str = "error"
 
     def render(self) -> str:
-        prefix = "" if self.severity == "error" else "upozorenje "
+        prefix = "" if self.severity == "error" else "warning "
         return f"{prefix}{self.rule} {self.path}:{self.line} {self.message} → {self.fix}"
 
     def key(self) -> tuple[str, str, str]:
         return (self.rule, self.path, sha256(self.key_text))
 
     def public(self) -> dict:
-        """Nalaz za izvještaj: sve što poruka namjerno prikazuje i otisak ključa umjesto izvornog teksta."""
+        """Finding for the report: all the message shows on purpose, and the key fingerprint instead of the text."""
         return {"rule": self.rule, "path": self.path, "line": self.line, "message": self.message, "fix": self.fix,
                 "severity": self.severity, "key": sha256(self.key_text)}
 
 
 def ordered(findings: Iterable[Finding]) -> list[Finding]:
-    """Jedini poredak nalaza: putanja, redak, pravilo, ključ, poruka. Isti ulaz daje isti izlaz."""
+    """The only order of findings: path, line, rule, key, message. The same input gives the same output."""
     return sorted(findings, key=lambda f: (f.path, f.line, f.rule, f.key_text, f.message))
 
 
 @dataclass
 class FileView:
-    """Datoteka koju provjera gleda. `added` su redci koji su novi ili promijenjeni; None znači cijela datoteka.
+    """A file the check looks at. `added` are lines that are new or changed; None means the whole file.
 
-    `raw` su izvorni bajtovi kad `text` nije točno sadržaj datoteke (preskočena ili čitana sa zamjenskim znakovima).
-    `base` je ista datoteka u bazi, kao pogled bez `added`; None kad je datoteka nova ili nema baze.
+    `raw` are the source bytes when `text` is not exactly the file content (skipped, or read with replacement chars).
+    `base` is the same file in the base, as a view without `added`; None when the file is new or there is no base.
     """
     path: str
     text: str
@@ -92,8 +92,8 @@ class FileView:
         return self.added is None or line in self.added
 
     def reports_all(self) -> bool:
-        """Provjera javlja i nalaze izvan novih redaka: kad se gleda cijela datoteka, i kad datoteka ima bazu, jer tada
-        codecheck nalaze uparuje s bazom, pa se vidi i kršenje nastalo brisanjem."""
+        """The check also reports findings outside new lines: when the whole file is checked, and when the file has a
+        base, because codecheck then matches findings with the base, so a violation caused by a deletion shows."""
         return self.added is None or self.base is not None
 
 
@@ -108,10 +108,10 @@ def lang_of(path: str | Path, text: str = "") -> str | None:
 
 
 def plural(n: int, one: str, few: str, many: str) -> str:
-    """Broj s imenicom u hrvatskom obliku za 1, 2-4 i 5+ (1 datoteka, 2 datoteke, 5 datoteka)."""
-    if n % 10 == 1 and n % 100 != 11:
-        return f"{n} {one}"
-    return f"{n} {few if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14 else many}"
+    """Number with a noun in English form: `one` for 1, `many` otherwise (1 file, 2 files, 21 files). `few` stays in
+    the signature for callers and is not used."""
+    del few
+    return f"{n} {one if n == 1 else many}"
 
 
 def normalize(text: str) -> str:
@@ -119,5 +119,5 @@ def normalize(text: str) -> str:
 
 
 def line_count(text: str) -> int:
-    """Broj redaka kao u editoru: zadnji redak bez znaka novog retka se broji."""
+    """Line count as in an editor: a last line without a newline character is counted."""
     return text.count("\n") + (0 if text == "" or text.endswith("\n") else 1)

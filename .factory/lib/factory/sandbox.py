@@ -1,37 +1,37 @@
-"""Pokretanje koda iz repoa pod bwrap: prazna okolina, samo navedene putanje, bez mreže, s ograničenjima (S7).
+"""Running repo code under bwrap: empty environment, only the given paths, no network, with limits (S7).
 
-Unutra se vidi samo /usr, simboličke veze korijena kao na hostu, generirani /etc/passwd i /etc/group, ld.so.cache
-(dinamički linker po njemu nalazi biblioteke iz ld.so.conf.d), novi /proc i minimalni /dev, jedan privatni tmpfs
-veličine `tmp_mb` za HOME i /tmp te putanje koje pozivatelj izričito navede. Seccomp filtar odbija keyctl, add_key i
-request_key, pa kod ne dolazi do keyringa hosta. Montiranje se odbija za korijen, home, sistemska i dijeljena
-privremena stabla, skrivene stavke u korijenu home-a osim toolchaina, privatna stabla i imena iz
-standard/configs/sandbox-deny.txt (imena vrijede na svakoj dubini) i svako stablo u kojem je socket. Izlaz se čita dok
-naredba radi, ali se čuva najviše `max_output` bajtova po toku i vraća tek nakon završetka.
+Inside, only /usr is visible, root symlinks as on the host, a generated /etc/passwd and /etc/group, ld.so.cache
+(the dynamic linker finds libraries from ld.so.conf.d through it), a new /proc and a minimal /dev, one private tmpfs
+of size `tmp_mb` for HOME and /tmp, and the paths the caller names explicitly. A seccomp filter refuses keyctl, add_key
+and request_key, so code does not reach the host keyring. Mounting is refused for the root, home, system and shared
+temporary trees, hidden entries at the home root except toolchains, private trees and names from
+standard/configs/sandbox-deny.txt (names apply at any depth), and any tree that contains a socket. Output is read while
+the command runs, but at most `max_output` bytes per stream are kept and returned only after completion.
 
-Git metapodaci: putanja za pisanje koja je unutar `.git` ili je simbolička veza `.git` uvijek se odbija. Putanja za
-pisanje koja sadrži `.git` odbija se, osim kad pozivatelj zada `git_ro`: tada se svaki `.git` u njoj montira samo za
-čitanje preko mape za pisanje, pa hook ili `core.fsmonitor` upisan iznutra ne dolazi do hosta, a git i dalje čita
-povijest. `.git` koji kod stvori tijekom rada tamo ostaje, pa je stablo za pisanje nakon izlaza nepovjerljivo: host u
-njemu ne pokreće git, a artefakte uzima kroz `copy_out`.
+Git metadata: a writable path that is inside `.git` or is a symlink to `.git` is always refused. A writable path that
+contains `.git` is refused unless the caller sets `git_ro`: then every `.git` in it is mounted read-only over the
+writable directory, so a hook or `core.fsmonitor` written from inside does not reach the host, while git still reads
+history. A `.git` that the code creates while running stays there, so the writable tree is untrusted after exit: the
+host does not run git in it and takes artifacts through `copy_out`.
 
-Ograničenja koja postoje: `mem_mb` privatna memorija po procesu u heapu i privatnim mapiranjima za pisanje
-(RLIMIT_DATA), `vm_mb` adresni prostor po procesu (RLIMIT_AS, uključuje rezervacije bez memorije, stog i dijeljena
-mapiranja), `nproc` broj
-procesa (RLIMIT_NPROC), CPU vrijeme po procesu i ukupno vrijeme sandboxa (`timeout`), `fsize_mb` veličina jedne
-datoteke, core dump 0 (soft i hard, ne može se podići), `tmp_mb` jedan tmpfs za HOME i /tmp (troši RAM) i `max_output`
-po toku. Svi limiti postavljaju se kao soft i hard, pa ih proces unutra ne može podići.
+Limits that exist: `mem_mb` private memory per process in the heap and private writable mappings
+(RLIMIT_DATA), `vm_mb` address space per process (RLIMIT_AS, includes reservations without memory, the stack and shared
+mappings), `nproc` number of
+processes (RLIMIT_NPROC), CPU time per process and total sandbox time (`timeout`), `fsize_mb` size of one
+file, core dump 0 (soft and hard, cannot be raised), `tmp_mb` one tmpfs for HOME and /tmp (uses RAM) and `max_output`
+per stream. All limits are set as soft and hard, so a process inside cannot raise them.
 
-Zašto dva memorijska limita: pinani gitleaks (go-re2 na wazero) rezervira oko 5,4 GB adresnog prostora s PROT_NONE,
-a koristi oko 0,15 GB (izmjereno 2026-11-06 na fixtureu i na pilot repou: VmPeak 5321 i 5386 MB, VmData 110 i 156 MB,
-VmHWM 74 i 121 MB). Pod RLIMIT_AS od 4 GB pada već pri pokretanju. Rezervacija se ne broji u RLIMIT_DATA, pa
-`mem_mb` zaustavlja proces kojem heap raste, a `vm_mb` je gornja granica memorije jednog procesa. Zadano je
-`VM_MB` (4 GB) za sve; samo poziv koji u sandboxu pokreće code-check s gitleaksom traži `GITLEAKS_VM_MB` (8 GB),
-pa viši limit vrijedi za taj poziv, a ne za repro i ostali kod repoa (odluka 2026-11-06: gitleaks dobiva vlastiti limit).
-RLIMIT_DATA ne broji stog ni dijeljena mapiranja: glavni stog, mapiranje s MAP_GROWSDOWN i stog proširen kroz
-mremap rastu do `vm_mb` (izmjereno 2026-11-06: 1,5 GB dotaknuto kroz MAP_GROWSDOWN i kroz mremap stoga pod `mem_mb`
-512), kao i dijeljena anonimna mapiranja. Poznato ograničenje: ukupna memorija svih procesa (do `nproc` ×
-`vm_mb`) i ukupno pisanje u putanje za pisanje nisu ograničeni, jer bi to tražilo cgroup preko korisničkog systemd
-busa, a modul ga ne pretpostavlja.
+Why two memory limits: the pinned gitleaks (go-re2 on wazero) reserves about 5.4 GB of address space with PROT_NONE,
+but uses about 0.15 GB (measured 2026-11-06 on a fixture and on a pilot repo: VmPeak 5321 and 5386 MB, VmData 110 and
+156 MB, VmHWM 74 and 121 MB). Under an RLIMIT_AS of 4 GB it fails at startup. The reservation does not count toward
+RLIMIT_DATA, so `mem_mb` stops a process whose heap grows, and `vm_mb` is the upper memory bound of one process. The
+default is `VM_MB` (4 GB) for everything; only a call that runs code-check with gitleaks in the sandbox asks for
+`GITLEAKS_VM_MB` (8 GB), so the higher limit applies to that call and not to repro or other repo code (decision
+2026-11-06: gitleaks gets its own limit). RLIMIT_DATA does not count the stack or shared mappings: the main stack, a
+MAP_GROWSDOWN mapping and a stack extended through mremap grow up to `vm_mb` (measured 2026-11-06: 1.5 GB touched
+through MAP_GROWSDOWN and through stack mremap under `mem_mb` 512), as do shared anonymous mappings. Known limit: the
+total memory of all processes (up to `nproc` × `vm_mb`) and total writes to writable paths are not limited, because
+that would need a cgroup over the user systemd bus, which this module does not assume.
 """
 from __future__ import annotations
 
@@ -68,16 +68,16 @@ SECCOMP_NR, SECCOMP_ARCH = 0, 4
 BPF_LOAD, BPF_JEQ, BPF_JGE, BPF_RET = 0x20, 0x15, 0x35, 0x06
 TIMEOUT_EXIT = 124
 FAILURE_EXIT = 125
-TRUNCATED = "\n[sandbox-run: izlaz skraćen na {n} bajtova]\n"
+TRUNCATED = "\n[sandbox-run: output truncated to {n} bytes]\n"
 
 
 class SandboxError(MeasureError):
-    """Sandbox nije postavljen ili je odbio montiranje, pa naredba nije pokrenuta. Nikad nije prolaz."""
+    """The sandbox was not set up or refused a mount, so the command did not run. Never a pass."""
 
 
 @dataclass(frozen=True)
 class Result:
-    """Ishod naredbe. `exit_code` je izlaz naredbe, a TIMEOUT_EXIT kad je prekoračeno vrijeme."""
+    """Outcome of the command. `exit_code` is the command's exit code, or TIMEOUT_EXIT when it timed out."""
     exit_code: int
     stdout: bytes
     stderr: bytes
@@ -86,7 +86,7 @@ class Result:
 
 
 def protected_homes() -> list[Path]:
-    """Home iz passwd-a i iz HOME varijable: oba, njihovi preci i vjerodajnice u njima se ne montiraju."""
+    """Home from passwd and from the HOME variable: neither, their ancestors nor the credentials in them are mounted."""
     homes = [Path(pwd.getpwuid(os.getuid()).pw_dir)]
     if os.environ.get("HOME"):
         homes.append(Path(os.environ["HOME"]))
@@ -94,7 +94,7 @@ def protected_homes() -> list[Path]:
 
 
 def deny_digest(rel: str) -> str:
-    """Otisak za sandbox-deny.txt: sha256 putanje relativne prema home-u, npr. `projekt/.privatno`."""
+    """Fingerprint for sandbox-deny.txt: sha256 of a path relative to home, e.g. `project/.private`."""
     return sha256(rel)
 
 
@@ -106,7 +106,7 @@ def _parse_deny_row(entry: str, where: str) -> tuple[str, str]:
         return kind, deny_digest(value)
     if kind == "path" and not value.startswith(("sha256:", "/")) and ".." not in value.split("/"):
         return kind, deny_digest(value.strip("/"))
-    raise SandboxError(f"{where}: redak mora biti sha256:<hex>, putanja relativna prema home-u ili name:<ime>")
+    raise SandboxError(f"{where}: a line must be sha256:<hex>, a path relative to home or name:<name>")
 
 
 @lru_cache(maxsize=4)
@@ -114,7 +114,7 @@ def _deny_list(path: Path) -> dict[str, frozenset[str]]:
     try:
         rows = Path(path).read_text(encoding="utf-8").splitlines()
     except OSError as exc:
-        raise SandboxError(f"popis zabranjenih stabala nije čitljiv ({Path(path).name}): {exc.strerror}") from exc
+        raise SandboxError(f"list of denied trees is not readable ({Path(path).name}): {exc.strerror}") from exc
     out: dict[str, set[str]] = {"path": set(), "name": set()}
     for number, row in enumerate(rows, 1):
         entry = row.strip()
@@ -125,26 +125,26 @@ def _deny_list(path: Path) -> dict[str, frozenset[str]]:
 
 
 def denied_digests() -> frozenset[str]:
-    """Otisci privatnih stabala pod home-om koja se nikad ne montiraju, ni ona ni njihovi preci."""
+    """Fingerprints of private trees under home that are never mounted, neither they nor their ancestors."""
     return _deny_list(DENY_FILE)["path"]
 
 
 def denied_names() -> frozenset[str]:
-    """Otisci imena (`name:` retci) koja se nikad ne montiraju ni na kojoj dubini, ni stabla u kojima jesu."""
+    """Fingerprints of names (`name:` lines) never mounted at any depth, nor the trees that contain them."""
     return _deny_list(DENY_FILE)["name"]
 
 
 def _home_refusal(path: Path, home: Path) -> str | None:
     if path == home or path in home.parents:
-        return "montira cijeli home"
+        return "mounts the whole home"
     if home not in path.parents:
         return None
     rel = path.relative_to(home).as_posix()
     if rel.startswith(".") and not any(rel == t or rel.startswith(t + "/") for t in TOOLCHAINS):
-        return "je skrivena stavka u korijenu home-a (vjerodajnice, povijest ili postavke)"
+        return "is a hidden entry at the home root (credentials, history or settings)"
     parts = rel.split("/")
     if any(deny_digest("/".join(parts[:i])) in denied_digests() for i in range(1, len(parts) + 1)):
-        return "je privatno stablo iz sandbox-deny.txt"
+        return "is a private tree from sandbox-deny.txt"
     return None
 
 
@@ -154,14 +154,14 @@ def _denied_name(path: Path) -> bool:
 
 def _refusal(path: Path, homes: list[Path]) -> str | None:
     if path == Path("/"):
-        return "montira cijeli korijen"
+        return "mounts the whole root"
     if _denied_name(path):
-        return "je privatno stablo iz sandbox-deny.txt"
+        return "is a private tree from sandbox-deny.txt"
     for tree in (*FORBIDDEN_TREES, *SHARED_TEMP):
         if path == Path(tree) or path in Path(tree).parents:
-            return f"montira {tree}"
+            return f"mounts {tree}"
         if Path(tree) in path.parents and tree in FORBIDDEN_TREES:
-            return f"je unutar {tree}"
+            return f"is inside {tree}"
     for home in homes:
         reason = _home_refusal(path, home)
         if reason:
@@ -183,48 +183,48 @@ def _tree_scan(root: Path, homes: list[Path]) -> tuple[str | None, list[Path]]:
         try:
             info = current.lstat()
         except OSError as exc:
-            return f"nije čitljiv ({exc.strerror}: {current})", gits
+            return f"is not readable ({exc.strerror}: {current})", gits
         if stat.S_ISSOCK(info.st_mode):
-            return f"sadrži socket {current}", gits
+            return f"contains socket {current}", gits
         if current != root and _denied_entry(current, homes):
-            return f"sadrži privatno stablo {current} iz sandbox-deny.txt", gits
+            return f"contains private tree {current} from sandbox-deny.txt", gits
         if current.name == GIT_DIR:
             gits.append(current)
         if stat.S_ISDIR(info.st_mode):
             try:
                 stack.extend(sorted(Path(entry.path) for entry in os.scandir(current)))
             except OSError as exc:
-                return f"nije čitljiv ({exc.strerror}: {current})", gits
+                return f"is not readable ({exc.strerror}: {current})", gits
     return None, sorted(gits)
 
 
 def _checked(raw: str, homes: list[Path]) -> tuple[Path, list[Path]]:
     given = Path(raw)
     if not given.is_absolute():
-        raise SandboxError(f"putanja nije apsolutna: {raw}")
+        raise SandboxError(f"path is not absolute: {raw}")
     real = given.resolve()
     for candidate in (Path(os.path.normpath(given)), real):
         reason = _refusal(candidate, homes)
         if reason:
-            raise SandboxError(f"odbijeno montiranje {raw}: {reason}")
+            raise SandboxError(f"refused mount {raw}: {reason}")
     if not real.exists():
-        raise SandboxError(f"putanja ne postoji: {raw}")
+        raise SandboxError(f"path does not exist: {raw}")
     reason, gits = _tree_scan(real, homes)
     if reason:
-        raise SandboxError(f"odbijeno montiranje {raw}: {reason}")
+        raise SandboxError(f"refused mount {raw}: {reason}")
     return real, gits
 
 
 def _writable(raw: str, homes: list[Path], git_ro: bool) -> tuple[Path, list[Path]]:
     real, gits = _checked(raw, homes)
     if GIT_DIR in Path(os.path.normpath(raw)).parts or GIT_DIR in real.parts:
-        raise SandboxError(f"odbijeno pisanje u {raw}: putanja je unutar git metapodataka ({GIT_DIR})")
+        raise SandboxError(f"refused write to {raw}: the path is inside git metadata ({GIT_DIR})")
     links = [git for git in gits if git.is_symlink()]
     if links:
-        raise SandboxError(f"odbijeno pisanje u {raw}: {links[0]} je simbolička veza {GIT_DIR}")
+        raise SandboxError(f"refused write to {raw}: {links[0]} is a symlink {GIT_DIR}")
     if gits and not git_ro:
-        raise SandboxError(f"odbijeno pisanje u {raw}: sadrži {gits[0]}, a hook ili core.fsmonitor upisan iznutra "
-                           f"izvršio bi se na hostu; montiraj {GIT_DIR} samo za čitanje (git_ro, --git-ro)")
+        raise SandboxError(f"refused write to {raw}: it contains {gits[0]}, and a hook or core.fsmonitor written "
+                           f"from inside would run on the host; mount {GIT_DIR} read-only (git_ro, --git-ro)")
     return real, gits
 
 
@@ -233,7 +233,7 @@ def _binds(ro: list[Path], rw: list[Path], tools: list[Path], gits: list[Path]) 
     for paths, flag in ((ro, "--ro-bind"), (tools, "--ro-bind"), (gits, "--ro-bind"), (rw, "--bind")):
         for path in paths:
             if flags.setdefault(path, flag) != flag:
-                raise SandboxError(f"putanja je navedena i za čitanje i za pisanje: {path}")
+                raise SandboxError(f"path is given both for reading and for writing: {path}")
     args: list[str] = []
     for path in sorted(flags, key=lambda p: (len(p.parts), str(p))):
         args += [flags[path], str(path), str(path)]
@@ -260,7 +260,7 @@ def _command_visible(cmd0: str, search: list[str], roots: list[Path], chdir: str
         inside = any(real == r or r in real.parents for r in roots)
         if inside and real.is_file() and os.access(real, os.X_OK):
             return
-    raise SandboxError(f"naredba nije dostupna u sandboxu: {cmd0}")
+    raise SandboxError(f"command is not available in the sandbox: {cmd0}")
 
 
 def _data_fd(name: str, data: bytes) -> int:
@@ -271,10 +271,10 @@ def _data_fd(name: str, data: bytes) -> int:
 
 
 def seccomp_program(machine: str | None = None) -> bytes:
-    """Klasični BPF za `bwrap --seccomp`: keyctl, add_key i request_key vraćaju EPERM; druga arhitektura ubija proces."""
+    """Classic BPF for `bwrap --seccomp`: keyctl, add_key, request_key get EPERM; another arch kills the process."""
     machine = machine or platform.machine()
     if machine not in SYSCALLS:
-        raise SandboxError(f"seccomp filtar nije definiran za arhitekturu {machine}")
+        raise SandboxError(f"seccomp filter is not defined for architecture {machine}")
     arch, calls = SYSCALLS[machine]
     jumps = ([(BPF_JGE, X32_BIT)] if machine == "x86_64" else []) + [(BPF_JEQ, nr) for nr in calls]
     deny = 3 + len(jumps) + 1
@@ -304,7 +304,7 @@ def _capped(chunks: list[bytes], cap: int) -> tuple[bytes, bool]:
 
 
 def printable(data: bytes) -> bytes:
-    """Izlaz za terminal: kontrolni znakovi osim LF i TAB (ESC, BEL, CR, C1) postaju vidljivi `\\xHH`."""
+    """Output for a terminal: control characters except LF and TAB (ESC, BEL, CR, C1) become visible `\\xHH`."""
     text = data.decode("utf-8", "backslashreplace")
     return re.sub(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]", lambda m: f"\\x{ord(m.group()):02x}", text).encode("utf-8")
 
@@ -316,7 +316,7 @@ def _exit_code(status: bytes) -> int | None:
             try:
                 codes.append(json.loads(line).get("exit-code"))
             except json.JSONDecodeError as exc:
-                raise SandboxError(f"bwrap je vratio nečitljiv status: {line[:200]}") from exc
+                raise SandboxError(f"bwrap returned an unreadable status: {line[:200]}") from exc
     found = [c for c in codes if c is not None]
     return found[-1] if found else None
 
@@ -370,18 +370,18 @@ def _start(argv: list[str], fds: tuple[int, ...], max_output: int):
 def run(cmd: list[str], *, ro=(), rw=(), tools=(), chdir: str | None = None, timeout: int = 300,
         mem_mb: int = 4096, nproc: int = 256, max_output: int = 1 << 20, fsize_mb: int = 1024,
         tmp_mb: int = 2048, git_ro: bool = False, vm_mb: int = VM_MB) -> Result:
-    """Pokreni `cmd` u sandboxu i vrati izlaz tek nakon završetka. Greška postavljanja diže SandboxError.
+    """Run `cmd` in the sandbox and return the output only after completion. A setup error raises SandboxError.
 
-    `git_ro` dopušta putanju za pisanje koja sadrži `.git` i montira svaki takav `.git` samo za čitanje. `mem_mb` je
-    privatna memorija procesa (RLIMIT_DATA), a `vm_mb` njegov adresni prostor (RLIMIT_AS).
+    `git_ro` allows a writable path that contains `.git` and mounts every such `.git` read-only. `mem_mb` is the
+    private memory of a process (RLIMIT_DATA), and `vm_mb` its address space (RLIMIT_AS).
     """
     if not cmd:
-        raise SandboxError("nema naredbe")
+        raise SandboxError("no command")
     if min(timeout, mem_mb, vm_mb, nproc, max_output, fsize_mb, tmp_mb) <= 0:
-        raise SandboxError("ograničenja moraju biti pozitivna")
+        raise SandboxError("limits must be positive")
     for binary in (BWRAP, PRLIMIT):
         if not os.access(binary, os.X_OK):
-            raise SandboxError(f"nema {binary}")
+            raise SandboxError(f"missing {binary}")
     homes = protected_homes()
     ro_p, tool_p = ([_checked(p, homes)[0] for p in group] for group in (ro, tools))
     writable = [_writable(p, homes, git_ro) for p in rw]
@@ -413,73 +413,73 @@ def run(cmd: list[str], *, ro=(), rw=(), tools=(), chdir: str | None = None, tim
     for drain in drains:
         drain.join(DRAIN_GRACE)
     if any(drain.is_alive() for drain in drains):
-        raise SandboxError(f"izlaz naredbe nije zatvoren {DRAIN_GRACE} s nakon završetka")
+        raise SandboxError(f"command output was not closed {DRAIN_GRACE} s after completion")
     stdout, cut_out = _capped(out, max_output)
     stderr, cut_err = _capped(err, max_output)
     if timed_out:
         return Result(TIMEOUT_EXIT, stdout, stderr, True, cut_out or cut_err)
     if code is None:
-        raise SandboxError(f"bwrap nije pokrenuo naredbu (exit {proc.returncode}): "
+        raise SandboxError(f"bwrap did not start the command (exit {proc.returncode}): "
                            f"{stderr.decode(errors='replace').strip()[:500]}")
     return Result(code, stdout, stderr, False, cut_out or cut_err)
 
 
 def checked_destination(path: Path) -> Path:
-    """Odredište za `copy_out`, provjereno prije svakog mkdir: apsolutno, ni leksički ni stvarno unutar `.git`, nije
-    simbolička veza i ne postoji ili je prazna mapa. Vraća stvarnu putanju u koju se piše."""
+    """Destination for `copy_out`, checked before every mkdir: absolute, neither lexically nor really inside `.git`, not
+    a symlink, and either missing or an empty directory. Returns the real path that is written to."""
     if not path.is_absolute():
-        raise SandboxError(f"odredište nije apsolutno: {path}")
+        raise SandboxError(f"destination is not absolute: {path}")
     lexical = Path(os.path.normpath(path))
     anchor = lexical
     while not os.path.lexists(anchor):
         anchor = anchor.parent
     real = anchor.resolve() / lexical.relative_to(anchor)
     if GIT_DIR in lexical.parts or GIT_DIR in real.parts:
-        raise SandboxError(f"odredište {path} je unutar git metapodataka ({GIT_DIR})")
+        raise SandboxError(f"destination {path} is inside git metadata ({GIT_DIR})")
     if os.path.lexists(lexical) and (lexical.is_symlink() or not lexical.is_dir() or any(lexical.iterdir())):
-        raise SandboxError(f"odredište {path} postoji, a nije prazna mapa")
+        raise SandboxError(f"destination {path} exists and is not an empty directory")
     return real
 
 
 def _artifacts(src: Path, max_files: int, max_bytes: int) -> list[str]:
     try:
         if not stat.S_ISDIR(src.lstat().st_mode):
-            raise SandboxError(f"artefakti nisu mapa: {src}")
+            raise SandboxError(f"artifacts are not a directory: {src}")
         with os.scandir(src) as listing:
             entries = sorted(((entry.name, entry.stat(follow_symlinks=False)) for entry in listing))
     except OSError as exc:
-        raise SandboxError(f"artefakti nisu čitljivi ({exc.strerror}: {src})") from exc
+        raise SandboxError(f"artifacts are not readable ({exc.strerror}: {src})") from exc
     if len(entries) > max_files:
-        raise SandboxError(f"artefakata je {len(entries)}, a dopušteno je {max_files}")
+        raise SandboxError(f"there are {len(entries)} artifacts, but {max_files} are allowed")
     for name, info in entries:
         if not ARTIFACT_NAME.fullmatch(name):
-            raise SandboxError(f"artefakt {name!r} nema dopušteno ime (slova, brojke, _ . -, bez točke na početku)")
+            raise SandboxError(f"artifact {name!r} has no allowed name (letters, digits, _ . -, no leading dot)")
         if not stat.S_ISREG(info.st_mode):
-            raise SandboxError(f"artefakt {name} nije obična datoteka")
+            raise SandboxError(f"artifact {name} is not a regular file")
     total = sum(info.st_size for _, info in entries)
     if total > max_bytes:
-        raise SandboxError(f"artefakti imaju {total} bajtova, a dopušteno je {max_bytes}")
+        raise SandboxError(f"artifacts have {total} bytes, but {max_bytes} are allowed")
     return [name for name, _ in entries]
 
 
 def _copy_file(src: Path, dst: Path, budget: int) -> int:
     with os.fdopen(os.open(src, os.O_RDONLY | os.O_NOFOLLOW), "rb") as fin:
         if not stat.S_ISREG(os.fstat(fin.fileno()).st_mode):
-            raise SandboxError(f"artefakt {src.name} nije obična datoteka")
+            raise SandboxError(f"artifact {src.name} is not a regular file")
         with os.fdopen(os.open(dst, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644), "wb") as fout:
             while chunk := fin.read(1 << 20):
                 budget -= len(chunk)
                 if budget < 0:
-                    raise SandboxError(f"artefakt {src.name} je narastao preko dopuštene veličine")
+                    raise SandboxError(f"artifact {src.name} grew beyond the allowed size")
                 fout.write(chunk)
     return budget
 
 
 def copy_out(src: Path, dest: Path, *, max_files: int, max_bytes: int) -> list[str]:
-    """Kopiraj artefakte iz mape za pisanje sandboxa na host, nakon što je naredba izašla.
+    """Copy artifacts from the sandbox's writable directory to the host, after the command has exited.
 
-    Prihvaća samo ravnu mapu običnih datoteka sigurnih imena, najviše `max_files` i `max_bytes` ukupno. Sve se provjeri
-    prije prvog mkdir, a odredište se puni preko susjedne privremene mape i jednog rename-a. Vraća kopirana imena.
+    Accepts only a flat directory of regular files with safe names, at most `max_files` and `max_bytes` in total. All
+    is checked before the first mkdir; the destination fills via a sibling temp directory and one rename. Returns names.
     """
     target = checked_destination(dest)
     names = _artifacts(src, max_files, max_bytes)
@@ -487,14 +487,14 @@ def copy_out(src: Path, dest: Path, *, max_files: int, max_bytes: int) -> list[s
         target.parent.mkdir(parents=True, exist_ok=True)
         stage = Path(tempfile.mkdtemp(prefix=f".{target.name}.", dir=target.parent))
     except OSError as exc:
-        raise SandboxError(f"odredište {dest} nije moguće pripremiti: {exc.strerror}") from exc
+        raise SandboxError(f"destination {dest} could not be prepared: {exc.strerror}") from exc
     try:
         budget = max_bytes
         for name in names:
             budget = _copy_file(src / name, stage / name, budget)
         os.rename(stage, target)
     except OSError as exc:
-        raise SandboxError(f"artefakti nisu kopirani u {dest}: {exc.strerror}") from exc
+        raise SandboxError(f"artifacts were not copied to {dest}: {exc.strerror}") from exc
     finally:
         if stage.exists():
             shutil.rmtree(stage)

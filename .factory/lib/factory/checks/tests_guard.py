@@ -1,7 +1,7 @@
-"""K19: dodano isključivanje ili fokusiranje testa pada; manje asercija nego prije je upozorenje.
+"""K19: an added test skip or focus fails; fewer assertions than before is a warning.
 
-Pozicije dolaze iz AST-a (Python `pyast`, TypeScript `tsfacts` kroz ts_facts.cjs) i Solidity tokena, pa tekst u stringu
-ne broji.
+Positions come from the AST (Python `pyast`, TypeScript `tsfacts` via ts_facts.cjs) and Solidity tokens, so text in a
+string does not count.
 """
 from __future__ import annotations
 
@@ -17,8 +17,8 @@ PY_SKIPS = frozenset({
     "unittest.case.skip", "unittest.case.skipIf", "unittest.case.skipUnless", "unittest.case.SkipTest",
 })
 PY_ASSERT_CALLS = frozenset({"pytest.raises", "pytest.warns", "pytest.approx"})
-FIX_SKIP = "pokreni test; ako ne prolazi, popravi kod ili test, a otvoreno pitanje vodi kao issue"
-FIX_ASSERT = "vrati aserciju ili je zamijeni jačom; uklanjanje testa traži razlog u commitu"
+FIX_SKIP = "run the test; if it fails, fix the code or the test, and track the open question as an issue"
+FIX_ASSERT = "restore the assertion or replace it with a stronger one; removing a test needs a reason in the commit"
 
 
 def _aliases(tree: ast.Module) -> dict[str, str]:
@@ -75,7 +75,7 @@ def _facts(lang: str, path: str, text: str) -> tuple[list[tuple[int, str]], int]
 
 
 def check(view: FileView) -> list[Finding]:
-    """K19 nalazi za testnu datoteku (Python, TypeScript/JavaScript, forge `.t.sol`)."""
+    """K19 findings for a test file (Python, TypeScript/JavaScript, forge `.t.sol`)."""
     if view.lang not in ("py", "ts", "sol") or not is_test_path(view.path):
         return []
     skips, assertions = _facts(view.lang, view.path, view.text)
@@ -84,10 +84,10 @@ def check(view: FileView) -> list[Finding]:
         if anchor(view, line, line) is None:
             continue
         key = f"{name}: {normalize(line_text(view.text, line))}"
-        out.append(Finding("K19", view.path, line, f"isključen ili fokusiran test ({name})", FIX_SKIP, key))
+        out.append(Finding("K19", view.path, line, f"skipped or focused test ({name})", FIX_SKIP, key))
     if view.old_text is not None:
         _, before = _facts(view.lang, view.path, view.old_text)
         if assertions < before:
-            out.append(Finding("K19", view.path, 0, f"broj asercija pao s {before} na {assertions}", FIX_ASSERT,
+            out.append(Finding("K19", view.path, 0, f"assertions dropped from {before} to {assertions}", FIX_ASSERT,
                                "asercije", "warning"))
     return ordered(out)

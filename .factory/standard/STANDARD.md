@@ -1,81 +1,81 @@
-# Standard tvornice softvera
+# The factory standard for software
 
-Generirano iz `standard/rules.toml` komandom `bin/standard gen`. Ne uređuj ručno: `bin/standard gen --check` i `tests/test_standard.py` padaju kad se razlikuju.
+Generated from `standard/rules.toml` by `bin/standard gen`. Do not edit by hand: `bin/standard gen --check` and `tests/test_standard.py` fail when they differ.
 
-Jedna ljestvica kvalitete i sigurnosti za sav kod koji gradimo, bez obzira tko ga piše: Claude, Codex, drugi model ili osoba. Pravilo živi na najvišoj razini koja ga može provesti. Postojeće kršenje stoji u baselineu koji smije samo padati: pravilo pada na novim i promijenjenim redcima i na kršenju koje je nastalo brisanjem. Ulaz za provjeru je `bin/code-check`. Exit 0 je čisto, exit 1 su nova kršenja, a exit 2 znači da provjera nije mogla izmjeriti; exit 2 nikad nije prolaz. Budžet performansi (P) je prvo izvještaj, a brana postaje tek kad je šum izmjeren i budžet zapisan u `standard/repos/<id>.toml`.
+One bar for quality and security for all code we build, no matter who writes it: Claude, Codex, another model or a person. A rule lives at the highest level that can enforce it. An existing violation stays in a baseline that may only shrink: a rule fails on new and changed lines and on a violation that a deletion created. The entry point for the check is `bin/code-check`. Exit 0 is clean, exit 1 means new violations, and exit 2 means the check could not measure; exit 2 is never a pass. A performance budget (P) is a report first, and it becomes a gate only when the noise is measured and the budget is written in `standard/repos/<id>.toml`.
 
-## Razine provedbe
+## Enforcement levels
 
-1. **Kod i arhitektura**: loš uzorak se ne može napisati.
-2. **Statička provjera**: lint, typecheck, `code-check` i CI; loš uzorak se ne može isporučiti.
-3. **Skillovi i pravila**: za prosudbu koju stroj ne može provjeriti.
-4. **Ljudski review**: samo za ono što razine 1–3 još ne pokrivaju; svaki takav nalaz je kandidat za višu razinu.
+1. **Code and architecture**: the bad pattern cannot be written.
+2. **Static check**: lint, typecheck, `code-check` and CI; the bad pattern cannot be shipped.
+3. **Skills and rules**: for judgment that a machine cannot check.
+4. **Human review**: only for what levels 1–3 do not cover yet; each such finding is a candidate for a higher level.
 
-## Kvaliteta (K)
+## Quality (K)
 
-| ID | Pravilo | Razina | Provodi | Jezici | Provjera |
+| ID | Rule | Level | Enforced by | Languages | Check |
 |---|---|---|---|---|---|
-| K1 | **Jedan put za istu stvar**: Novi kod koristi postojeći modul ili API i ne uvodi paralelni. | 1 + 2 | arhitektura po repou; zabranjeni importi u `standard/repos/<id>.toml` | all | — |
-| K2 | **Komentar je samo dokumentacija ili direktiva**: Komentar postoji samo kao dokumentacija javnog simbola ili modula, direktiva s razlogom ili `EXTERNAL(...)`. | 2 | `code-check comments` | py, ts, sol, sh | `factory.comments` |
-| K3 | **Nema komentara o zaobilasku ni TODO-a**: Ni u doc komentaru. Nedovršeno ide u issue. | 2 | `code-check comments` (rječnik ispod, engleski i hrvatski) | all | `factory.comments` |
-| K4 | **Greška se ne guta**: Nema praznog `except` ili `catch`, `except Exception: pass`, `.catch(() => {})` ni prazne rejection funkcije u `.then(_, () => {})`. Rukovatelj koji hvata svaku grešku i samo vraća stalnu vrijednost (`.catch(() => null)`, `catch { return null; }`, `except Exception: return None`) također guta grešku. | 2 | ruff `BLE001`, `S110`, `SIM105`; eslint `no-empty`, `@typescript-eslint/no-floating-promises`; AST provjera praznih callbacka u `code-check`, jer `no-empty` izuzima tijela funkcija | py, ts | `factory.checks.handlers` |
-| K5 | **Isključenje lintera samo uz ime pravila i razlog**: `eslint-disable-next-line <pravilo> -- razlog`, `biome-ignore <kategorija>: razlog`, `# noqa: KOD`, `@ts-expect-error razlog`. `@ts-ignore` i goli `# type: ignore` su zabranjeni. Isključenje ispravnosnog pravila traži `factory-allow`; isključenje provjere tipova (`@ts-expect-error`, `# type: ignore[kod]`, `# pyright: ignore[kod]`) je ispravnosno. Isključenje za cijelu datoteku (`@ts-nocheck`, `# mypy: ignore-errors` i ostale slabije `mypy:` postavke, `# pyright: basic` i `report*=false`) je kršenje i uz razlog. | 2 | eslint `@eslint-community/eslint-comments/require-description`, `@typescript-eslint/ban-ts-comment`; ruff `PGH003`, `PGH004`; razvrstavanje pravila u `standard/configs/rule-classes.toml` | py, ts | `factory.comments` |
-| K6 | **Strogi tipovi**: TypeScript `strict` i `noUncheckedIndexedAccess`; Python SDK i servisi s type hintovima i mypy. | 2 | `tsc --noEmit` sa `standard/configs/tsconfig.strict.json`; mypy | ts, py | — |
-| K7 | **Upozorenje je greška na novim redcima**: Linter se vrti s `--max-warnings 0`. | 2 | CI i `code-check` | ts, py | — |
-| K8 | **Bez mrtvog koda**: Nema neiskorištenih importa, varijabli ni exporta. | 2 | ruff `F401`, `F841`; `@typescript-eslint/no-unused-vars` = error; knip za tier A | ts, py | — |
-| K9 | **Bez lokalnih putanja i interne infrastrukture**: Isporučeni kod i docsi ne sadrže apsolutne putanje korisničkih direktorija, putanje u interni radni prostor ni imena internih repoa. Uzorci putanja su u provjeri, a interna imena u `standard/configs/internal-names.txt`. | 2 | `code-check paths` | all, md | `factory.checks.paths` |
-| K10 | **Ovisnosti idu jednim smjerom**: Nema importa unutar funkcija kao zaobilaska kružnih ovisnosti. | 1 + 2 | ruff `PLC0415` | py | — |
-| K11 | **Formatter je jedini izvor stila**: Stil određuje formatter u check načinu, a ne review. | 2 | `ruff format --check`, `prettier --check` ili formatter repoa, `forge fmt --check` | all | — |
-| K12 | **Promjena ponašanja ima test koji bez nje pada**: Test se piše prije izmjene i mora pasti iz pravog razloga. | 3 + 2 | skill `prove`; `code-check` upozorava na izmjenu u `src/` bez izmjene testova | all | `factory.checks.testdelta` |
-| K13 | **Datoteka ili funkcija ne raste preko praga**: 800 redaka po datoteci, 120 po funkciji. Pada samo rast. | 2 | `code-check size` | all | `factory.checks.size` |
-| K14 | **Granice modula su zapisane i provode se kroz graf importa**: Electron main, preload i renderer su odvojeni; Next.js serverski kod (baza, tajne, ključevi) nikad nije u klijentskoj komponenti (`import "server-only"`); javni API SDK-a ide samo kroz `index`. | 1 + 2 | dependency-cruiser (TS), import-linter (Python), granice u `standard/repos/<id>.toml` | ts, py | — |
-| K15 | **Stari i paralelni putovi se brišu**: Deprecated API ima datum uklanjanja; mrtvi exporti i nekorištene datoteke se brišu. | 1 + 2 | inventar putova po repou; knip ili vulture; `code-check` pada na `@deprecated` bez datuma | ts, py, sol | `factory.comments` |
-| K16 | **Ponovljena skripta postaje CLI**: Skripta koju agenti napišu u dvije sesije postaje CLI u `scripts/` skilla ili repoa. | 3 + 2 | rudar transkripata koji hrani skill `correct` | all | — |
-| K17 | **TypeScript bez izlaza iz sustava tipova**: Nema `as` (osim `as const`), `!`, `any` ni `console.*` u bibliotekama; `switch` je exhaustive; nema `no-unsafe-*` kršenja. | 2 | typescript-eslint `no-explicit-any`, `no-non-null-assertion`, `consistent-type-assertions`, `switch-exhaustiveness-check`, `no-unsafe-*`; eslint `no-console` | ts | — |
-| K18 | **Nema ručno usklađenih popisa**: Kad iste stvari žive na dva mjesta, jedno se generira iz drugog ili test pada kad se razlikuju. | 1 + 2 | `bin/standard gen --check`; `tests/test_standard.py` | all | — |
-| K19 | **Testovi se ne isključuju i ne slabe**: Dodani `.only`, `.skip`, `.fixme`, `.fail`, `xit`, `xfail`, `pytest.skip` i `vm.skip` padaju; uklonjena asercija daje upozorenje; novi test mora pasti na mutaciji koja kvari ponašanje. | 2 + 3 | `code-check tests`; skill `prove` | all | `factory.checks.tests_guard` |
+| K1 | **One way for the same thing**: New code uses the existing module or API and does not add a parallel one. | 1 + 2 | architecture per repo; forbidden imports in `standard/repos/<id>.toml` | all | — |
+| K2 | **A comment is only documentation or a directive**: A comment exists only as documentation of a public symbol or module, a directive with a reason, or `EXTERNAL(...)`. | 2 | `code-check comments` | py, ts, sol, sh | `factory.comments` |
+| K3 | **No workaround comments and no TODOs**: Not in a doc comment either. Unfinished work goes into an issue. | 2 | `code-check comments` (vocabulary below, English and Croatian) | all | `factory.comments` |
+| K4 | **An error is not swallowed**: No empty `except` or `catch`, no `except Exception: pass`, no `.catch(() => {})` and no empty rejection function in `.then(_, () => {})`. A handler that catches every error and only returns a constant value (`.catch(() => null)`, `catch { return null; }`, `except Exception: return None`) also swallows the error. | 2 | ruff `BLE001`, `S110`, `SIM105`; eslint `no-empty`, `@typescript-eslint/no-floating-promises`; an AST check for empty callbacks in `code-check`, because `no-empty` exempts function bodies | py, ts | `factory.checks.handlers` |
+| K5 | **A linter suppression only with the rule name and a reason**: `eslint-disable-next-line <rule> -- reason`, `biome-ignore <category>: reason`, `# noqa: CODE`, `@ts-expect-error reason`. `@ts-ignore` and a bare `# type: ignore` are forbidden. Suppressing a correctness rule requires `factory-allow`; suppressing type checking (`@ts-expect-error`, `# type: ignore[code]`, `# pyright: ignore[code]`) counts as correctness. A suppression for a whole file (`@ts-nocheck`, `# mypy: ignore-errors` and other weaker `mypy:` settings, `# pyright: basic` and `report*=false`) is a violation even with a reason. | 2 | eslint `@eslint-community/eslint-comments/require-description`, `@typescript-eslint/ban-ts-comment`; ruff `PGH003`, `PGH004`; rule classes in `standard/configs/rule-classes.toml` | py, ts | `factory.comments` |
+| K6 | **Strict types**: TypeScript `strict` and `noUncheckedIndexedAccess`; the Python SDK and services with type hints and mypy. | 2 | `tsc --noEmit` with `standard/configs/tsconfig.strict.json`; mypy | ts, py | — |
+| K7 | **A warning is an error on new lines**: The linter runs with `--max-warnings 0`. | 2 | CI and `code-check` | ts, py | — |
+| K8 | **No dead code**: No unused imports, variables or exports. | 2 | ruff `F401`, `F841`; `@typescript-eslint/no-unused-vars` = error; knip for tier A | ts, py | — |
+| K9 | **No local paths and no internal infrastructure**: Shipped code and docs do not contain absolute paths of user directories, paths into the internal workspace or names of internal repos. The path patterns are in the check, and the internal names are in `standard/configs/internal-names.txt`. | 2 | `code-check paths` | all, md | `factory.checks.paths` |
+| K10 | **Dependencies go one way**: No imports inside functions as a workaround for circular dependencies. | 1 + 2 | ruff `PLC0415` | py | — |
+| K11 | **The formatter is the only source of style**: The formatter in check mode decides style, not review. | 2 | `ruff format --check`, `prettier --check` or the repo's formatter, `forge fmt --check` | all | — |
+| K12 | **A change in behavior has a test that fails without it**: The test is written before the change and must fail for the right reason. | 3 + 2 | skill `prove`; `code-check` warns about a change in `src/` without a change to tests | all | `factory.checks.testdelta` |
+| K13 | **A file or function does not grow past the threshold**: 800 lines per file, 120 per function. Only growth fails. | 2 | `code-check size` | all | `factory.checks.size` |
+| K14 | **Module boundaries are written down and enforced through the import graph**: Electron main, preload and renderer are separate; Next.js server code (database, secrets, keys) is never in a client component (`import "server-only"`); the public API of an SDK goes only through `index`. | 1 + 2 | dependency-cruiser (TS), import-linter (Python), boundaries in `standard/repos/<id>.toml` | ts, py | — |
+| K15 | **Old and parallel paths are deleted**: A deprecated API has a removal date; dead exports and unused files are deleted. | 1 + 2 | an inventory of paths per repo; knip or vulture; `code-check` fails on `@deprecated` without a date | ts, py, sol | `factory.comments` |
+| K16 | **A repeated script becomes a CLI**: A script that agents write in two sessions becomes a CLI in the `scripts/` of a skill or repo. | 3 + 2 | a transcript miner that feeds the skill `correct` | all | — |
+| K17 | **TypeScript without escapes from the type system**: No `as` (except `as const`), `!`, `any` or `console.*` in libraries; `switch` is exhaustive; no `no-unsafe-*` violations. | 2 | typescript-eslint `no-explicit-any`, `no-non-null-assertion`, `consistent-type-assertions`, `switch-exhaustiveness-check`, `no-unsafe-*`; eslint `no-console` | ts | — |
+| K18 | **No lists kept in sync by hand**: When the same things live in two places, one is generated from the other, or a test fails when they differ. | 1 + 2 | `bin/standard gen --check`; `tests/test_standard.py` | all | — |
+| K19 | **Tests are not disabled and not weakened**: An added `.only`, `.skip`, `.fixme`, `.fail`, `xit`, `xfail`, `pytest.skip` or `vm.skip` fails; a removed assertion gives a warning; a new test must fail on a mutation that breaks the behavior. | 2 + 3 | `code-check tests`; skill `prove` | all | `factory.checks.tests_guard` |
 
-### K2: Komentar je samo dokumentacija ili direktiva
+### K2: A comment is only documentation or a directive
 
-Dopušteno na novim redcima:
-- Python docstring na javnom simbolu i module docstring;
-- Solidity NatSpec (`///` ili `/** */` s `@notice`, `@dev`, `@param`, `@return`, `@custom`) na ugovorima, funkcijama, eventima i greškama;
-- JSDoc/TSDoc neposredno iznad exportane deklaracije ili javnog člana exportane klase;
-- `/** … */` zaglavlje na vrhu TS ili Solidity datoteke;
-- `SPDX-License-Identifier`, shebang, direktive iz K5 i `factory-allow`.
+Allowed on new lines:
+- a Python docstring on a public symbol and a module docstring;
+- Solidity NatSpec (`///` or `/** */` with `@notice`, `@dev`, `@param`, `@return`, `@custom`) on contracts, functions, events and errors;
+- JSDoc/TSDoc directly above an exported declaration or a public member of an exported class;
+- a `/** … */` header at the top of a TS or Solidity file;
+- `SPDX-License-Identifier`, a shebang, the directives from K5 and `factory-allow`.
 
-Ograničenje izvana (ovisnost, platforma, vendor, protokol) smije stajati uz poziv samo u obliku `EXTERNAL(<ovisnost>): <pravilo> <url>`. Prednost ima kodiranje ograničenja tipom, assertom, testom ili lintom.
+A constraint from outside (a dependency, platform, vendor, protocol) may stand next to the call only in the form `EXTERNAL(<dependency>): <rule> <url>`. Encoding the constraint as a type, assert, test or lint is preferred.
 
-Nije dopušten nijedan drugi komentar u tijelu koda. Ako kod treba objašnjenje, mijenja se ime, struktura ili test. Ako je pozadina odluka, ide u zapis odluke. Kad nije jasno vrijedi li iznimka, komentar ne ostaje. JSDoc na lokalnoj ili privatnoj funkciji pada na novim redcima.
+No other comment is allowed in the body of code. If code needs an explanation, change the name, the structure or the test. If the background is a decision, it goes into a decision record. When it is not clear whether an exception applies, the comment does not stay. JSDoc on a local or private function fails on new lines.
 
-Riječi koje signaliziraju ograničenje (IMPORTANT, do not remove, ne diraj, pazi) padaju s porukom „kodiraj ograničenje (tip, assert, test, lint), pa obriši komentar".
+Words that signal a constraint (IMPORTANT, do not remove, ne diraj, pazi) fail with the message "encode the constraint (type, assert, test, lint), then delete the comment".
 
-Provjera čita kod tokenizerom po jeziku, a ne regexom po retku: string `"// not a comment"` ne pada. Uzastopni `//`, `///` i `#` redci su jedan komentar.
+The check reads code with a tokenizer per language, not with a regex per line: the string `"// not a comment"` does not fail. Consecutive `//`, `///` and `#` lines are one comment.
 
-### K3: Nema komentara o zaobilasku ni TODO-a
+### K3: No workaround comments and no TODOs
 
-Rječnik: `for now`, `TODO`, `FIXME`, `XXX`, `hack`, `kludge`, `band-aid`, `quick fix`, `workaround`, `temporary fix`, `temporary solution`, `temporary hack`, `temporary patch`, `temporarily disabled`, `temporarily skipped`, `temporarily hardcoded`, `privremeno rješenje`, `za sada`, `zasad`, `zaobilazak`.
+Vocabulary: `for now`, `TODO`, `FIXME`, `XXX`, `hack`, `kludge`, `band-aid`, `quick fix`, `workaround`, `temporary fix`, `temporary solution`, `temporary hack`, `temporary patch`, `temporarily disabled`, `temporarily skipped`, `temporarily hardcoded`, `privremeno rješenje`, `za sada`, `zasad`, `zaobilazak`.
 
-„temporary" i „temporarily" broje se samo u frazama iz rječnika. „no workaround", „without workaround" i „workaround mode" se ne broje. Rječnik se može izigrati („for now" → „currently"), pa se uzorak novih doc komentara pregledava tjedno; pregled prijavljuje, ali ne odlučuje.
+"temporary" and "temporarily" count only in phrases from the vocabulary. "no workaround", "without workaround" and "workaround mode" do not count. The vocabulary can be evaded ("for now" → "currently"), so a sample of new doc comments is reviewed weekly; the review reports, but does not decide.
 
-## Sigurnost (S)
+## Security (S)
 
-| ID | Pravilo | Razina | Provodi | Jezici | Provjera |
+| ID | Rule | Level | Enforced by | Languages | Check |
 |---|---|---|---|---|---|
-| S1 | **Nema tajni u diffu ni u povijesti**: Tajna ne ulazi u diff; povijest se jednom skenira, a izvještaj ne sadrži vrijednosti tajni. Konfiguracija ne preuzima upstream allowliste putanja (vendor, node_modules, lockfileovi), a repo `.gitleaksignore` se ne poštuje. | 2 | gitleaks (pinan, `standard/configs/gitleaks.toml` generiran iz njegove zadane konfiguracije) nad diffom u `code-check` i u CI-ju | all, md | `factory.checks.external` |
-| S2 | **Nova ovisnost je pinana i pregledana**: Lockfile, pinana verzija, audit bez high ili critical nalaza, pregledane install skripte. | 2 + 3 | `code-check deps` na promjeni lockfilea (`npm audit --omit=dev --audit-level=high`, osv-scanner ili pip-audit); skill `supply-chain-security` za svaku novu ovisnost | ts, py | — |
-| S3 | **GitHub Actions su pinane i minimalne**: Akcije su pinane na SHA, `permissions:` je minimalan, nema `pull_request_target` s checkoutom koda PR-a ni `${{ github.event.* }}` u `run:`. Workflow ili `action.yml` koji se ne može pročitati nije prolaz, a skripte u `run:` provjerava shellcheck. | 2 | zizmor `--strict-collection`, actionlint i shellcheck (pinani, `standard/configs/zizmor.yml`) | gha | `factory.checks.external` |
-| S4 | **Solidity bez novih high ili medium nalaza**: slither bez novih high ili medium nalaza, NatSpec na external i public funkcijama, CEI. | 2 + 3 | slither u CI-ju uz baseline; solhint (`standard/configs/.solhint.json`); skill `smart-contract-implementation` | sol | — |
-| S5 | **Bez opasnih poziva**: Nema `eval`, `exec` s ulazom, `shell=True` s varijablom, `child_process.exec` s interpolacijom, `pickle` nad nepovjerljivim ulazom ni SQL-a spojenog iz stringova. | 2 | ruff `S`; eslint `no-eval`, `no-implied-eval`, `no-new-func`, ograničen `child_process.exec` | py, ts | — |
-| S6 | **Diff na granici povjerenja prolazi sigurnosni pregled**: Auth, mostovi, egress, dozvole, novac i potpisi prolaze `blast-radius`, `security-audit` guidance i Codex Security `security-diff-scan` prije shipa. Ugovori i SDK major prije releasea idu u puni audit. | 2 + 3 | `code-check` označi diff koji dira `trust_boundary` iz `standard/repos/<id>.toml`; `prove` traži zapis audita | all | — |
-| S7 | **Kod repoa se izvršava samo u sandboxu**: Provjera koja izvršava kod repoa (konfiguracija lintera, testovi, repro nalaza) ide kroz sandbox koji čuva i mrežu i povjerljivost. Poznato ograničenje: ukupna memorija svih procesa i ukupno pisanje u putanje za pisanje nisu ograničeni, jer bi to tražilo cgroup preko korisničkog systemd busa; po procesu su ograničeni privatna memorija u heapu i privatnim mapiranjima (RLIMIT_DATA, zadano 4 GB), adresni prostor (RLIMIT_AS, zadano 4 GB; poziv koji pokreće code-check s gitleaksom traži 8 GB, jer pinani gitleaks rezervira oko 5,4 GB, a koristi oko 0,15 GB) i CPU vrijeme, a uz to broj procesa, veličina jedne datoteke, tmpfs i izlaz. RLIMIT_DATA ne broji stog (glavni stog, MAP_GROWSDOWN, mremap stoga) ni dijeljena mapiranja, pa je adresni prostor gornja granica memorije jednog procesa. | 1 + 2 | `bin/sandbox-run`; tier B koristi samo našu konfiguraciju | all | — |
+| S1 | **No secrets in the diff or in the history**: A secret does not enter the diff; the history is scanned once, and the report does not contain secret values. The configuration does not take over upstream path allowlists (vendor, node_modules, lockfiles), and a repo `.gitleaksignore` is not honored. | 2 | gitleaks (pinned, `standard/configs/gitleaks.toml` generated from its default configuration) over the diff in `code-check` and in CI | all, md | `factory.checks.external` |
+| S2 | **A new dependency is pinned and reviewed**: A lockfile, a pinned version, an audit without high or critical findings, reviewed install scripts. | 2 + 3 | `code-check deps` on a lockfile change (`npm audit --omit=dev --audit-level=high`, osv-scanner or pip-audit); skill `supply-chain-security` for each new dependency | ts, py | — |
+| S3 | **GitHub Actions are pinned and minimal**: Actions are pinned to a SHA, `permissions:` is minimal, no `pull_request_target` with a checkout of the PR's code and no `${{ github.event.* }}` in `run:`. A workflow or `action.yml` that cannot be read is not a pass, and shellcheck checks the scripts in `run:`. | 2 | zizmor `--strict-collection`, actionlint and shellcheck (pinned, `standard/configs/zizmor.yml`) | gha | `factory.checks.external` |
+| S4 | **Solidity without new high or medium findings**: slither without new high or medium findings, NatSpec on external and public functions, CEI. | 2 + 3 | slither in CI with a baseline; solhint (`standard/configs/.solhint.json`); skill `smart-contract-implementation` | sol | — |
+| S5 | **No dangerous calls**: No `eval`, no `exec` with input, no `shell=True` with a variable, no `child_process.exec` with interpolation, no `pickle` over untrusted input and no SQL concatenated from strings. | 2 | ruff `S`; eslint `no-eval`, `no-implied-eval`, `no-new-func`, restricted `child_process.exec` | py, ts | — |
+| S6 | **A diff at a trust boundary goes through a security review**: Auth, bridges, egress, permissions, money and signatures go through `blast-radius`, `security-audit` guidance and Codex Security `security-diff-scan` before shipping. Contracts and an SDK major version go into a full audit before release. | 2 + 3 | `code-check` flags a diff that touches `trust_boundary` from `standard/repos/<id>.toml`; `prove` asks for the audit record | all | — |
+| S7 | **Repo code runs only in a sandbox**: A check that runs repo code (linter configuration, tests, a repro of a finding) goes through a sandbox that protects both the network and confidentiality. Known limit: the total memory of all processes and the total writes into the writable paths are not limited, because that would require a cgroup over the user systemd bus; per process, the limits are private memory in the heap and in private mappings (RLIMIT_DATA, default 4 GB), address space (RLIMIT_AS, default 4 GB; the call that code-check runs with gitleaks asks for 8 GB, because the pinned gitleaks reserves about 5.4 GB and uses about 0.15 GB) and CPU time, plus the number of processes, the size of one file, tmpfs and output. RLIMIT_DATA does not count the stack (the main stack, MAP_GROWSDOWN, mremap of the stack) or shared mappings, so address space is the upper memory bound of one process. | 1 + 2 | `bin/sandbox-run`; tier B uses only our configuration | all | — |
 
-## Budžeti performansi (P)
+## Performance budgets (P)
 
-| ID | Proizvod | Početni budžet | Provodi |
+| ID | Product | Initial budget | Enforced by |
 |---|---|---|---|
-| P1 | Solidity ugovori | Plin po funkciji ne raste bez razloga. | `forge snapshot --check` u CI-ju; promjena snapshota traži razlog u commitu |
-| P2 | SDK paketi | Veličina paketa i vrijeme importa ne rastu više od 5 %. | `npm pack --dry-run`, vrijeme `require`, `python -X importtime` |
-| P3 | Web | LCP < 2,5 s, CLS < 0,1, INP < 200 ms na mobilnom profilu; JS po ruti ne raste bez razloga. | Lighthouse CI ili verify skill nad preview buildom |
-| P4 | Desktop aplikacija | Nema long taskova > 50 ms na glavnim putovima; okvir ≤ 16 ms pri skrolanju. | verify skill s CDP traceom |
-| P5 | API-ji i servisi | p95 po endpointu je zapisan i ne raste više od 20 %. | verify skill ili benchmark skripta |
+| P1 | Solidity contracts | Gas per function does not grow without a reason. | `forge snapshot --check` in CI; a snapshot change needs a reason in the commit |
+| P2 | SDK packages | Package size and import time do not grow by more than 5 %. | `npm pack --dry-run`, `require` time, `python -X importtime` |
+| P3 | Web | LCP < 2.5 s, CLS < 0.1, INP < 200 ms on the mobile profile; JS per route does not grow without a reason. | Lighthouse CI or a verify skill over a preview build |
+| P4 | Desktop application | No long tasks > 50 ms on the main paths; a frame ≤ 16 ms while scrolling. | a verify skill with a CDP trace |
+| P5 | APIs and services | p95 per endpoint is recorded and does not grow by more than 20 %. | a verify skill or a benchmark script |

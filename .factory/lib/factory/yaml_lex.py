@@ -1,15 +1,15 @@
-"""YAML lexer za provjeru komentara (K3): rasponi `#` komentara izvan stringova i block scalara.
+"""YAML lexer for the comment check (K3): spans of `#` comments outside strings and block scalars.
 
-`#` je komentar na početku retka ili s razmakom ispred, pa `url#sidro` nije komentar. Lexer jednim prolazom pamti
-smije li na trenutnom mjestu početi čvor: na početku retka, iza `---`, `: `, `- ` i `? ` na početku retka, iza svojstva
-čvora (`&sidro`, `!tag`), te iza `[`, `{`, `,` i `:` unutar flow kolekcije. Samo tamo navodnik otvara string, `[` i `{`
-flow kolekciju, a `|` ili `>` block scalar; drugi znak tamo otvara plain scalar, pa su `don't` i `a, 'b` tekst.
-Redak uvučen dublje od roditelja otvorenog plain scalara nastavlja taj scalar i nije početak čvora; komentar, `: `,
-`,` i kraj flow kolekcije zatvaraju plain scalar. Navodnici (`'` s `''` unutra, `"` s `\\` escapeom) prelaze retke.
-Block scalar (indikator uvlake i chompinga u bilo kojem redu) traje dok je redak prazan ili uvučen barem do uvlake
-sadržaja; prvi neprazni redak manje uvlake ga zatvara, a komentar u zaglavlju bloka ostaje komentar. Navodnik bez
-kraja je MeasureError, jer bi komentari iza njega ostali neprovjereni.
-"""
+`#` is a comment at line start or after a space, so `url#anchor` is not a comment. In one pass the lexer tracks
+whether a node may start here: at line start, after `---`, after `: `, `- ` and `? ` at line start, after a node
+property (`&anchor`, `!tag`), and after `[`, `{`, `,` and `:` inside a flow collection. Only there a quote opens a
+string, `[` and `{` a flow collection, and `|` or `>` a block scalar; any other character opens a plain scalar, so
+`don't` and `a, 'b` are text. A line indented deeper than the parent of an open plain scalar continues that scalar
+and is not a node start; a comment, `: `, `,` and the end of a flow collection close the plain scalar. Quotes (`'`
+with `''` inside, `"` with `\\` escape) span lines. A block scalar (indentation and chomping indicators in any order)
+lasts while a line is empty or indented at least to the content indentation; the first non-empty line with less
+indentation closes it; a comment in the block header stays a comment. An unclosed quote is a MeasureError, because
+the comments after it would stay unchecked."""
 from __future__ import annotations
 
 import re
@@ -25,7 +25,7 @@ WORD = re.compile(r"[^ \t\r\n]*")
 
 
 def comments(text: str) -> list[tuple[int, int]]:
-    """Rasponi [start, stop) `#` komentara, stop je kraj retka; navodnik bez kraja je MeasureError."""
+    """Spans [start, stop) of `#` comments, stop is the end of the line; an unclosed quote is a MeasureError."""
     return _Lexer(text).run()
 
 
@@ -59,7 +59,7 @@ class _Lexer:
             else:
                 i = self._token(i, ch)
         if self.quote:
-            raise MeasureError(f"YAML string {self.quote} bez kraja")
+            raise MeasureError(f"YAML string {self.quote} without an end")
         return self.raw
 
     def _line(self, start: int) -> int:

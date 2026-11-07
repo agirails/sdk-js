@@ -1,7 +1,7 @@
-"""Raspored tvornice: korijen i putanje unutar njega. Jedini izvor korijena i rasporeda.
+"""Factory layout: the root and the paths inside it. The only source of the root and the layout.
 
-Korijen je izvor standarda ili `.factory/` ciljnog repoa. `standard sync` kopira datoteke na iste relativne putanje, pa kopija
-u `.factory/` radi kao izvor bez ijedne druge putanje. Alati su u `.tools/` ispod korijena i ne kopiraju se.
+The root is the standard's source or the target repo's `.factory/`. `standard sync` copies files to the same paths, so
+the copy in `.factory/` works as the source without any other path. Tools are in `.tools/` under the root, not copied.
 """
 from __future__ import annotations
 
@@ -26,5 +26,5 @@ SYNC_DIR = ".factory"
 
 
 def rel(path: Path) -> str:
-    """Putanja relativna prema korijenu, u obliku koji koristi i kopija u `.factory/`."""
+    """Path relative to the root, in the form the copy in `.factory/` also uses."""
     return Path(path).relative_to(ROOT).as_posix()
