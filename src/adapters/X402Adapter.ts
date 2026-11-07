@@ -56,7 +56,7 @@ import {
   isPaymasterGateError,
 } from '../errors/X402Errors';
 import { sdkLogger } from '../utils/Logger';
-
+import { ensureNativeWebCrypto } from '../utils/webCrypto';
 // ============================================================================
 // Types
 // ============================================================================
@@ -249,7 +249,7 @@ export class X402Adapter implements IAdapter {
           'Both EOAWalletProvider and AutoWalletProvider implement this in @agirails/sdk@3.3.0+.'
       );
     }
-
+    ensureNativeWebCrypto();
     const signer = this.walletProviderToClientEvmSigner(config.walletProvider);
     const scheme = new ExactEvmScheme(signer);
     // I1: compute and cache allowed network list once — selectRequirements
