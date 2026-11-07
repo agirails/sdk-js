@@ -38,6 +38,7 @@ export type {
   ReputationReporterConfig,
   ReportSettlementParams,
   ReportDisputeParams,
+  ReportDisputeSplitParams,
   ReportResult,
 } from './ReputationReporter';
 

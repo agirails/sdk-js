@@ -18,6 +18,9 @@
  * @module wallet/aa/TransactionBatcher
  */
 
+import { kernelCreationInterface, kernelCreationArguments } from '../../protocol/kernelCreation';
+
+
 import { ethers } from 'ethers';
 import { SmartWalletCall } from './constants';
 import { ServiceDescriptor } from '../../types/agent';
@@ -30,10 +33,8 @@ const ERC20_APPROVE_ABI = [
   'function approve(address spender, uint256 amount)',
 ];
 
-const ACTP_KERNEL_ABI = [
-  'function createTransaction(address provider, address requester, uint256 amount, uint256 deadline, uint256 disputeWindow, bytes32 serviceHash, uint256 agentId, uint256 requesterAgentId)',
-  'function linkEscrow(bytes32 txId, address escrowVault, bytes32 escrowId)',
-];
+/** bytes32(0) — default agreementHash ("no auto AI ruling"). */
+const ZERO_BYTES32 = '0x' + '00'.repeat(32);
 
 // ============================================================================
 // Types
@@ -52,6 +53,11 @@ export interface ACTPBatchParams {
   disputeWindow: number;
   /** Service hash (bytes32) */
   serviceHash: string;
+  /**
+   * Canonical v2 agreementHash (bytes32). Optional; defaults to bytes32(0)
+   * ("no auto AI ruling"). Encoded as the 7th createTransaction arg.
+   */
+  agreementHash?: string;
   /** ERC-8004 agent ID (0 if none) */
   agentId: string;
   /** AIP-14: Requester's ERC-8004 agent ID (0 if none) */
@@ -116,7 +122,7 @@ export function buildACTPPayBatch(params: ACTPBatchParams): ACTPBatchResult {
   );
 
   const erc20Iface = new ethers.Interface(ERC20_APPROVE_ABI);
-  const kernelIface = new ethers.Interface(ACTP_KERNEL_ABI);
+  const kernelIface = kernelCreationInterface(params.contracts.actpKernel);
 
   // Call 1: USDC.approve(escrowVault, amount)
   const approveData = erc20Iface.encodeFunctionData('approve', [
@@ -124,17 +130,18 @@ export function buildACTPPayBatch(params: ACTPBatchParams): ACTPBatchResult {
     amount,
   ]);
 
-  // Call 2: ACTPKernel.createTransaction(...)
-  const createTxData = kernelIface.encodeFunctionData('createTransaction', [
+  // Call 2: ACTPKernel.createTransaction(...) — v2 9-arg (agreementHash 7th)
+  const createTxData = kernelIface.encodeFunctionData('createTransaction', kernelCreationArguments(params.contracts.actpKernel, [
     params.provider,
     params.requester,
     amount,
     params.deadline,
     params.disputeWindow,
     params.serviceHash,
+    params.agreementHash || ZERO_BYTES32,
     BigInt(params.agentId || '0'),
     BigInt(params.requesterAgentId || '0'),
-  ]);
+  ], params.agreementHash || ZERO_BYTES32));
 
   // Call 3: ACTPKernel.linkEscrow(txId, escrowVault, escrowId)
   // escrowId = txId (ACTP standard)

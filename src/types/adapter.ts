@@ -172,6 +172,33 @@ export interface UnifiedPayParams {
 
   /** Extra HTTP headers for x402 paid requests. Ignored by ACTP adapters. */
   httpHeaders?: Record<string, string>;
+
+  /**
+   * OPTIONAL accepted-quote binding (F44 / FR018-002).
+   *
+   * When a caller has ALREADY accepted specific terms in a prior `/quote` (e.g.
+   * the dispute EvaluatorClient's STEP-1 402 quote), it passes those terms here.
+   * The x402 adapter then rejects any second-leg 402 payment requirement whose
+   * amount / asset / payTo / network DEVIATES from the accepted quote — in
+   * ADDITION to the global `maxAmountPerTx` / network / asset caps. This closes
+   * the quote→pay rebinding gap where a malicious evaluator re-prices between
+   * `/quote` and `/evaluate`.
+   *
+   * Only the DEFINED fields are enforced; omit the whole object for ordinary
+   * single-shot x402 payments (unchanged behavior, only the global cap applies).
+   */
+  acceptedQuote?: {
+    /** Exact amount in token base units (decimal string). */
+    amount?: string;
+    /** Token contract address the quote priced in. */
+    asset?: string;
+    /** Recipient the quote pays. */
+    payTo?: string;
+    /** CAIP-2 network of the quote (e.g. `eip155:8453`). */
+    network?: string;
+    /** Quote nonce (advisory — carried for traceability). */
+    nonce?: string;
+  };
 }
 
 /**
@@ -207,6 +234,15 @@ export const UnifiedPayParamsSchema = z.object({
   httpMethod: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']).optional(),
   httpBody: z.union([z.string(), z.custom<Uint8Array>((v) => ArrayBuffer.isView(v) && !(v instanceof DataView))]).optional(),
   httpHeaders: z.record(z.string()).optional(),
+  acceptedQuote: z
+    .object({
+      amount: z.string().optional(),
+      asset: z.string().optional(),
+      payTo: z.string().optional(),
+      network: z.string().optional(),
+      nonce: z.string().optional(),
+    })
+    .optional(),
 });
 
 // ============================================================================

@@ -1,0 +1,188 @@
+[
+  {
+    "type": "function",
+    "name": "assertTruth",
+    "inputs": [
+      {
+        "name": "claim",
+        "type": "bytes",
+        "internalType": "bytes"
+      },
+      {
+        "name": "asserter",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "callbackRecipient",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "escalationManager",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "liveness",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "currency",
+        "type": "address",
+        "internalType": "contract IERC20"
+      },
+      {
+        "name": "bond",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "identifier",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "domainId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "assertionId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "burnedBondPercentage",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "defaultCurrency",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract IERC20"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "defaultIdentifier",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "disputeAssertion",
+    "inputs": [
+      {
+        "name": "assertionId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "disputer",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "getAssertionResult",
+    "inputs": [
+      {
+        "name": "assertionId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getMinimumBond",
+    "inputs": [
+      {
+        "name": "currency",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "settleAndGetAssertionResult",
+    "inputs": [
+      {
+        "name": "assertionId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "settleAssertion",
+    "inputs": [
+      {
+        "name": "assertionId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  }
+]

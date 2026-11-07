@@ -35,18 +35,32 @@ export function usingPublicRpc(network: string): boolean {
   return !process.env.BASE_SEPOLIA_RPC; // testnet / base-sepolia / default
 }
 
-// Shared AA keys for out-of-the-box UX. These are PUBLIC keys — equivalent
-// to Firebase web apiKey or a Stripe publishable key. The actual security
-// boundary is enforced server-side by paymaster policies on the provider
-// dashboards: gas sponsorship is restricted to AgentRegistry + X402Relay
-// contract addresses, so a third party reusing these keys cannot drain
-// the paymaster balance against arbitrary destinations.
+// Shared Coinbase CDP key for out-of-the-box UX. This is a PUBLIC key —
+// equivalent to a Firebase web apiKey or a Stripe publishable key. The
+// security boundary is enforced server-side: the CDP paymaster policy
+// restricts gas sponsorship to an allowlist of ACTP contract addresses,
+// so a third party reusing this key cannot drain the paymaster balance
+// against arbitrary destinations.
 //
-// Heavy users should still set CDP_API_KEY / PIMLICO_API_KEY env vars to
-// route through their own account for billing isolation and rate-limit
-// headroom.
+// Pimlico (backup) is OPT-IN: unlike CDP, Pimlico has no native per-contract
+// allowlist (only sponsorship policies referenced per-request via
+// sponsorshipPolicyId, which a caller can simply omit), so shipping a shared
+// Pimlico key would let anyone spend the account balance on arbitrary
+// UserOps. Set PIMLICO_API_KEY (and PIMLICO_SPONSORSHIP_POLICY_ID to scope
+// spend) to enable the Pimlico backup.
+//
+// Heavy users should still set CDP_API_KEY to route through their own
+// account for billing isolation and rate-limit headroom.
 const CDP_CLIENT_KEY = process.env.CDP_API_KEY?.trim() || '2txciN85t41erCjveqgNnXYyHRcoo5xP';
-const PIMLICO_KEY = process.env.PIMLICO_API_KEY?.trim() || 'pim_YiHmeAijzTPUvo1UMmXUiN';
+const PIMLICO_KEY = process.env.PIMLICO_API_KEY?.trim() || undefined;
+
+/**
+ * Pimlico sponsorship policy applied to pm_getPaymaster* calls (Pimlico
+ * endpoints only). Scopes spend to the policy's chain allowlist and
+ * per-operation cap. No default: the policy id is account-specific.
+ */
+export const PIMLICO_SPONSORSHIP_POLICY_ID =
+  process.env.PIMLICO_SPONSORSHIP_POLICY_ID?.trim() || undefined;
 
 function resolveOverrideUrl(url?: string): string | undefined {
   const trimmed = url?.trim();
@@ -62,6 +76,7 @@ function resolveCoinbaseRpcUrl(networkPath: string, override?: string): string |
 function resolvePimlicoRpcUrl(chainId: number, override?: string): string | undefined {
   const overrideUrl = resolveOverrideUrl(override);
   if (overrideUrl) return overrideUrl;
+  if (!PIMLICO_KEY) return undefined; // opt-in — see key comment above
   return `https://api.pimlico.io/v2/${chainId}/rpc?apikey=${PIMLICO_KEY}`;
 }
 
@@ -91,6 +106,12 @@ export interface NetworkConfig {
      */
     x402Relay?: string;
     erc8004IdentityRegistry?: string; // ERC-8004 Identity Registry (canonical CREATE2)
+    // AIP-14b three-tier dispute system (P2-2). Undefined until the dispute
+    // stack is deployed: testnet lands in Phase 6, mainnet later. Keys match
+    // the Python SDK ContractAddresses (parity).
+    bondEscalation?: string; // BondEscalation (Tier-1 bonded escalation + AIRuling verifier)
+    compositeMediator?: string; // CompositeMediator (canonical 0/1/2 ruling → fund routing)
+    umaOptimisticOracleV3?: string; // UMA OptimisticOracleV3 (Tier-2 optimistic oracle)
   };
   eas: {
     deliverySchemaUID: string; // AIP-4 delivery proof schema
@@ -148,19 +169,34 @@ export const BASE_SEPOLIA: NetworkConfig = {
   rpcUrl: BASE_SEPOLIA_RPC_URL,
   blockExplorer: 'https://sepolia.basescan.org',
   contracts: {
-    // Redeployed 2026-05-19 alongside mainnet to align ABI shape
+    // Redeployed 2026-06-24: F-6 recoverStalledInProgress + AIP-14b dispute audit (recoveryGrace 1h)
     // (INV-30 disputeBondBpsLocked + AIP-14 / d9c6e8e requesterPenaltyBpsLocked).
     // See agirails/actp-kernel deployments/base-sepolia.json for details.
-    actpKernel: '0x9d25A874f046185d9237Cd4954C88D2B74B0021b',
-    escrowVault: '0x7dF07327090efcA73DCBa70414aA3131Fc6d2efB',
+    // AIP-14c kernel-v2 redeploy — 2026-07-13 (block 44093538). kernelVersion
+    // 0x6237ef5c… (ACTP_KERNEL_V2_AIP14C_REV2); runtime codehash 0xf42003e6… (== audited
+    // candidate). Supersedes the F-6 kernel 0xD8f7829c… (which is pre-v2: no resultHash/
+    // agreementHash, pre-D7 BondEscalation). recoveryGrace 3600s.
+    actpKernel: '0xE8ba4133CC43bAb48c9c71bF82243e0b15915389',
+    escrowVault: '0x9d3CbD2c630E390F9179DAfE02Dd5dAd80B3A05B',
     usdc: '0x444b4e1A65949AB2ac75979D5d0166Eb7A248Ccb', // MockUSDC (unchanged)
     eas: '0x4200000000000000000000000000000000000021',
     easSchemaRegistry: '0x4200000000000000000000000000000000000020',
-    agentRegistry: '0xD91F9aBfBf60b4a2Fd5317ab0cDF3F44faB5D656',
+    // NEW AgentRegistry bound to kernel-v2. Scheduled via scheduleAgentRegistryUpdate;
+    // becomes the kernel's active registry only after executeAgentRegistryUpdate (2-day
+    // timelock, ~2026-07-15). Until then the kernel's agentRegistry is address(0).
+    agentRegistry: '0x1bb1D4B0b84801FF8597d3e7988E00802252d962',
     identityRegistry: '0xce9749c768b425fab0daa0331047d1340ec99a88', // unchanged (no kernel ref)
-    archiveTreasury: '0x2eE4f7bE289fc9EFC2F9f2D6E53e50abDF23A3eb',
+    archiveTreasury: '0x415Ca522e1DfF9933ab5Eb7a8569B1879093324D', // v2, bound to kernel-v2
     x402Relay: '0x110b25bb3d45c40dfcf34bb451aa7069b2a1cb3b', // deprecated; not redeployed
     erc8004IdentityRegistry: '0x8004A818BFB912233c491871b3d84c89A494BD9e',
+    // AIP-14c dispute system (D7) — deployed 2026-07-13 against kernel-v2 above (block
+    // 44093572). BondEscalation runtime codehash 0x9389b155… (Sepolia pin). Tier-2 uses a
+    // testnet MockOOV3 0x64C81e2F… (canonical UMA OOV3 absent on Sepolia, G2). Mediator
+    // resolver active after the 2-day approveMediator timelock (~2026-07-15 15:10 UTC).
+    // Supersedes the pre-D7 stack (bond 0x62d5417B…, mediator 0xf8095f8d…).
+    bondEscalation: '0x84CB23F1bCebC286270EE5E62A19a64686D3Ca0A',
+    compositeMediator: '0x45a440a34303AEe597672C1D47d1ce83BEC8aD1C',
+    umaOptimisticOracleV3: '0x64C81e2F8a8f72D20AF24a8d9b3A22A93D80AC6A', // testnet MockOOV3 (Tier-2 double)
   },
   eas: {
     deliverySchemaUID: '0x1b0ebdf0bd20c28ec9d5362571ce8715a55f46e81c3de2f9b0d8e1b95fb5ffce'
@@ -169,7 +205,7 @@ export const BASE_SEPOLIA: NetworkConfig = {
     maxFeePerGas: ethers.parseUnits('2', 'gwei'),
     maxPriorityFeePerGas: ethers.parseUnits('1', 'gwei')
   },
-  actpKernelDeploymentBlock: 41725686, // 2026-05-19 V4 redeploy
+  actpKernelDeploymentBlock: 44093538, // 2026-07-13 AIP-14c kernel-v2 redeploy
   // AIP-12: Account Abstraction
   aa: {
     entryPoint: '0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789',
@@ -268,7 +304,10 @@ export function getNetwork(network: string): NetworkConfig {
       identityRegistry: config.contracts.identityRegistry,
       archiveTreasury: config.contracts.archiveTreasury,
       x402Relay: config.contracts.x402Relay,
-      erc8004IdentityRegistry: config.contracts.erc8004IdentityRegistry
+      erc8004IdentityRegistry: config.contracts.erc8004IdentityRegistry,
+      bondEscalation: config.contracts.bondEscalation,
+      compositeMediator: config.contracts.compositeMediator,
+      umaOptimisticOracleV3: config.contracts.umaOptimisticOracleV3
     },
     eas: {
       deliverySchemaUID: config.eas.deliverySchemaUID,

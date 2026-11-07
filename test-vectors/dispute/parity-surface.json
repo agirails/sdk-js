@@ -1,0 +1,716 @@
+{
+  "_comment": "PRD P2-10 CAPSTONE \u2014 the cross-SDK dispute PUBLIC-SURFACE manifest. This is the single source of truth for the META parity test: it enumerates EVERY intentional public symbol of the AIP-14b dispute clients and, for each, the TS name + Py name + kind + per-language required arity. BOTH the TS jest META test (sdk-js/tests/dispute-parity.test.ts) and the Py pytest META test (python-sdk-v2/tests/test_cross_sdk/test_dispute_parity.py) load THIS file and assert: (1) every symbol exists in their own SDK with the declared name + required arity, and (2) no symbol is present in only one language (each row carries BOTH a `ts` and a `py` name \u2014 a missing twin is a hard failure). `arity` is the count of REQUIRED logical parameters (excludes `self`/`cls`, excludes optional/default/rest params); a symbol may accept additional OPTIONAL params in either SDK without breaking parity. Framework-inherited members (pydantic model_*, IntEnum/str/dict/Exception builtins) are intentionally EXCLUDED \u2014 only the authored dispute API is listed. Any new public dispute symbol MUST be added here with both twins, or the META test fails. A class may carry an `accessors` array for getter/property members (TS `get x()` / Py `@property`): these are validated via their accessor DESCRIPTOR (TS `Object.getOwnPropertyDescriptor(proto, name).get` is a function; Py `inspect.getattr_static(cls, name)` is a `property`), NOT via prototype value access \u2014 reading a getter off the prototype would trigger it (and throw on an unconfigured facade). Per-SDK construction idiom is intentionally EXCLUDED: TS clients take a single config object + signer; Py takes positional contract/account/w3 and adds `from_config` classmethods, `encode_calldata`, and (EvaluatorClient) a `base_url` property \u2014 these are the standard ethers-vs-web3 idiom, consistently applied, so their absence from a row is NOT a gap. The 4 TS-only evaluate WIRE-PARSE shapes (SignedEvaluateResponse, ProposeDirectlyEvaluateResponse, EvaluateResponse, EvaluatorRuling) are NO LONGER on the public package entrypoint (de-exported from sdk-js/src/index.ts) precisely BECAUSE Py has no twin (it parses the evaluate response as a raw dict); they are listed under `absent` to lock that de-export.",
+  "enums": [
+    {
+      "ts": "Ruling",
+      "py": "Ruling",
+      "kind": "enum",
+      "members": {
+        "PROVIDER_WINS": 0,
+        "REQUESTER_WINS": 1,
+        "SPLIT": 2
+      }
+    },
+    {
+      "ts": "Tier",
+      "py": "Tier",
+      "kind": "enum",
+      "members": {
+        "TIER0": 0,
+        "TIER1": 1,
+        "TIER2": 2
+      }
+    }
+  ],
+  "constants": [
+    {
+      "ts": "ESCALATION_INITIAL_BPS",
+      "py": "ESCALATION_INITIAL_BPS",
+      "kind": "const"
+    },
+    {
+      "ts": "MIN_ESCALATION_BOND",
+      "py": "MIN_ESCALATION_BOND",
+      "kind": "const"
+    },
+    {
+      "ts": "MAX_ESCALATION_BOND",
+      "py": "MAX_ESCALATION_BOND",
+      "kind": "const"
+    },
+    {
+      "ts": "ESCALATION_MULTIPLIER",
+      "py": "ESCALATION_MULTIPLIER",
+      "kind": "const"
+    },
+    {
+      "ts": "BPS_DENOMINATOR",
+      "py": "BPS_DENOMINATOR",
+      "kind": "const"
+    },
+    {
+      "ts": "UMA_BOND",
+      "py": "UMA_BOND",
+      "kind": "const"
+    },
+    {
+      "ts": "SELF_DISPUTE_TOTAL",
+      "py": "SELF_DISPUTE_TOTAL",
+      "kind": "const"
+    },
+    {
+      "ts": "SELF_DISPUTE_RECOVER",
+      "py": "SELF_DISPUTE_RECOVER",
+      "kind": "const"
+    },
+    {
+      "ts": "SELF_DISPUTE_LOSS",
+      "py": "SELF_DISPUTE_LOSS",
+      "kind": "const"
+    },
+    {
+      "ts": "EVIDENCE_BUNDLE_SCHEMA_VERSION",
+      "py": "EVIDENCE_BUNDLE_SCHEMA_VERSION",
+      "kind": "const"
+    },
+    {
+      "ts": "SUPPORTED_BUNDLE_MAJOR",
+      "py": "SUPPORTED_BUNDLE_MAJOR",
+      "kind": "const"
+    },
+    {
+      "ts": "MAX_BUNDLE_TOKENS",
+      "py": "MAX_BUNDLE_TOKENS",
+      "kind": "const"
+    },
+    {
+      "ts": "DOMAIN_TYPEHASH",
+      "py": "DOMAIN_TYPEHASH",
+      "kind": "const"
+    },
+    {
+      "ts": "RULING_TYPEHASH",
+      "py": "RULING_TYPEHASH",
+      "kind": "const"
+    },
+    {
+      "ts": "DISPUTE_EVALUATOR_DOMAIN_NAME",
+      "py": "DISPUTE_EVALUATOR_DOMAIN_NAME",
+      "kind": "const"
+    },
+    {
+      "ts": "DISPUTE_EVALUATOR_DOMAIN_VERSION",
+      "py": "DISPUTE_EVALUATOR_DOMAIN_VERSION",
+      "kind": "const"
+    }
+  ],
+  "functions": [
+    {
+      "ts": "signRuling",
+      "py": "sign_ruling",
+      "arity": 4
+    },
+    {
+      "ts": "recoverRulingSigner",
+      "py": "recover_ruling_signer",
+      "arity": 4
+    },
+    {
+      "ts": "computeRulingDigest",
+      "py": "compute_ruling_digest",
+      "arity": 3
+    },
+    {
+      "ts": "computeRulingDomainSeparator",
+      "py": "compute_ruling_domain_separator",
+      "arity": 2
+    },
+    {
+      "ts": "computeRulingStructHash",
+      "py": "compute_ruling_struct_hash",
+      "arity": 1
+    },
+    {
+      "ts": "disputeEvaluatorDomain",
+      "py": "dispute_evaluator_domain",
+      "arity": 2
+    },
+    {
+      "ts": "validateBundle",
+      "py": "validate_bundle",
+      "arity": 1
+    },
+    {
+      "ts": "assertSupportedVersion",
+      "py": "assert_supported_version",
+      "arity": 1
+    },
+    {
+      "ts": "serializeBundle",
+      "py": "serialize_bundle",
+      "arity": 1
+    },
+    {
+      "ts": "serializeBundleToString",
+      "py": "serialize_bundle_to_string",
+      "arity": 1
+    },
+    {
+      "ts": "bundleHash",
+      "py": "bundle_hash",
+      "tsArity": 2,
+      "pyArity": 1,
+      "_arityNote": "Both take 1 required arg (the bundle) + an optional skip-token-check control. TS counts the optional `options?` object in Function.length (=2); Py's `skip_token_check=False` default makes it non-required (=1). Same logical contract."
+    },
+    {
+      "ts": "computeBundleHash",
+      "py": "compute_bundle_hash",
+      "tsArity": 2,
+      "pyArity": 1,
+      "_arityNote": "Alias of bundleHash \u2014 same arity split as bundleHash."
+    },
+    {
+      "ts": "countBundleTokens",
+      "py": "count_bundle_tokens",
+      "arity": 1
+    },
+    {
+      "ts": "enforceTokenCap",
+      "py": "enforce_token_cap",
+      "arity": 1
+    },
+    {
+      "ts": "setBundleTokenizer",
+      "py": "set_bundle_tokenizer",
+      "arity": 1
+    },
+    {
+      "ts": "pinEvidenceBundle",
+      "py": "pin_evidence_bundle",
+      "arity": 2
+    },
+    {
+      "ts": "decodeDisputeSplitRecorded",
+      "py": "decode_dispute_split_recorded",
+      "arity": 1
+    },
+    {
+      "ts": "decodeResolutionProof",
+      "py": "decode_resolution_proof",
+      "arity": 2
+    },
+    {
+      "ts": "computeSplitRate",
+      "py": "compute_split_rate",
+      "arity": 3
+    },
+    {
+      "ts": "isSplitKind",
+      "py": "is_split_kind",
+      "arity": 1
+    },
+    {
+      "ts": "outcomeFromSplitRecorded",
+      "py": "outcome_from_split_recorded",
+      "arity": 1
+    },
+    {
+      "ts": "verifyRulingSignatures",
+      "py": "verify_ruling_signatures",
+      "tsArity": 3,
+      "pyArity": 6,
+      "_arityNote": "Idiomatic representation differs (parity preserved): TS bundles the 4 required config fields (chainId, verifyingContract, fixedEvaluators, rotatingPool) in one trailing `opts` object \u2192 3 positional; Py exposes them as 4 required keyword-only args \u2192 2 positional + 4 keyword-only = 6 required. Same logical signature; each SDK is checked against its own column."
+    },
+    {
+      "ts": "selectThirdEvaluator",
+      "py": "select_third_evaluator",
+      "arity": 2
+    },
+    {
+      "ts": "decodeDisputeSubState",
+      "py": "decode_dispute_sub_state",
+      "arity": 1,
+      "_note": "PRD P2-9 \u00a79 facade sub-state decode \u2014 'the single decode both SDKs MUST agree on byte-for-byte', anchored to dispute-client-status-vectors.json. Standalone pure function exported alongside the DisputeClient facade."
+    },
+    {
+      "ts": "receiptAuthorizationTypedData",
+      "py": "receipt_authorization_typed_data",
+      "arity": 1
+    },
+    {
+      "ts": "authorizePaymentReceipt",
+      "py": "authorize_payment_receipt",
+      "arity": 3
+    },
+    {
+      "ts": "postPaidEvaluation",
+      "py": "post_paid_evaluation",
+      "arity": 2
+    }
+  ],
+  "classes": [
+    {
+      "ts": "BondEscalationClient",
+      "py": "BondEscalationClient",
+      "staticMethods": [
+        {
+          "ts": "quoteInitialBond",
+          "py": "quote_initial_bond",
+          "arity": 1
+        },
+        {
+          "ts": "quoteEscalationBond",
+          "py": "quote_escalation_bond",
+          "arity": 1
+        },
+        {
+          "ts": "decodeDisputeState",
+          "py": "decode_dispute_state",
+          "arity": 2
+        }
+      ],
+      "methods": [
+        {
+          "ts": "getAddress",
+          "py": "get_address",
+          "arity": 0
+        },
+        {
+          "ts": "getContract",
+          "py": "get_contract",
+          "arity": 0
+        },
+        {
+          "ts": "getDisputeState",
+          "py": "get_dispute_state",
+          "arity": 1
+        },
+        {
+          "ts": "getTier1Refundable",
+          "py": "get_tier1_refundable",
+          "arity": 1
+        },
+        {
+          "ts": "openDispute",
+          "py": "open_dispute",
+          "arity": 1
+        },
+        {
+          "ts": "submitAIRuling",
+          "py": "submit_ai_ruling",
+          "arity": 4
+        },
+        {
+          "ts": "proposeDirectly",
+          "py": "propose_directly",
+          "arity": 3
+        },
+        {
+          "ts": "challenge",
+          "py": "challenge",
+          "arity": 3
+        },
+        {
+          "ts": "finalize",
+          "py": "finalize",
+          "arity": 1
+        },
+        {
+          "ts": "escalateToUMA",
+          "py": "escalate_to_uma",
+          "arity": 3
+        },
+        {
+          "ts": "claimEscalationRefund",
+          "py": "claim_escalation_refund",
+          "arity": 1
+        },
+        {
+          "ts": "syncExternalResolution",
+          "py": "sync_external_resolution",
+          "arity": 1
+        },
+        {
+          "ts": "forceResolveStale",
+          "py": "force_resolve_stale",
+          "arity": 1
+        }
+      ]
+    },
+    {
+      "ts": "CompositeMediator",
+      "py": "CompositeMediator",
+      "staticMethods": [],
+      "methods": [
+        {
+          "ts": "getAddress",
+          "py": "get_address",
+          "arity": 0
+        },
+        {
+          "ts": "getContract",
+          "py": "get_contract",
+          "arity": 0
+        },
+        {
+          "ts": "getSplitRecordedEvents",
+          "py": "get_split_recorded_events",
+          "tsArity": 3,
+          "pyArity": 0,
+          "_arityNote": "All query params are optional in both SDKs (zero required). TS bundles them as 3 optional positional params (filter?, fromBlock?, toBlock?) counted in Function.length (=3); Py exposes 5 keyword-args all defaulted (=0 required). Same observational query surface."
+        },
+        {
+          "ts": "onDisputeSplitRecorded",
+          "py": "on_dispute_split_recorded",
+          "arity": 1
+        }
+      ]
+    },
+    {
+      "ts": "UMAHelper",
+      "py": "UMAHelper",
+      "staticMethods": [
+        {
+          "ts": "quoteSelfDisputeCost",
+          "py": "quote_self_dispute_cost",
+          "arity": 0
+        }
+      ],
+      "methods": [
+        {
+          "ts": "getBondEscalationAddress",
+          "py": "get_bond_escalation_address",
+          "arity": 0
+        },
+        {
+          "ts": "getOOV3Address",
+          "py": "get_oov3_address",
+          "arity": 0
+        },
+        {
+          "ts": "getAssertionId",
+          "py": "get_assertion_id",
+          "arity": 1
+        },
+        {
+          "ts": "requesterForceDVM",
+          "py": "requester_force_dvm",
+          "arity": 4
+        },
+        {
+          "ts": "settleAssertion",
+          "py": "settle_assertion",
+          "arity": 1
+        }
+      ]
+    },
+    {
+      "ts": "DisputeSplitIndexer",
+      "py": "DisputeSplitIndexer",
+      "staticMethods": [],
+      "methods": [
+        {
+          "ts": "addOutcome",
+          "py": "add_outcome",
+          "arity": 1
+        },
+        {
+          "ts": "addOutcomes",
+          "py": "add_outcomes",
+          "arity": 1
+        },
+        {
+          "ts": "getOutcomes",
+          "py": "get_outcomes",
+          "arity": 0
+        },
+        {
+          "ts": "size",
+          "py": "size",
+          "arity": 0
+        },
+        {
+          "ts": "clear",
+          "py": "clear",
+          "arity": 0
+        },
+        {
+          "ts": "getSplitRate",
+          "py": "get_split_rate",
+          "arity": 1
+        },
+        {
+          "ts": "getSplitRateBreakdown",
+          "py": "get_split_rate_breakdown",
+          "arity": 1
+        },
+        {
+          "ts": "classifyPayout",
+          "py": "classify_payout",
+          "arity": 1
+        }
+      ]
+    },
+    {
+      "ts": "EvaluatorClient",
+      "py": "EvaluatorClient",
+      "staticMethods": [],
+      "methods": [
+        {
+          "ts": "requestEvaluation",
+          "py": "request_evaluation",
+          "arity": 1
+        }
+      ]
+    },
+    {
+      "ts": "DisputeClient",
+      "py": "DisputeClient",
+      "_note": "PRD P2-9 \u2014 the SINGLE facade over the five AIP-14b dispute primitives. The five sub-client accessors (bond/mediator/uma/evaluator/splitIndexer) are GETTERS, validated via the `accessors` array (descriptor-based), NOT `methods` (prototype value access would trigger the getter and throw on an unconfigured facade).",
+      "staticMethods": [],
+      "methods": [
+        {
+          "ts": "getDisputeStatus",
+          "py": "get_dispute_status",
+          "arity": 1
+        },
+        {
+          "ts": "recordOutcomes",
+          "py": "record_outcomes",
+          "arity": 1
+        },
+        {
+          "ts": "hasBond",
+          "py": "has_bond",
+          "arity": 0
+        },
+        {
+          "ts": "hasMediator",
+          "py": "has_mediator",
+          "arity": 0
+        },
+        {
+          "ts": "hasUMA",
+          "py": "has_uma",
+          "arity": 0
+        },
+        {
+          "ts": "hasEvaluator",
+          "py": "has_evaluator",
+          "arity": 0
+        }
+      ],
+      "accessors": [
+        {
+          "ts": "bond",
+          "py": "bond"
+        },
+        {
+          "ts": "mediator",
+          "py": "mediator"
+        },
+        {
+          "ts": "uma",
+          "py": "uma"
+        },
+        {
+          "ts": "evaluator",
+          "py": "evaluator"
+        },
+        {
+          "ts": "splitIndexer",
+          "py": "split_indexer"
+        }
+      ]
+    }
+  ],
+  "types": [
+    {
+      "ts": "AIRuling",
+      "py": "AIRuling",
+      "kind": "type"
+    },
+    {
+      "ts": "DisputeState",
+      "py": "DisputeState",
+      "kind": "type"
+    },
+    {
+      "ts": "DisputeSplitRecorded",
+      "py": "DisputeSplitRecorded",
+      "kind": "type"
+    },
+    {
+      "ts": "DecodedResolutionProof",
+      "py": "DecodedResolutionProof",
+      "kind": "type",
+      "_note": "Representation differs (values match, byte-for-byte under the zero-remaining rule): TS exposes a nested `payouts: { requester: bigint; provider: bigint }`; Py exposes flat `requester_amount`/`provider_amount` ints. Field-access code is NOT portable (`.payouts.requester` is TS-only). Locked as parity by NAME; field shape is a documented per-SDK idiom."
+    },
+    {
+      "ts": "DisputeStatus",
+      "py": "DisputeStatus",
+      "kind": "type",
+      "_note": "PRD P2-9 \u2014 result of DisputeClient.getDisputeStatus / get_dispute_status. TS interface (erased at runtime, compile-time guard); Py @dataclass (runtime class)."
+    },
+    {
+      "ts": "DisputeSubState",
+      "py": "DisputeSubState",
+      "kind": "type",
+      "_note": "PRD P2-9 \u00a79 sub-state. TS string-literal union 'UNINITIALIZED'|'OPENED'|'PROPOSED'|'ESCALATED'|'RESOLVED' (erased at runtime); Py `DisputeSubState = str` (the alias resolves to the `str` runtime class). Same five string values; the exhaustive Py tuple DISPUTE_SUBSTATES mirrors them."
+    },
+    {
+      "ts": "SelfDisputeCost",
+      "py": "SelfDisputeCost",
+      "kind": "type"
+    },
+    {
+      "ts": "DisputeOutcome",
+      "py": "DisputeOutcome",
+      "kind": "type"
+    },
+    {
+      "ts": "SplitRateResult",
+      "py": "SplitRateResult",
+      "kind": "type"
+    },
+    {
+      "ts": "SplitRateBreakdown",
+      "py": "SplitRateBreakdown",
+      "kind": "type"
+    },
+    {
+      "ts": "BundleSource",
+      "py": "BundleSource",
+      "kind": "type",
+      "_note": "EvaluatorClient \u00a73.1 \u2014 paired in BOTH SDKs (TS interface / Py @dataclass)."
+    },
+    {
+      "ts": "RequestEvaluationParams",
+      "py": "RequestEvaluationParams",
+      "kind": "type",
+      "_note": "EvaluatorClient.requestEvaluation input \u2014 paired in BOTH SDKs."
+    },
+    {
+      "ts": "EvaluationResult",
+      "py": "EvaluationResult",
+      "kind": "type",
+      "_note": "EvaluatorClient.requestEvaluation result (discriminated signed/proposeDirectly) \u2014 paired in BOTH SDKs."
+    },
+    {
+      "ts": "RulingVerification",
+      "py": "RulingVerification",
+      "kind": "type",
+      "_note": "\u00a74.7 client-side verification result \u2014 paired in BOTH SDKs."
+    },
+    {
+      "ts": "ProposeDirectlyRecommendation",
+      "py": "ProposeDirectlyRecommendation",
+      "kind": "type",
+      "_note": "\u00a74.3b advisory recommendation \u2014 paired in BOTH SDKs."
+    },
+    {
+      "ts": "EvaluatorClientConfig",
+      "py": "EvaluatorClientConfig",
+      "kind": "type",
+      "_note": "EvaluatorClient construction config \u2014 paired in BOTH SDKs."
+    },
+    {
+      "ts": "EvaluatorPaymentClient",
+      "py": "EvaluatorPaymentClient",
+      "kind": "type",
+      "_note": "x402 buyer surface the evaluator reuses for STEP 2 \u2014 paired in BOTH SDKs (TS interface / Py Protocol)."
+    },
+    {
+      "ts": "EvidenceBundle",
+      "py": "EvidenceBundle",
+      "kind": "type"
+    },
+    {
+      "ts": "EvidenceBundleSpec",
+      "py": "EvidenceBundleSpec",
+      "kind": "type"
+    },
+    {
+      "ts": "EvidenceBundleDelivery",
+      "py": "EvidenceBundleDelivery",
+      "kind": "type"
+    },
+    {
+      "ts": "EvidenceBundleDispute",
+      "py": "EvidenceBundleDispute",
+      "kind": "type"
+    },
+    {
+      "ts": "EvidenceBundleTimelineEvent",
+      "py": "EvidenceBundleTimelineEvent",
+      "kind": "type"
+    },
+    {
+      "ts": "EvidenceBundleReasoning",
+      "py": "EvidenceBundleReasoning",
+      "kind": "type"
+    },
+    {
+      "ts": "PinEvidenceBundleResult",
+      "py": "PinEvidenceBundleResult",
+      "kind": "type"
+    },
+    {
+      "ts": "BundleTooLargeError",
+      "py": "BundleTooLargeError",
+      "kind": "error"
+    },
+    {
+      "ts": "UnsupportedBundleVersionError",
+      "py": "UnsupportedBundleVersionError",
+      "kind": "error"
+    },
+    {
+      "ts": "InvalidBundleError",
+      "py": "InvalidBundleError",
+      "kind": "error"
+    },
+    {
+      "ts": "EvaluatorClientError",
+      "py": "EvaluatorClientError",
+      "kind": "error"
+    },
+    {
+      "ts": "QuoteRejectedError",
+      "py": "QuoteRejectedError",
+      "kind": "error"
+    },
+    {
+      "ts": "EvaluateResponseError",
+      "py": "EvaluateResponseError",
+      "kind": "error"
+    }
+  ],
+  "absent": [
+    {
+      "_comment": "resolve() exists on the CompositeMediator ABI but is guarded onlyBondEscalation. BOTH SDK clients DELIBERATELY omit it from the public surface (a footgun: every call reverts). The META test asserts this symbol is absent in BOTH SDKs \u2014 parity of an intentional omission.",
+      "ts": "resolve",
+      "py": "resolve",
+      "on": "CompositeMediator"
+    }
+  ],
+  "tsOnlyDeExported": [
+    {
+      "_comment": "EvaluatorClient evaluate WIRE-PARSE shapes. They are internal HTTP-response shapes (not caller inputs), Py parses the evaluate response as a raw dict, so there is NO Py twin. To keep the public package surface symmetric they are DE-EXPORTED from sdk-js/src/index.ts (they remain `export`ed from the module file for intra-module typing, but are NOT on the package entrypoint). The META test asserts each is absent from the package entrypoint so the de-export cannot silently regress.",
+      "ts": "SignedEvaluateResponse",
+      "pyTwin": null
+    },
+    {
+      "ts": "ProposeDirectlyEvaluateResponse",
+      "pyTwin": null
+    },
+    {
+      "ts": "EvaluateResponse",
+      "pyTwin": null
+    },
+    {
+      "ts": "EvaluatorRuling",
+      "pyTwin": null
+    }
+  ]
+}

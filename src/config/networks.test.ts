@@ -81,10 +81,10 @@ describe('Networks Config', () => {
       expect(config.aa?.paymasterUrls.pimlico).toContain('pimlico-test-key');
     });
 
-    it('should use hardcoded Pimlico key when PIMLICO_API_KEY is missing', () => {
+    it('should leave Pimlico endpoints unset when PIMLICO_API_KEY is missing (opt-in)', () => {
       const config = freshConfig();
-      expect(config.aa?.bundlerUrls.pimlico).toContain('api.pimlico.io');
-      expect(config.aa?.bundlerUrls.pimlico).not.toContain('undefined');
+      expect(config.aa?.bundlerUrls.pimlico).toBeUndefined();
+      expect(config.aa?.paymasterUrls.pimlico).toBeUndefined();
     });
 
     it('should prefer CDP_BUNDLER_URL over constructed URL', () => {
@@ -119,7 +119,8 @@ describe('Networks Config', () => {
     // Sanity checks: deployed contract addresses must match known deployments
     it('should have correct AgentRegistry on base-sepolia', () => {
       const config = getNetwork('base-sepolia');
-      expect(config.contracts.agentRegistry).toBe('0xD91F9aBfBf60b4a2Fd5317ab0cDF3F44faB5D656');
+      // Reconciled 2026-08-17 to the AIP-14c kernel-v2 redeploy (2026-07-13).
+      expect(config.contracts.agentRegistry).toBe('0x1bb1D4B0b84801FF8597d3e7988E00802252d962');
     });
 
     it('should have correct AgentRegistry on base-mainnet', () => {
@@ -129,7 +130,8 @@ describe('Networks Config', () => {
 
     it('should have correct ACTPKernel on base-sepolia', () => {
       const config = getNetwork('base-sepolia');
-      expect(config.contracts.actpKernel).toBe('0x9d25A874f046185d9237Cd4954C88D2B74B0021b');
+      // Reconciled 2026-08-17 to the AIP-14c kernel-v2 redeploy (2026-07-13).
+      expect(config.contracts.actpKernel).toBe('0xE8ba4133CC43bAb48c9c71bF82243e0b15915389');
     });
 
     it('should have correct ACTPKernel on base-mainnet', () => {
@@ -139,7 +141,8 @@ describe('Networks Config', () => {
 
     it('should have correct EscrowVault on base-sepolia', () => {
       const config = getNetwork('base-sepolia');
-      expect(config.contracts.escrowVault).toBe('0x7dF07327090efcA73DCBa70414aA3131Fc6d2efB');
+      // Reconciled 2026-08-17 to the AIP-14c kernel-v2 redeploy (2026-07-13).
+      expect(config.contracts.escrowVault).toBe('0x9d3CbD2c630E390F9179DAfE02Dd5dAd80B3A05B');
     });
 
     it('should have correct EscrowVault on base-mainnet', () => {

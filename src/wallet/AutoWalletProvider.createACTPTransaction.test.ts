@@ -93,8 +93,9 @@ describe('AutoWalletProvider.createACTPTransaction()', () => {
     });
 
     const [calls] = provider.submitUserOp.mock.calls[0];
+    // Canonical v2 9-arg signature (agreementHash is the 7th arg).
     const iface = new ethers.Interface([
-      'function createTransaction(address provider, address requester, uint256 amount, uint256 deadline, uint256 disputeWindow, bytes32 serviceHash, uint256 agentId, uint256 requesterAgentId)',
+      'function createTransaction(address provider, address requester, uint256 amount, uint256 deadline, uint256 disputeWindow, bytes32 serviceHash, bytes32 agreementHash, uint256 agentId, uint256 requesterAgentId)',
     ]);
     const decoded = iface.decodeFunctionData('createTransaction', calls[0].data);
 
@@ -104,7 +105,8 @@ describe('AutoWalletProvider.createACTPTransaction()', () => {
     expect(decoded[3]).toBe(BigInt(1_900_000_000)); // deadline
     expect(decoded[4]).toBe(BigInt(172800)); // disputeWindow
     expect(decoded[5]).toBe(ethers.keccak256(ethers.toUtf8Bytes('test service'))); // serviceHash
-    expect(decoded[6]).toBe(42n); // agentId
+    expect(decoded[6]).toBe(ethers.ZeroHash); // agreementHash (default bytes32(0))
+    expect(decoded[7]).toBe(42n); // agentId
   });
 
   it('returns failure receipt without throwing when UserOp is unsuccessful', async () => {

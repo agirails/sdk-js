@@ -16,6 +16,8 @@ import { Command } from 'commander';
 import { Output, ExitCode, TransactionDisplay } from '../utils/output';
 import { createClient, mapError, isValidTxId } from '../utils/client';
 import { TransactionState, MockTransaction } from '../../runtime/types/MockState';
+import { encodeDeliveryProof, assertRealResultHash } from '../../utils/deliveryProof';
+import { computeResultHash } from '../../utils/canonicalJson';
 
 // ============================================================================
 // Main tx Command
@@ -305,6 +307,11 @@ function createTxDeliverCommand(): Command {
   return new Command('deliver')
     .description('Mark transaction as delivered (provider action)')
     .argument('<txId>', 'Transaction ID')
+    .option(
+      '--result-hash <hash>',
+      'bytes32 commitment to the delivered result (computeResultHash / AIP-16 envelope hash)'
+    )
+    .option('--result <json>', 'Deliverable payload (JSON) — hashed to the resultHash')
     .option('--json', 'Output as JSON')
     .option('-q, --quiet', 'Minimal output')
     .action(async (txId, options) => {
@@ -324,15 +331,43 @@ function createTxDeliverCommand(): Command {
 
         const transitionPath: TransactionState[] = [];
 
+        // AIP-14c: the DELIVERED transition needs the 64-byte
+        // (window, resultHash) proof — the v2 kernel rejects an empty/legacy
+        // proof. The resultHash MUST commit to a REAL deliverable: either an
+        // explicit --result-hash (computeResultHash / AIP-16 envelope hash) or
+        // a --result payload hashed here. With NEITHER, fail closed — never
+        // fabricate a hash.
+        let resultHash: string | undefined = options.resultHash;
+        if (!resultHash && typeof options.result === 'string') {
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(options.result);
+          } catch {
+            throw new Error('--result must be valid JSON');
+          }
+          resultHash = computeResultHash(parsed);
+        }
+        if (!resultHash) {
+          throw new Error(
+            'deliver requires a real deliverable: pass --result-hash <bytes32> ' +
+              '(computeResultHash(result) or the AIP-16 envelope hash) or --result <json>. ' +
+              'Refusing to mark DELIVERED without a result commitment.'
+          );
+        }
+        const deliveredProof = encodeDeliveryProof(
+          beforeTx.disputeWindow,
+          assertRealResultHash(resultHash)
+        );
+
         // On-chain lifecycle requires COMMITTED -> IN_PROGRESS -> DELIVERED.
         // Keep CLI ergonomic by applying the missing intermediate state automatically.
         if (beforeTx.state === 'COMMITTED') {
           await client.standard.transitionState(txId, 'IN_PROGRESS' as TransactionState);
           transitionPath.push('IN_PROGRESS');
-          await client.standard.transitionState(txId, 'DELIVERED' as TransactionState);
+          await client.standard.transitionState(txId, 'DELIVERED' as TransactionState, deliveredProof);
           transitionPath.push('DELIVERED');
         } else if (beforeTx.state === 'IN_PROGRESS') {
-          await client.standard.transitionState(txId, 'DELIVERED' as TransactionState);
+          await client.standard.transitionState(txId, 'DELIVERED' as TransactionState, deliveredProof);
           transitionPath.push('DELIVERED');
         } else if (beforeTx.state === 'DELIVERED') {
           // Idempotent behavior for repeated deliver calls.

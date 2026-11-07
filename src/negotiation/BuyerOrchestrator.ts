@@ -36,6 +36,8 @@ import {
   isQuoteEnvelope,
   isCounterAcceptEnvelope,
 } from './NegotiationChannel';
+import type { AgentRegistry } from '../protocol/AgentRegistry';
+import type { ServiceDescriptor } from '../types/agent';
 
 // ============================================================================
 // Types
@@ -147,6 +149,17 @@ export class BuyerOrchestrator {
   private client?: ACTPClient;
 
   /**
+   * Optional on-chain AgentRegistry reader. When provided, the orchestrator
+   * runs a buyer-side price-band check (finding F-5) before locking escrow:
+   * a request whose amount falls outside the provider's published
+   * ServiceDescriptor [minPrice, maxPrice] band is rejected BEFORE any capital
+   * is committed, so the buyer never strands its own escrow on a request the
+   * provider will refuse to settle. When omitted, the check is skipped
+   * (fail-open) and behaviour is unchanged.
+   */
+  private agentRegistry?: AgentRegistry;
+
+  /**
    * Per-txId inbound message queue. Channel callbacks push here; the
    * orchestrator's negotiation loop drains via `_waitForNextMessage`.
    * Bounded implicitly by `_cleanupTxState` at terminal outcomes.
@@ -171,6 +184,7 @@ export class BuyerOrchestrator {
     actpDir?: string,
     negotiation: BuyerNegotiationContext = {},
     client?: ACTPClient,
+    agentRegistry?: AgentRegistry,
   ) {
     // Fail-fast on partial negotiation context. Pre-fix bug: a developer
     // who set `negotiationChannel: new RelayChannel(...)` but forgot
@@ -202,6 +216,7 @@ export class BuyerOrchestrator {
     this.sessionStore = new SessionStore(actpDir);
     this.negotiation = negotiation;
     this.client = client;
+    this.agentRegistry = agentRegistry;
 
     if (negotiation.signer) {
       this.counterBuilder = new CounterOfferBuilder(
@@ -426,6 +441,23 @@ export class BuyerOrchestrator {
           reason: `Policy violation: ${reason}`,
         });
         emit({ type: 'round_end', round: round + 1, action: 'rejected', reason });
+        continue;
+      }
+
+      // F-5: reject out-of-band requests before creating the transaction, so
+      // the buyer never locks escrow on a price the provider's published band
+      // will refuse to settle.
+      const offerBaseUnits = this.toBaseUnits(offer.unit_price);
+      const bandCheck = await this._checkProviderPriceBand(providerAddress, offerBaseUnits);
+      if (!bandCheck.allow) {
+        rounds.push({
+          round: round + 1,
+          provider_slug: candidate.slug,
+          provider_address: providerAddress,
+          action: 'rejected',
+          reason: bandCheck.reason,
+        });
+        emit({ type: 'round_end', round: round + 1, action: 'rejected', reason: bandCheck.reason });
         continue;
       }
 
@@ -980,6 +1012,23 @@ export class BuyerOrchestrator {
     sourceTag: string,
     counterRound: number,
   ): Promise<{ done: true; success: boolean; reason: string }> {
+    // F-5: re-check the (possibly negotiated) final amount against the
+    // provider's band before accepting and locking escrow.
+    const band = await this._checkProviderPriceBand(providerAddress, amountBaseUnits);
+    if (!band.allow) {
+      try { await this._transitionState(txId, 'CANCELLED'); } catch { /* best-effort */ }
+      rounds.push({
+        round: round + 1,
+        provider_slug: candidateSlug,
+        provider_address: providerAddress,
+        action: 'rejected',
+        reason: band.reason,
+        tx_id: txId,
+      });
+      emit({ type: 'round_end', round: round + 1, action: 'rejected', reason: band.reason });
+      return { done: true, success: false, reason: band.reason };
+    }
+
     let acceptQuoteSucceeded = false;
     try {
       await this._acceptQuote(txId, amountBaseUnits);
@@ -1055,6 +1104,60 @@ export class BuyerOrchestrator {
    */
   private _baseUnitsForLog(baseUnitsStr: string): number {
     return Number(BigInt(baseUnitsStr)) / 1_000_000;
+  }
+
+  /**
+   * F-5: buyer-side pre-escrow price-band check. Escrow on ACTP is
+   * requester-driven (the kernel pulls the buyer's USDC on linkEscrow before
+   * the provider's policy filter runs), so a request priced outside the
+   * provider's published [minPrice, maxPrice] band would lock the buyer's own
+   * capital until the deadline. This catches it before any escrow is committed.
+   *
+   * Returns { allow: false, reason } to hard-reject an out-of-band amount,
+   * { allow: true } to proceed. Fail-open by design: no registry, a failed
+   * read, or no matching descriptor all return allow:true (best-effort safety
+   * net, not a hard dependency on registry/RPC liveness).
+   */
+  private async _checkProviderPriceBand(
+    providerAddress: string,
+    amountBaseUnits: string,
+  ): Promise<{ allow: true } | { allow: false; reason: string }> {
+    if (!this.agentRegistry) return { allow: true };
+
+    let descriptors: ServiceDescriptor[];
+    try {
+      descriptors = await this.agentRegistry.getServiceDescriptors(providerAddress);
+    } catch {
+      return { allow: true }; // read failed (RPC error, registry not deployed) — fail-open
+    }
+
+    // Match the descriptor for the service this request targets. The on-chain
+    // serviceHash is keccak256(toUtf8Bytes(policy.task)) — the same formula used
+    // at the createTransaction site (serviceDescription) and by Agent.provide().
+    const wantedHash = keccak256(toUtf8Bytes(this.policy.task)).toLowerCase();
+    const descriptor = descriptors.find(
+      (d) => d.serviceTypeHash.toLowerCase() === wantedHash,
+    );
+    // No matching descriptor — fail-open rather than reject against a band that
+    // does not apply to this service.
+    if (!descriptor) return { allow: true };
+
+    let amount: bigint;
+    try {
+      amount = BigInt(amountBaseUnits);
+    } catch {
+      return { allow: true }; // unparseable amount — fail-open, downstream validation will catch it
+    }
+    if (amount < descriptor.minPrice || amount > descriptor.maxPrice) {
+      const reqUsd = this._baseUnitsForLog(amountBaseUnits);
+      const minUsd = this._baseUnitsForLog(descriptor.minPrice.toString());
+      const maxUsd = this._baseUnitsForLog(descriptor.maxPrice.toString());
+      return {
+        allow: false,
+        reason: `Request $${reqUsd} is outside the provider's price band $${minUsd}-$${maxUsd} for "${this.policy.task}"`,
+      };
+    }
+    return { allow: true };
   }
 
   // ============================================================================

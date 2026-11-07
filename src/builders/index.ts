@@ -29,3 +29,17 @@ export {
   CounterAcceptMessage,
   AIP21CounterAcceptTypes
 } from './CounterAcceptBuilder';
+
+export {
+  AgreementTerms,
+  AGREEMENT_SCHEMA_VERSION,
+  SUPPORTED_AGREEMENT_MAJOR,
+  ZERO_AGREEMENT_HASH,
+  InvalidAgreementError,
+  UnsupportedAgreementVersionError,
+  assertSupportedAgreementVersion,
+  validateAgreement,
+  serializeAgreement,
+  computeAgreementHash,
+  agreementHash
+} from './AgreementSerializer';

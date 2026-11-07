@@ -1,0 +1,109 @@
+{
+  "_comment": "PRD P2-5 shared cross-SDK golden fixture for CompositeMediator. Consumed byte-identically by sdk-js/tests/composite-mediator.test.ts and python-sdk-v2/tests/test_dispute/test_composite_mediator.py. Proof bytes are abi.encode outputs the on-chain CompositeMediator (AIP-14b §6) produces; the zero-remaining rows encode the phantom 1-wei sentinel.",
+
+  "disputeSplitRecordedTopic0": "0x64f3bb8deff5e5af1e6f49fe3ccdff2d59febd8d93f5926bc61fc25a2cdff99f",
+
+  "splitRecordedEvent": {
+    "txId": "0xabcdef0000000000000000000000000000000000000000000000000000000001",
+    "requester": "0x1111111111111111111111111111111111111111",
+    "provider": "0x2222222222222222222222222222222222222222",
+    "splitBps": 3000
+  },
+
+  "resolutionProofs": [
+    {
+      "name": "split_normal",
+      "proof": "0x00000000000000000000000000000000000000000000000000000000000aae6000000000000000000000000000000000000000000000000000000000000493e0",
+      "remaining": "1000000",
+      "expected": {
+        "isSplit": true,
+        "phantomSentinel": false,
+        "requesterAmount": "700000",
+        "providerAmount": "300000",
+        "providerAtFault": null
+      }
+    },
+    {
+      "name": "settle_provider_wins",
+      "proof": "0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000f42400000000000000000000000000000000000000000000000000000000000000000",
+      "remaining": "1000000",
+      "expected": {
+        "isSplit": false,
+        "phantomSentinel": false,
+        "requesterAmount": "0",
+        "providerAmount": "1000000",
+        "providerAtFault": false
+      }
+    },
+    {
+      "name": "settle_requester_wins",
+      "proof": "0x00000000000000000000000000000000000000000000000000000000000f424000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001",
+      "remaining": "1000000",
+      "expected": {
+        "isSplit": false,
+        "phantomSentinel": false,
+        "requesterAmount": "1000000",
+        "providerAmount": "0",
+        "providerAtFault": true
+      }
+    },
+    {
+      "name": "drained_settle_sentinel",
+      "_comment": "remaining==0; proof carries a phantom 1-wei sentinel in the provider field. CONSUMER RULE: must surface 0 payouts, never 1 wei.",
+      "proof": "0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000",
+      "remaining": "0",
+      "expected": {
+        "isSplit": false,
+        "phantomSentinel": true,
+        "requesterAmount": "0",
+        "providerAmount": "0",
+        "providerAtFault": false
+      }
+    },
+    {
+      "name": "drained_split_sentinel",
+      "_comment": "remaining==0; split path with phantom 1-wei sentinel in the requester field. CONSUMER RULE: must surface 0 payouts.",
+      "proof": "0x00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000",
+      "remaining": "0",
+      "expected": {
+        "isSplit": true,
+        "phantomSentinel": true,
+        "requesterAmount": "0",
+        "providerAmount": "0",
+        "providerAtFault": null
+      }
+    }
+  ],
+
+  "splitRate": [
+    {
+      "name": "oq11_both_counted_equal_weight",
+      "_comment": "OQ-11: DisputeSplitRecorded + kernel DISPUTED->CANCELLED counted at identical weight.",
+      "splitRecorded": 7,
+      "kernelDisputedToCancelled": 7,
+      "totalDisputes": 100,
+      "expected": 0.14
+    },
+    {
+      "name": "only_mediator_splits",
+      "splitRecorded": 5,
+      "kernelDisputedToCancelled": 0,
+      "totalDisputes": 50,
+      "expected": 0.1
+    },
+    {
+      "name": "only_kernel_cancels",
+      "splitRecorded": 0,
+      "kernelDisputedToCancelled": 4,
+      "totalDisputes": 40,
+      "expected": 0.1
+    },
+    {
+      "name": "zero_disputes_no_div_by_zero",
+      "splitRecorded": 0,
+      "kernelDisputedToCancelled": 0,
+      "totalDisputes": 0,
+      "expected": 0.0
+    }
+  ]
+}

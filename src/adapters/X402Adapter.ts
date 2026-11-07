@@ -52,10 +52,11 @@ import {
   X402SettlementProofMissingError,
   X402PaymentFailedError,
   X402PublishRequiredError,
+  X402QuoteMismatchError,
   isPaymasterGateError,
 } from '../errors/X402Errors';
 import { sdkLogger } from '../utils/Logger';
-
+import { ensureNativeWebCrypto } from '../utils/webCrypto';
 // ============================================================================
 // Types
 // ============================================================================
@@ -208,8 +209,8 @@ export class X402Adapter implements IAdapter {
     priority: 70,
   };
 
-  private readonly x402: InstanceType<typeof x402Client>;
-  private readonly fetchWithPayment: typeof fetch;
+  private readonly fetchForQuote: (quote: UnifiedPayParams['acceptedQuote']) =>
+    (url: string, init?: RequestInit) => Promise<Response>;
   private readonly maxAmountPerTx: bigint;
   private readonly maxAuthorizationValidSec: number;
   /**
@@ -248,7 +249,7 @@ export class X402Adapter implements IAdapter {
           'Both EOAWalletProvider and AutoWalletProvider implement this in @agirails/sdk@3.3.0+.'
       );
     }
-
+    ensureNativeWebCrypto();
     const signer = this.walletProviderToClientEvmSigner(config.walletProvider);
     const scheme = new ExactEvmScheme(signer);
     // I1: compute and cache allowed network list once — selectRequirements
@@ -274,25 +275,33 @@ export class X402Adapter implements IAdapter {
       (config.allowedHosts ?? []).map((h) => h.toLowerCase())
     );
 
-    // Build x402 client via fromConfig with all scheme registrations up front,
-    // plus our paymentRequirementsSelector. Hook is registered on the returned
-    // client instance (fromConfig does not take hooks).
-    this.x402 = x402Client.fromConfig({
-      schemes: this.allowedNetworks.map((network) => ({ network, client: scheme })),
-      paymentRequirementsSelector: this.selectRequirements.bind(this),
-    });
-
-    // onBeforePaymentCreation hook runs AFTER selectRequirements picks a
-    // requirement and BEFORE signing. We await Permit2 approve for Smart
-    // Wallet buyers inside the hook — single roundtrip, no race.
-    this.x402.onBeforePaymentCreation(this.beforePaymentCreationHook.bind(this));
-
-    // Wrap global fetch with the configured x402Client. This yields a fetch
-    // function that transparently retries on 402 with a signed payment payload.
-    this.fetchWithPayment = wrapFetchWithPayment(
-      config.fetchImpl ?? fetch,
-      this.x402
-    );
+    // Each pay gets a client whose selector closes over its own immutable
+    // terms. Overlapping quoted/unquoted calls cannot overwrite one another.
+    this.fetchForQuote = (quote) => {
+      const acceptedQuote = quote ? Object.freeze({ ...quote }) : undefined;
+      let bindingError: X402QuoteMismatchError | undefined;
+      const client = x402Client.fromConfig({
+        schemes: this.allowedNetworks.map((network) => ({ network, client: scheme })),
+        paymentRequirementsSelector: (version, requirements) => {
+          try { return this.selectRequirements(version, requirements, acceptedQuote); }
+          catch (error) {
+            if (error instanceof X402QuoteMismatchError) bindingError = error;
+            throw error;
+          }
+        },
+      });
+      client.onBeforePaymentCreation(this.beforePaymentCreationHook.bind(this));
+      const wrapped = wrapFetchWithPayment(config.fetchImpl ?? fetch, client);
+      return async (input, init) => {
+        try { return await wrapped(input, init); }
+        catch (error) {
+          // Upstream wraps selector errors in a generic Error. Retain this
+          // call's typed mismatch without sharing error state across pays.
+          if (bindingError) throw bindingError;
+          throw error;
+        }
+      };
+    };
 
     // P1-3: hardened default cap lowered from $10 → $1. Reduces blast radius
     // of accidental `client.pay({to: 'https://...'})` calls. Users who need
@@ -362,6 +371,8 @@ export class X402Adapter implements IAdapter {
 
     sdkLogger.debug('x402 payment attempt', { to: params.to });
 
+    const fetchWithPayment = this.fetchForQuote(params.acceptedQuote);
+
     let res: Response;
     try {
       const method = params.httpMethod ?? 'GET';
@@ -376,8 +387,13 @@ export class X402Adapter implements IAdapter {
       if (params.httpBody && method !== 'GET' && method !== 'DELETE') {
         fetchInit.body = params.httpBody;
       }
-      res = await this.fetchWithPayment(params.to, fetchInit);
+      res = await fetchWithPayment(params.to, fetchInit);
     } catch (e) {
+      // A quote-binding mismatch (F44) surfaced through the selector must reach
+      // the caller AS-IS (fail closed) — not be masked as a generic payment failure.
+      if (e instanceof X402QuoteMismatchError) {
+        throw e;
+      }
       // Hook aborts bubble up here as "Payment creation aborted: {reason}"
       if (e instanceof Error && /aborted/i.test(e.message)) {
         throw new X402PaymentFailedError(
@@ -520,7 +536,8 @@ export class X402Adapter implements IAdapter {
    */
   private selectRequirements(
     _version: number,
-    requirements: ReadonlyArray<PaymentRequirements>
+    requirements: ReadonlyArray<PaymentRequirements>,
+    acceptedQuote?: NonNullable<UnifiedPayParams['acceptedQuote']>
   ): PaymentRequirements {
     const allowed = this.allowedNetworks; // I1: cached
 
@@ -551,6 +568,30 @@ export class X402Adapter implements IAdapter {
       );
     }
 
+    // F44: bind to the ACCEPTED quote. When the caller carried the terms it
+    // accepted at /quote (amount/asset/payTo/network), reject any 402 requirement
+    // that deviates — a malicious/misconfigured evaluator cannot rebind payment
+    // terms between /quote and /evaluate. This is IN ADDITION to the global
+    // network/asset/cap checks above. No quote bound → global caps only.
+    const boundCandidates = acceptedQuote
+      ? candidates.filter((r) => this.matchesAcceptedQuote(r, acceptedQuote))
+      : candidates;
+    if (acceptedQuote && boundCandidates.length === 0) {
+      const offered = candidates
+        .map(
+          (r) =>
+            `${r.network}:${(r.asset ?? '').slice(0, 10)}…→${(r.payTo ?? '').slice(0, 10)}…@${r.amount}`
+        )
+        .join(', ');
+      throw new X402QuoteMismatchError(
+        `x402: every /evaluate 402 requirement deviates from the accepted quote ` +
+          `(amount=${acceptedQuote.amount ?? '*'}, asset=${acceptedQuote.asset ?? '*'}, ` +
+          `payTo=${acceptedQuote.payTo ?? '*'}, network=${acceptedQuote.network ?? '*'}). ` +
+          `Server offered [${offered}]. Refusing to pay rebound terms (fail closed).`,
+        { acceptedQuote }
+      );
+    }
+
     // Wallet-tier-aware ordering
     const walletInfo = this.config.walletProvider.getWalletInfo();
     const isPermit2 = (r: PaymentRequirements): boolean =>
@@ -560,8 +601,8 @@ export class X402Adapter implements IAdapter {
     // EOA prefers EIP-3009 (simpler, no one-time approve needed).
     const prioritized =
       walletInfo.tier === 'auto'
-        ? [...candidates].sort((a, b) => Number(isPermit2(b)) - Number(isPermit2(a)))
-        : [...candidates].sort((a, b) => Number(isPermit2(a)) - Number(isPermit2(b)));
+        ? [...boundCandidates].sort((a, b) => Number(isPermit2(b)) - Number(isPermit2(a)))
+        : [...boundCandidates].sort((a, b) => Number(isPermit2(a)) - Number(isPermit2(b)));
 
     // Note: we do NOT inject assetTransferMethod into requirements here.
     // @x402/evm ExactEvmScheme client auto-selects EIP-3009 vs Permit2
@@ -585,6 +626,44 @@ export class X402Adapter implements IAdapter {
       ...chosen,
       maxTimeoutSeconds: Math.min(serverTimeout, this.maxAuthorizationValidSec),
     };
+  }
+
+  /**
+   * F44: whether a payment requirement matches the accepted quote. Only the
+   * DEFINED quote fields are enforced (amount/asset/payTo/network); addresses
+   * compare case-insensitively and amount compares as a BigInt in token base
+   * units. A quote amount that fails to parse (or a requirement amount that
+   * does) fails the match — fail closed.
+   */
+  private matchesAcceptedQuote(
+    r: PaymentRequirements,
+    q: NonNullable<UnifiedPayParams['acceptedQuote']>
+  ): boolean {
+    if (q.network !== undefined && r.network !== q.network) return false;
+    if (
+      q.asset !== undefined &&
+      (typeof r.asset !== 'string' || r.asset.toLowerCase() !== q.asset.toLowerCase())
+    ) {
+      return false;
+    }
+    if (
+      q.payTo !== undefined &&
+      (typeof r.payTo !== 'string' || r.payTo.toLowerCase() !== q.payTo.toLowerCase())
+    ) {
+      return false;
+    }
+    if (q.amount !== undefined) {
+      let required: bigint;
+      let quoted: bigint;
+      try {
+        required = BigInt(r.amount);
+        quoted = BigInt(q.amount);
+      } catch {
+        return false; // unparseable amount on either side → fail closed
+      }
+      if (required !== quoted) return false;
+    }
+    return true;
   }
 
   // ==========================================================================

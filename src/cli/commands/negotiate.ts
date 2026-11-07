@@ -10,9 +10,12 @@
 import { Command } from 'commander';
 import { readFileSync } from 'fs';
 import { Output, ExitCode, fmt } from '../utils/output';
+import { ethers } from 'ethers';
 import { createClient, mapError } from '../utils/client';
 import { BuyerOrchestrator, ProgressEvent } from '../../negotiation/BuyerOrchestrator';
 import { BuyerPolicy } from '../../negotiation/PolicyEngine';
+import { getNetwork } from '../../config/networks';
+import { AgentRegistry } from '../../protocol/AgentRegistry';
 
 // ============================================================================
 // Command Definition
@@ -119,6 +122,39 @@ async function runNegotiate(
   const spinner = output.spinner(options.dryRun ? 'Scoring candidates...' : 'Negotiating...');
   const client = await createClient();
 
+  // F-5: best-effort read-only AgentRegistry so the orchestrator can run the
+  // pre-escrow price-band check before locking escrow. Fail-open — any failure
+  // (no key, no registry configured, dry-run/mock) leaves it undefined and the
+  // guard is skipped, exactly as before.
+  let agentRegistry: AgentRegistry | undefined;
+  try {
+    const { resolveNetwork } = await import('../utils/network');
+    const { network } = resolveNetwork();
+    const networkConfig = getNetwork(network);
+    if (networkConfig.contracts.agentRegistry) {
+      const { resolvePrivateKey } = await import('../../wallet/keystore');
+      const tier = network.includes('mainnet')
+        ? 'mainnet'
+        : network.includes('sepolia')
+          ? 'testnet'
+          : 'mock';
+      const privateKey = await resolvePrivateKey(process.cwd(), {
+        network: tier as 'mainnet' | 'testnet' | 'mock',
+      });
+      if (privateKey) {
+        const provider = new ethers.JsonRpcProvider(networkConfig.rpcUrl);
+        const signer = new ethers.Wallet(privateKey, provider);
+        agentRegistry = new AgentRegistry(
+          networkConfig.contracts.agentRegistry,
+          signer,
+          networkConfig.gasSettings,
+        );
+      }
+    }
+  } catch {
+    // fail-open: leave agentRegistry undefined
+  }
+
   const orchestrator = new BuyerOrchestrator(
     policy,
     client.runtime,
@@ -128,6 +164,7 @@ async function runNegotiate(
     // Pass the ACTPClient so on-chain writes route via StandardAdapter
     // (Paymaster-sponsored UserOps when AutoWallet is active).
     client,
+    agentRegistry,
   );
 
   // Progress callback for human mode

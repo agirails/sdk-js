@@ -49,6 +49,11 @@ Thumbs.db
 
 # Local files (not for public repo)
 test-scripts/
+# Cross-SDK golden-vector GENERATORS (Wave-0/2/3/5): one-shot reproducibility tooling whose
+# OUTPUT is committed (tests/fixtures/cross_sdk + DISPUTE SYSTEM/test-vectors). Kept local — they
+# embed the public Hardhat test key for deterministic EIP-712 vectors (would trip secret scans);
+# force-add if the audit ever wants them in-repo.
+scripts/gen-wave*.cjs
 CLAUDE.md
 .claude/
 .serena/

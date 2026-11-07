@@ -24,6 +24,8 @@ import { validateServiceName, validatePath, LRUCache } from '../utils/security';
 import { Logger, sdkLogger } from '../utils/Logger';
 import { ServiceHash } from '../utils/Helpers';
 import { Semaphore } from '../utils/Semaphore';
+import { computeResultHash } from '../utils/canonicalJson';
+import { encodeDeliveryProof } from '../utils/deliveryProof';
 import { ProofGenerator } from '../protocol/ProofGenerator';
 import { DeliveryEnvelopeBuilder } from '../delivery/envelopeBuilder';
 import type { DeliveryChannel } from '../delivery/channel';
@@ -1955,13 +1957,16 @@ export class Agent extends EventEmitter {
           return;
         }
 
-        // Encode dispute window proof for DELIVERED transition
-        // Use transaction's disputeWindow from metadata, fallback to 2 days (172800s) per Options.ts default
+        // Encode the AIP-14c 64-byte DELIVERED proof: (window, resultHash).
+        // Use transaction's disputeWindow from metadata, fallback to 2 days (172800s) per Options.ts default.
         const disputeWindowSeconds = job.metadata?.disputeWindow || 172800;
-        const abiCoder = ethers.AbiCoder.defaultAbiCoder();
-        const disputeWindowProof = abiCoder.encode(['uint256'], [disputeWindowSeconds]);
+        // resultHash commits to the SAME canonical result the AIP-4 delivery
+        // proof commits to (keccak256 of canonical JSON) — the v2 kernel
+        // rejects a zero resultHash and the legacy 32-byte window-only proof.
+        const resultHash = computeResultHash(result);
+        const disputeWindowProof = encodeDeliveryProof(disputeWindowSeconds, resultHash);
 
-        // Transition to DELIVERED with dispute window proof.
+        // Transition to DELIVERED with the (window, resultHash) proof.
         await this._client.standard.transitionState(job.id, 'DELIVERED', disputeWindowProof);
       }
 

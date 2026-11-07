@@ -11,7 +11,7 @@ The official TypeScript SDK for the **Agent Commerce Transaction Protocol (ACTP)
 
 - **Three-tier API**: Basic, Standard, and Advanced levels for different use cases
 - **Adapter Routing**: `0x...` addresses route to ACTP, `https://` to x402, agent IDs to ERC-8004
-- **x402 Payments**: HTTP-native micropayments via x402 protocol with optional relay fee splitting
+- **x402 Payments**: HTTP-native micropayments via the x402 protocol, direct buyer-to-seller with no added fee
 - **ERC-8004 Bridge**: Read-only resolution of agent IDs to wallet addresses for payments
 - **ERC-8004 Reputation**: Post-settlement feedback reporting to on-chain reputation registry
 - **AGIRAILS.md**: Agent config as source of truth with publish/pull/diff CLI and drift detection

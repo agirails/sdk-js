@@ -1,0 +1,194 @@
+{
+  "_comment": "Cross-SDK GOLDEN fixture for the P2-6 EvaluatorClient (TS dispute/EvaluatorClient.ts + Py dispute/evaluator_client.py). Frozen sources: services/dispute-evaluator/API-CONTRACT.md (wire shapes + handshake), AIP-14 FINAL \u00a74.7 (2/3 verification), the GOLDEN ruling/digest in dispute_golden_vector.json (digest 0x9b477852dd1ddad0105ca5e2a320c6ca72105215985b53878ae12b49eb34e365). Both SDK test suites consume this file byte-identically and MUST recover the SAME signer addresses for every signature. The four test private keys are 0x11..11 / 0x22..22 / 0x33..33 / 0x44..44 (fixedA / fixedB / rotating / unknown).",
+  "domain": {
+    "name": "ACTPDisputeEvaluator",
+    "version": "1",
+    "chainId": 8453,
+    "verifyingContract": "0x3c68CC8dFe901c7e89eC9f738F9a81709E6e7737"
+  },
+  "ruling": {
+    "disputeId": "0x5d1b4b905dcd2f7b6de02f87bd74002a10bcb4294a0707c94981b282f8216546",
+    "ruling": 1,
+    "confidence": 9500,
+    "splitBps": 0,
+    "timestamp": 1700000000,
+    "reasoningHash": "0x88a38f2db5ac668e2543bbdb0c4c02390b9072aacdb46f2664435ce4376136dc",
+    "bundleHash": "0x3f3fab64c884d7a542f43eda4f4b29da96d3b562adfd3ec82f13ed4f649f67eb",
+    "evidenceRefHash": "0x8add2032670e6bbc9348ec2bbb65bb14c9519e91c6a9716f6153fe5ad8fb7179",
+    "reasoningRefHash": "0xf558f77385482465e90591b3036f1c72f30bfc9cb75ed44486917ca2b9f156a7"
+  },
+  "expectedDigest": "0xc14778f377cd385dd4686b798cb2a010c8ff95e8a35a4f170af7e05bc8c2d8a0",
+  "registry": {
+    "_comment": "thirdEvaluator = rotatingPool[uint256(keccak256(abi.encode(disputeId))) % len]. With len=1, the single rotating evaluator is always selected for this disputeId.",
+    "fixedEvaluators": [
+      "0x19E7E376E7C213B7E7e7e46cc70A5dD086DAff2A",
+      "0x1563915e194D8CfBA1943570603F7606A3115508"
+    ],
+    "rotatingPool": [
+      "0x5CbDd86a2FA8Dc4bDdd8a8f69dBa48572EeC07FB"
+    ],
+    "selectedRotatingEvaluator": "0x5CbDd86a2FA8Dc4bDdd8a8f69dBa48572EeC07FB",
+    "unknownSigner": "0x7564105E977516C53bE337314c7E53838967bDaC",
+    "freshnessSeconds": 3600
+  },
+  "signatures": {
+    "_comment": "Each is a 65-byte EIP-712 signature over the GOLDEN ruling+domain above. fixedA/fixedB/rotating recover to the registry addresses; unknown recovers to a non-registered address.",
+    "fixedA": "0xa64ee8d461dd135d18540dff36f8dec768e7761b3b0a31f905c954f42c2faf071039620eb13b98109ceeb52c74b640c49c0e0e524b59a3c4e7aeb98aca0b10e71c",
+    "fixedB": "0x894b23846c1d2c961c9daddadc6b8bd5e7fa61b3f7875a8620bfc56bec88b73a6bd85c04d5fe7db95adca11d77a3d3deba68377d2163a34c2ef42998c48ce9b71b",
+    "rotating": "0xdf6cdd508705ff1b722cf6ad17b83ac9078ef1b410bde5ba36e286a5ecbf199a7337550d646702f3faac62727c5551ec2d49a9ae62b53bb38347b0f3dc2011181b",
+    "unknown": "0x68a36fbb5bd46d21057152ee1b37f9fbd1f356b66b8567db3df1edb0aae53f4a7e2b06ebe4315ce8f948b66df84cfe08a6770bb2e15a561cb1698b20230f93e11c"
+  },
+  "quoteResponse": {
+    "_comment": "STEP 1 \u2014 the HTTP 402 body the server returns from POST /quote. A 402 here is the normal quote success path (not an error envelope).",
+    "apiVersion": "1.0.0",
+    "status": "quote",
+    "bundleHash": "0x3f3fab64c884d7a542f43eda4f4b29da96d3b562adfd3ec82f13ed4f649f67eb",
+    "tokenCount": 419,
+    "quote": {
+      "amount": "184000",
+      "currency": "USDC",
+      "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+      "chainId": 8453,
+      "expiresAt": 1718900000
+    },
+    "disputeNonce": "dn_b1b3e9aa",
+    "x402": {
+      "scheme": "exact",
+      "network": "base",
+      "payTo": "0x000000000000000000000000000000000000aBcD",
+      "maxAmountRequired": "184000",
+      "resource": "/v1/evaluate",
+      "description": "ACTP dispute evaluation",
+      "mimeType": "application/json",
+      "commit": {
+        "bundleHash": "0x3f3fab64c884d7a542f43eda4f4b29da96d3b562adfd3ec82f13ed4f649f67eb",
+        "payer": "0x1DC48019D708f3d7f1adCAAfA2Ffa198A6897E8d",
+        "disputeNonce": "dn_b1b3e9aa"
+      }
+    }
+  },
+  "evaluateSignedResponse": {
+    "_comment": "STEP 5 (a) \u2014 HTTP 200 body for the SIGNED path. signatures = [fixedA, rotating] => 2 valid evaluators => passes 2/3. SDK re-recovers and does NOT trust evaluators[].",
+    "apiVersion": "1.0.0",
+    "outcome": "signed",
+    "bundleHash": "0x3f3fab64c884d7a542f43eda4f4b29da96d3b562adfd3ec82f13ed4f649f67eb",
+    "tokenCount": 419,
+    "ruling": {
+      "disputeId": "0x5d1b4b905dcd2f7b6de02f87bd74002a10bcb4294a0707c94981b282f8216546",
+      "ruling": 1,
+      "confidence": 9500,
+      "splitBps": 0,
+      "timestamp": 1700000000,
+      "reasoningHash": "0x88a38f2db5ac668e2543bbdb0c4c02390b9072aacdb46f2664435ce4376136dc",
+      "bundleHash": "0x3f3fab64c884d7a542f43eda4f4b29da96d3b562adfd3ec82f13ed4f649f67eb",
+      "evidenceRefHash": "0x8add2032670e6bbc9348ec2bbb65bb14c9519e91c6a9716f6153fe5ad8fb7179",
+      "reasoningRefHash": "0xf558f77385482465e90591b3036f1c72f30bfc9cb75ed44486917ca2b9f156a7"
+    },
+    "signatures": [
+      "0xa64ee8d461dd135d18540dff36f8dec768e7761b3b0a31f905c954f42c2faf071039620eb13b98109ceeb52c74b640c49c0e0e524b59a3c4e7aeb98aca0b10e71c",
+      "0xdf6cdd508705ff1b722cf6ad17b83ac9078ef1b410bde5ba36e286a5ecbf199a7337550d646702f3faac62727c5551ec2d49a9ae62b53bb38347b0f3dc2011181b"
+    ],
+    "evaluators": [
+      "0x19E7E376E7C213B7E7e7e46cc70A5dD086DAff2A",
+      "0x5CbDd86a2FA8Dc4bDdd8a8f69dBa48572EeC07FB"
+    ],
+    "domain": {
+      "name": "ACTPDisputeEvaluator",
+      "version": "1",
+      "chainId": 8453,
+      "verifyingContract": "0x3c68CC8dFe901c7e89eC9f738F9a81709E6e7737"
+    },
+    "reasoning": "Deliverable is 4 words vs SLA minimum 200; ruling 1 (requester) at 0.95 confidence."
+  },
+  "evaluateProposeDirectlyResponse": {
+    "_comment": "STEP 5 (b) \u2014 HTTP 200 body for the proposeDirectly path. signatures ALWAYS []. The SDK surfaces the recommendation and NEVER fabricates a signature.",
+    "apiVersion": "1.0.0",
+    "outcome": "proposeDirectly",
+    "bundleHash": "0x3f3fab64c884d7a542f43eda4f4b29da96d3b562adfd3ec82f13ed4f649f67eb",
+    "tokenCount": 419,
+    "recommendation": {
+      "ruling": 2,
+      "splitBps": 5000,
+      "confidence": 7200,
+      "rationale": "Models split 2:1 across ruling 0/2; no 2/3 supermajority at >= 90%."
+    },
+    "signatures": [],
+    "reasoning": "Ensemble did not reach 2/3 @ >= 90%; recommend the disputer/proposer call proposeDirectly()."
+  },
+  "verificationCases": {
+    "_comment": "\u00a74.7 verification scenarios the SDK MUST replicate. sigKeys index into signatures{} above. expectValid is the \u00a74.7 result for now=ruling.timestamp (fresh).",
+    "twoValidOneUnknown": {
+      "_comment": "2 valid (fixedA + rotating) + 1 unknown => validCount 2 => PASSES (unknown silently ignored).",
+      "sigKeys": [
+        "fixedA",
+        "rotating",
+        "unknown"
+      ],
+      "now": 1700000000,
+      "expectValid": true,
+      "expectValidCount": 2
+    },
+    "twoFixedValid": {
+      "_comment": "fixedA + fixedB => validCount 2 => PASSES.",
+      "sigKeys": [
+        "fixedA",
+        "fixedB"
+      ],
+      "now": 1700000000,
+      "expectValid": true,
+      "expectValidCount": 2
+    },
+    "threeAllValid": {
+      "sigKeys": [
+        "fixedA",
+        "fixedB",
+        "rotating"
+      ],
+      "now": 1700000000,
+      "expectValid": true,
+      "expectValidCount": 3
+    },
+    "duplicateCountedOnce": {
+      "_comment": "fixedA signed twice + fixedB once => fixedA counted once => validCount 2 => PASSES.",
+      "sigKeys": [
+        "fixedA",
+        "fixedA",
+        "fixedB"
+      ],
+      "now": 1700000000,
+      "expectValid": true,
+      "expectValidCount": 2
+    },
+    "duplicateUnderThreshold": {
+      "_comment": "fixedA signed twice only => counted once => validCount 1 => FAILS (< 2).",
+      "sigKeys": [
+        "fixedA",
+        "fixedA"
+      ],
+      "now": 1700000000,
+      "expectValid": false,
+      "expectValidCount": 1
+    },
+    "stale": {
+      "_comment": "Fresh-by-count (fixedA+fixedB) but now > timestamp + freshnessSeconds => FAILS the freshness gate.",
+      "sigKeys": [
+        "fixedA",
+        "fixedB"
+      ],
+      "now": 1700003601,
+      "expectValid": false,
+      "expectValidCount": 2,
+      "expectStale": true
+    },
+    "oneValidOneUnknown": {
+      "_comment": "fixedA + unknown => validCount 1 => FAILS (< 2).",
+      "sigKeys": [
+        "fixedA",
+        "unknown"
+      ],
+      "now": 1700000000,
+      "expectValid": false,
+      "expectValidCount": 1
+    }
+  }
+}

@@ -1069,7 +1069,7 @@ async function activateOnTestnet(
 ): Promise<{ txHash: string; smartWalletAddress: string } | undefined> {
   const { resolvePrivateKey } = await import('../../wallet/keystore');
   const { ethers } = await import('ethers');
-  const { getNetwork } = await import('../../config/networks');
+  const { getNetwork, PIMLICO_SPONSORSHIP_POLICY_ID } = await import('../../config/networks');
   const { AutoWalletProvider } = await import('../../wallet/AutoWalletProvider');
   const { buildActivationBatch, buildTestnetMintBatch } = await import('../../wallet/aa/TransactionBatcher');
   const { getOnChainAgentState, detectLazyPublishScenario } = await import('../../ACTPClient');
@@ -1115,6 +1115,7 @@ async function activateOnTestnet(
     paymaster: {
       primaryUrl: paymasterPrimary,
       backupUrl: paymasterBackup,
+      sponsorshipPolicyId: PIMLICO_SPONSORSHIP_POLICY_ID,
     },
   });
 
@@ -1228,7 +1229,7 @@ async function mintTestnetUsdcForBuyer(projectRoot: string, output: Output): Pro
     const privateKey = await resolvePrivateKey(projectRoot, { network: 'testnet' });
     if (!privateKey) return;
 
-    const { getNetwork } = await import('../../config/networks');
+    const { getNetwork, PIMLICO_SPONSORSHIP_POLICY_ID } = await import('../../config/networks');
     const networkConfig = getNetwork('base-sepolia');
     if (!networkConfig.aa || !networkConfig.contracts.agentRegistry) return;
 
@@ -1256,7 +1257,7 @@ async function mintTestnetUsdcForBuyer(projectRoot: string, output: Output): Pro
       chainId: networkConfig.chainId,
       actpKernelAddress: networkConfig.contracts.actpKernel,
       bundler: { primaryUrl: bundlerPrimary, backupUrl: bundlerBackup },
-      paymaster: { primaryUrl: paymasterPrimary, backupUrl: paymasterBackup },
+      paymaster: { primaryUrl: paymasterPrimary, backupUrl: paymasterBackup, sponsorshipPolicyId: PIMLICO_SPONSORSHIP_POLICY_ID },
     });
     const smartWalletAddress = autoWallet.getAddress();
 

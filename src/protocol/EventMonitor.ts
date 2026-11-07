@@ -1,5 +1,9 @@
 import { Contract, EventLog, Log } from 'ethers';
 import { State, Transaction } from '../types';
+import {
+  DisputeSplitRecorded,
+  decodeDisputeSplitRecorded,
+} from '../dispute/CompositeMediator';
 
 /**
  * Widened transaction returned by getTransactionHistory.
@@ -39,10 +43,32 @@ export type TransactionWithLogMeta = Transaction & {
  *
  * Previous code had requester/provider swapped which caused wrong filter results.
  */
+/**
+ * A surfaced dispute-resolution event (PRD P2-5). One of:
+ *  - `'DisputeSplitRecorded'`  — CompositeMediator ruling-2 trace (AIP-14b §3.4)
+ *  - `'DisputedToCancelled'`    — kernel DISPUTED→CANCELLED transition (split path;
+ *                                 includes admin-CANCELLED — OQ-11 counts it)
+ *  - `'UMADisputeEscalated'`    — BondEscalation Tier-2 dispute hit UMA's DVM
+ *
+ * These are exactly the three signals the split-rate indexer (P2-8) consumes.
+ */
+export type DisputeEvent =
+  | ({ type: 'DisputeSplitRecorded' } & DisputeSplitRecorded)
+  | { type: 'DisputedToCancelled'; txId: string; blockNumber?: number; logIndex?: number }
+  | { type: 'UMADisputeEscalated'; disputeId: string; assertionId: string; blockNumber?: number; logIndex?: number };
+
 export class EventMonitor {
+  /**
+   * @param kernelContract - ACTPKernel (StateTransitioned / TransactionCreated / EscrowReleased).
+   * @param _escrowContract - EscrowVault (currently unused by this monitor).
+   * @param mediatorContract - optional CompositeMediator, for `onDisputeSplitRecorded`.
+   * @param bondEscalationContract - optional BondEscalation, for `onUMADisputeEscalated`.
+   */
   constructor(
     private readonly kernelContract: Contract,
-    _escrowContract: Contract
+    _escrowContract: Contract,
+    private readonly mediatorContract?: Contract,
+    private readonly bondEscalationContract?: Contract
   ) {}
 
   /**
@@ -315,6 +341,152 @@ export class EventMonitor {
     return () => {
       this.kernelContract.off(filter, listener);
     };
+  }
+
+  // =========================================================================
+  // Dispute surfacing (PRD P2-5 / AIP-14b §3.4)
+  // =========================================================================
+
+  /**
+   * Subscribe to `DisputeSplitRecorded` (CompositeMediator ruling-2 trace).
+   *
+   * Requires a `mediatorContract` to have been passed to the constructor —
+   * the event lives on CompositeMediator, not the kernel. PARITY: Py
+   * `EventMonitor.on_dispute_split_recorded`.
+   *
+   * @throws if no mediator contract was provided.
+   */
+  onDisputeSplitRecorded(callback: (event: DisputeSplitRecorded) => void): () => void {
+    if (!this.mediatorContract) {
+      throw new Error(
+        'onDisputeSplitRecorded: EventMonitor was constructed without a CompositeMediator contract'
+      );
+    }
+    const contract = this.mediatorContract;
+    const filter = contract.filters.DisputeSplitRecorded();
+    const listener = (
+      txId: string,
+      requester: string,
+      provider: string,
+      splitBps: bigint
+    ) => {
+      callback({ txId, requester, provider, splitBps: Number(splitBps) });
+    };
+    contract.on(filter, listener);
+    return () => {
+      contract.off(filter, listener);
+    };
+  }
+
+  /**
+   * Subscribe to kernel `DISPUTED → CANCELLED` transitions — the kernel-level
+   * split path (admin-CANCELLED disputes route here without touching
+   * CompositeMediator). OQ-11 counts these in the headline split-rate at the
+   * SAME weight as `DisputeSplitRecorded`. PARITY: Py
+   * `EventMonitor.on_disputed_to_cancelled`.
+   */
+  onDisputedToCancelled(
+    callback: (event: { txId: string; blockNumber?: number; logIndex?: number }) => void
+  ): () => void {
+    const filter = this.kernelContract.filters.StateTransitioned();
+    const listener = (txId: string, from: number, to: number, _ev?: EventLog) => {
+      if (Number(from) === State.DISPUTED && Number(to) === State.CANCELLED) {
+        callback({ txId });
+      }
+    };
+    this.kernelContract.on(filter, listener);
+    return () => {
+      this.kernelContract.off(filter, listener);
+    };
+  }
+
+  /**
+   * Subscribe to BondEscalation `UMADisputeEscalated` — a Tier-2 assertion was
+   * disputed and pushed to UMA's DVM (AIP-14b §8.5).
+   *
+   * Requires a `bondEscalationContract` to have been passed to the constructor.
+   * PARITY: Py `EventMonitor.on_uma_dispute_escalated`.
+   *
+   * @throws if no BondEscalation contract was provided.
+   */
+  onUMADisputeEscalated(
+    callback: (event: { disputeId: string; assertionId: string }) => void
+  ): () => void {
+    if (!this.bondEscalationContract) {
+      throw new Error(
+        'onUMADisputeEscalated: EventMonitor was constructed without a BondEscalation contract'
+      );
+    }
+    const contract = this.bondEscalationContract;
+    const filter = contract.filters.UMADisputeEscalated();
+    const listener = (disputeId: string, assertionId: string) => {
+      callback({ disputeId, assertionId });
+    };
+    contract.on(filter, listener);
+    return () => {
+      contract.off(filter, listener);
+    };
+  }
+
+  /**
+   * One-shot historical sweep of all three dispute signals across a block
+   * window — the read half the split-rate indexer (P2-8) builds on. Returns a
+   * block/log-ordered list of {@link DisputeEvent}. PARITY: Py
+   * `EventMonitor.get_dispute_events`.
+   */
+  async getDisputeEvents(
+    fromBlock?: number,
+    toBlock?: number | 'latest'
+  ): Promise<DisputeEvent[]> {
+    const out: DisputeEvent[] = [];
+
+    // Kernel DISPUTED→CANCELLED (always available).
+    const stFilter = this.kernelContract.filters.StateTransitioned();
+    const stLogs = await this.kernelContract.queryFilter(stFilter, fromBlock, toBlock);
+    for (const log of stLogs) {
+      if (!('args' in log)) continue;
+      const ev = log as EventLog;
+      const from = Number(ev.args?.[1]);
+      const to = Number(ev.args?.[2]);
+      if (from === State.DISPUTED && to === State.CANCELLED) {
+        out.push({
+          type: 'DisputedToCancelled',
+          txId: ev.args?.[0],
+          blockNumber: ev.blockNumber,
+          logIndex: ev.index,
+        });
+      }
+    }
+
+    // CompositeMediator DisputeSplitRecorded (if wired).
+    if (this.mediatorContract) {
+      const dsFilter = this.mediatorContract.filters.DisputeSplitRecorded();
+      const dsLogs = await this.mediatorContract.queryFilter(dsFilter, fromBlock, toBlock);
+      for (const log of dsLogs) {
+        if (!('args' in log)) continue;
+        out.push({ type: 'DisputeSplitRecorded', ...decodeDisputeSplitRecorded(log as EventLog) });
+      }
+    }
+
+    // BondEscalation UMADisputeEscalated (if wired).
+    if (this.bondEscalationContract) {
+      const umaFilter = this.bondEscalationContract.filters.UMADisputeEscalated();
+      const umaLogs = await this.bondEscalationContract.queryFilter(umaFilter, fromBlock, toBlock);
+      for (const log of umaLogs) {
+        if (!('args' in log)) continue;
+        const ev = log as EventLog;
+        out.push({
+          type: 'UMADisputeEscalated',
+          disputeId: ev.args?.[0],
+          assertionId: ev.args?.[1],
+          blockNumber: ev.blockNumber,
+          logIndex: ev.index,
+        });
+      }
+    }
+
+    out.sort((a, b) => (a.blockNumber ?? 0) - (b.blockNumber ?? 0) || (a.logIndex ?? 0) - (b.logIndex ?? 0));
+    return out;
   }
 }
 

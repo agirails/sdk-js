@@ -450,8 +450,13 @@ export const DisputeWindow = {
   /**
    * Check if dispute window is still active
    *
+   * ⚠️ `windowSeconds` must be a **duration**, not a transaction's `disputeWindow`
+   * field after delivery — that field becomes an absolute timestamp. Prefer
+   * {@link DisputeWindow.isOpenFor}, which reads the transaction and cannot be
+   * called with the wrong unit.
+   *
    * @param completedAt - Completion timestamp
-   * @param windowSeconds - Dispute window in seconds
+   * @param windowSeconds - Dispute window **duration** in seconds
    * @returns true if window is still active
    */
   isActive(completedAt: number, windowSeconds: number): boolean {
@@ -462,14 +467,83 @@ export const DisputeWindow = {
   /**
    * Get time remaining in dispute window
    *
+   * ⚠️ Same caveat as {@link DisputeWindow.isActive} — pass a **duration**.
+   * Prefer {@link DisputeWindow.remainingFor}.
+   *
    * @param completedAt - Completion timestamp
-   * @param windowSeconds - Dispute window in seconds
+   * @param windowSeconds - Dispute window **duration** in seconds
    * @returns Seconds remaining (0 if expired)
    */
   remaining(completedAt: number, windowSeconds: number): number {
     const expiresAt = completedAt + windowSeconds;
     const now = Math.floor(Date.now() / 1000);
     return Math.max(0, expiresAt - now);
+  },
+
+  /**
+   * Resolve the absolute UNIX timestamp at which a transaction's dispute window closes.
+   *
+   * Handles the kernel's dual meaning of `tx.disputeWindow` (duration before
+   * `DELIVERED`, absolute timestamp from `DELIVERED` onward), so callers never have to
+   * know which one they are holding.
+   *
+   * Before delivery the deadline is **provisional** — it is measured from now, because
+   * the clock only starts when the provider delivers, and the provider may still extend
+   * (never shorten) the window at that point.
+   *
+   * @param tx - Transaction with at least `state` and `disputeWindow`
+   * @returns UNIX timestamp (seconds) when the window closes
+   *
+   * @example
+   * const closesAt = DisputeWindow.deadlineOf(tx);
+   * console.log(new Date(closesAt * 1000).toISOString());
+   */
+  deadlineOf(tx: { state: string | number; disputeWindow: number }): number {
+    return DisputeWindow._isDelivered(tx.state)
+      ? tx.disputeWindow // already absolute
+      : Math.floor(Date.now() / 1000) + tx.disputeWindow; // provisional
+  },
+
+  /**
+   * Seconds remaining before the dispute window closes (0 once it has).
+   *
+   * @param tx - Transaction with at least `state` and `disputeWindow`
+   * @returns Seconds remaining, 0 if the window has closed
+   */
+  remainingFor(tx: { state: string | number; disputeWindow: number }): number {
+    return Math.max(0, DisputeWindow.deadlineOf(tx) - Math.floor(Date.now() / 1000));
+  },
+
+  /**
+   * Whether a dispute can still be raised for this transaction.
+   *
+   * Mirrors the kernel guard `require(block.timestamp <= txn.disputeWindow)`, which only
+   * applies once the transaction has been delivered.
+   *
+   * @param tx - Transaction with at least `state` and `disputeWindow`
+   */
+  isOpenFor(tx: { state: string | number; disputeWindow: number }): boolean {
+    return DisputeWindow.remainingFor(tx) > 0;
+  },
+
+  /**
+   * States in which `disputeWindow` holds an absolute timestamp rather than a duration.
+   *
+   * The kernel rewrites the field on the DELIVERED transition, so every state reachable
+   * only *after* delivery carries a timestamp.
+   *
+   * ⚠️ `CANCELLED` is deliberately excluded because it is **ambiguous**: it is reachable
+   * both before delivery (from COMMITTED / IN_PROGRESS — field is still a duration) and
+   * after it (via DISPUTED — field is a timestamp). A cancelled transaction has no live
+   * dispute window either way, so callers should not be asking; treating it as a
+   * duration is the harmless branch.
+   *
+   * @internal
+   */
+  _isDelivered(state: string | number): boolean {
+    // Reuses State.STATES so the kernel enum order lives in exactly one place.
+    const s = typeof state === 'number' ? State.STATES[state] : state;
+    return s === 'DELIVERED' || s === 'DISPUTED' || s === 'SETTLED';
   },
 };
 

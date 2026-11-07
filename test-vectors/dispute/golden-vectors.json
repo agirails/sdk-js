@@ -1,0 +1,225 @@
+{
+  "_comment": "PRD P2-10 CAPSTONE — the single cross-SDK golden-vector fixture for the AIP-14b dispute clients. Loaded BYTE-IDENTICALLY by BOTH the TS jest suite (sdk-js/tests/dispute-parity.test.ts) and the Py pytest suite (python-sdk-v2/tests/test_cross_sdk/test_dispute_parity.py). Every value below is byte/value-identical across the two SDKs because each is reproduced from the SAME canonical encoder (ethers Interface.encodeFunctionData / web3 encode_abi, ethers.TypedDataEncoder / eth_abi+keccak, the shared canonical-JSON serializer). The five golden families (airulingDigest, bundleHash, bondEscalationCalldata, disputeSplitRecordedDecode, splitRate) are the P2-10 acceptance set. DO NOT regenerate values by hand — they are anchored to EncodingCanonical.t.sol (digest), EVIDENCE-BUNDLE-SCHEMA.md Example A (bundleHash), and the BondEscalation/CompositeMediator ABIs (calldata/topics). Any change here MUST keep BOTH suites green.",
+  "airulingDigest": {
+    "_comment": "AIRuling EIP-712 digest — the cross-language anchor (= GOLDEN_DIGEST in Protocol/actp-kernel/test/EncodingCanonical.t.sol). TS computeRulingDigest() and Py compute_ruling_digest() MUST both reproduce expected.digest from the SAME ruling+domain below. Mirrors the frozen dispute_golden_vector.json domain/ruling.",
+    "domain": {
+      "name": "ACTPDisputeEvaluator",
+      "version": "1",
+      "chainId": 8453,
+      "verifyingContract": "0x3c68CC8dFe901c7e89eC9f738F9a81709E6e7737"
+    },
+    "ruling": {
+      "disputeId": "0x5d1b4b905dcd2f7b6de02f87bd74002a10bcb4294a0707c94981b282f8216546",
+      "ruling": 1,
+      "confidence": 9500,
+      "splitBps": 0,
+      "timestamp": 1700000000,
+      "reasoningHash": "0x88a38f2db5ac668e2543bbdb0c4c02390b9072aacdb46f2664435ce4376136dc",
+      "bundleHash": "0x3f3fab64c884d7a542f43eda4f4b29da96d3b562adfd3ec82f13ed4f649f67eb",
+      "evidenceRefHash": "0x8add2032670e6bbc9348ec2bbb65bb14c9519e91c6a9716f6153fe5ad8fb7179",
+      "reasoningRefHash": "0xf558f77385482465e90591b3036f1c72f30bfc9cb75ed44486917ca2b9f156a7"
+    },
+    "expected": {
+      "domainSeparator": "0x49c919619319169442e048297d8b8dc2f0c6a78b8601c78a39656bc2b3b25db8",
+      "structHash": "0x2b30b25ad0258f200a315a68b1a7ebffc4040679fca1a4bbdf1cae0b57c589b4",
+      "digest": "0xc14778f377cd385dd4686b798cb2a010c8ff95e8a35a4f170af7e05bc8c2d8a0"
+    }
+  },
+  "bundleHash": {
+    "_comment": "Canonical evidence-bundle hash — EVIDENCE-BUNDLE-SCHEMA.md Example A. The bundle is inlined so BOTH SDKs serialize the SAME logical object through their canonical-JSON serializer (sorted keys, no whitespace, ensure_ascii=false) and MUST produce identical canonical_bytes (719 UTF-8 bytes) and bundleHash. TS bundleHash()/Py bundle_hash() with skip-token-check (count already enforced).",
+    "bundle": {
+      "schemaVersion": "1.0.0",
+      "disputeId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+      "spec": {
+        "agirailsMdCID": "bafyspec",
+        "capabilities": [
+          "echo"
+        ],
+        "slaHash": "0xabababababababababababababababababababababababababababababababab"
+      },
+      "delivery": {
+        "deliverableHash": "0xcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "deliverableCID": "bafydeliv",
+        "retrievalInstructions": "ipfs cat bafydeliv",
+        "deliveredAt": 1700000000
+      },
+      "dispute": {
+        "reason": "not delivered",
+        "evidenceCID": "bafyev",
+        "openedAt": 1700003600
+      },
+      "timeline": [
+        {
+          "event": "DELIVERED",
+          "at": 1700000000
+        },
+        {
+          "event": "DISPUTED",
+          "at": 1700003600
+        }
+      ],
+      "reasoning": {
+        "evaluatorPromptCID": "bafyprompt",
+        "modelVersions": [
+          "claude-opus-4-6",
+          "gpt-4.1"
+        ],
+        "notes": ""
+      }
+    },
+    "expected": {
+      "canonicalBytesUtf8Len": 719,
+      "tokenizer": "cl100k_base",
+      "tokenCount": 255,
+      "bundleHash": "0x379fb8140138f7d90cfbcb481898b6ec646e2c0378ff0d3a4a4572a6570ca257"
+    }
+  },
+  "bondEscalationCalldata": {
+    "_comment": "Byte-exact BondEscalation calldata for a fixed openDispute / challenge / submitAIRuling / escalateToUMA. Both SDKs build calldata for the SAME args (TS Interface.encodeFunctionData via BondEscalationClient.send / Py encode_abi via BondEscalationClient.encode_calldata) and MUST reproduce these hex strings EXACTLY. disputeId is the deterministic keccak256(abi.encode('ACTP_DISPUTE_V1', txId)) that openDispute() returns.",
+    "txId": "0xabcdef0000000000000000000000000000000000000000000000000000000001",
+    "disputeId": "0x5925b294f9cf3c79a7d17ae9e51eeb9f79434b7a63ad5487a607b7c6d38ccc47",
+    "openDispute": {
+      "args": {
+        "txId": "0xabcdef0000000000000000000000000000000000000000000000000000000001"
+      },
+      "selector": "0xf08ef6cb",
+      "calldata": "0xf08ef6cbabcdef0000000000000000000000000000000000000000000000000000000001"
+    },
+    "challenge": {
+      "args": {
+        "disputeId": "0x5925b294f9cf3c79a7d17ae9e51eeb9f79434b7a63ad5487a607b7c6d38ccc47",
+        "counterRuling": 2,
+        "counterSplitBps": 6500
+      },
+      "selector": "0x2dc0795c",
+      "calldata": "0x2dc0795c5925b294f9cf3c79a7d17ae9e51eeb9f79434b7a63ad5487a607b7c6d38ccc4700000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000001964"
+    },
+    "submitAIRuling": {
+      "args": {
+        "ruling": {
+          "disputeId": "0x5d1b4b905dcd2f7b6de02f87bd74002a10bcb4294a0707c94981b282f8216546",
+          "ruling": 1,
+          "confidence": 9500,
+          "splitBps": 0,
+          "timestamp": 1700000000,
+          "reasoningHash": "0x88a38f2db5ac668e2543bbdb0c4c02390b9072aacdb46f2664435ce4376136dc",
+          "bundleHash": "0x3f3fab64c884d7a542f43eda4f4b29da96d3b562adfd3ec82f13ed4f649f67eb",
+          "evidenceRefHash": "0x0ccc322f1c7133438e34001d0115a4c4c64f0cb6c9947fa08f7820a766bfba9b",
+          "reasoningRefHash": "0x5146155ebc33851e769cf7b2c25093cdd5b2b079a05e89562823b212857feccc"
+        },
+        "signatures": [
+          "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1b"
+        ],
+        "evidenceCID": "bafybeigolden0evidence0cid",
+        "reasoningCID": "bafybeigolden0reasoning0cid"
+      },
+      "selector": "0xca74ab82",
+      "calldata": "0xca74ab825d1b4b905dcd2f7b6de02f87bd74002a10bcb4294a0707c94981b282f82165465d1b4b905dcd2f7b6de02f87bd74002a10bcb4294a0707c94981b282f82165460000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000251c0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000006553f10088a38f2db5ac668e2543bbdb0c4c02390b9072aacdb46f2664435ce4376136dc3f3fab64c884d7a542f43eda4f4b29da96d3b562adfd3ec82f13ed4f649f67eb0ccc322f1c7133438e34001d0115a4c4c64f0cb6c9947fa08f7820a766bfba9b5146155ebc33851e769cf7b2c25093cdd5b2b079a05e89562823b212857feccc00000000000000000000000000000000000000000000000000000000000001a000000000000000000000000000000000000000000000000000000000000001e00000000000000000000000000000000000000000000000000000000000000220000000000000000000000000000000000000000000000000000000000000001a62616679626569676f6c64656e3065766964656e636530636964000000000000000000000000000000000000000000000000000000000000000000000000001b62616679626569676f6c64656e30726561736f6e696e673063696400000000000000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000411234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1b00000000000000000000000000000000000000000000000000000000000000"
+    },
+    "escalateToUMA": {
+      "args": {
+        "disputeId": "0x5925b294f9cf3c79a7d17ae9e51eeb9f79434b7a63ad5487a607b7c6d38ccc47",
+        "evidenceCID": "bafybeigexampleCID",
+        "reasoningCID": "bafybeigexampleReasoningCID"
+      },
+      "selector": "0xea487f8a",
+      "calldata": "0xea487f8a5925b294f9cf3c79a7d17ae9e51eeb9f79434b7a63ad5487a607b7c6d38ccc47000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000000000000000000000000000000000000000001262616679626569676578616d706c654349440000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001b62616679626569676578616d706c65526561736f6e696e674349440000000000"
+    }
+  },
+  "disputeSplitRecordedDecode": {
+    "_comment": "DisputeSplitRecorded event decode + the ZERO-REMAINING CONSUMER RULE on the resolution proof. topic0 = keccak256('DisputeSplitRecorded(bytes32,address,address,uint16)'). Both SDKs decode the proof bytes the same way; when remaining==0 the 1-wei sentinel MUST be zeroed (phantomSentinel=true), NEVER reported as a payout.",
+    "disputeSplitRecordedTopic0": "0x64f3bb8deff5e5af1e6f49fe3ccdff2d59febd8d93f5926bc61fc25a2cdff99f",
+    "event": {
+      "txId": "0xabcdef0000000000000000000000000000000000000000000000000000000001",
+      "requester": "0x1111111111111111111111111111111111111111",
+      "provider": "0x2222222222222222222222222222222222222222",
+      "splitBps": 3000
+    },
+    "resolutionProofs": [
+      {
+        "name": "split_normal",
+        "proof": "0x00000000000000000000000000000000000000000000000000000000000aae6000000000000000000000000000000000000000000000000000000000000493e0",
+        "remaining": "1000000",
+        "expected": {
+          "isSplit": true,
+          "phantomSentinel": false,
+          "requesterAmount": "700000",
+          "providerAmount": "300000",
+          "providerAtFault": null
+        }
+      },
+      {
+        "name": "settle_provider_wins",
+        "proof": "0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000f42400000000000000000000000000000000000000000000000000000000000000000",
+        "remaining": "1000000",
+        "expected": {
+          "isSplit": false,
+          "phantomSentinel": false,
+          "requesterAmount": "0",
+          "providerAmount": "1000000",
+          "providerAtFault": false
+        }
+      },
+      {
+        "name": "drained_settle_sentinel",
+        "_comment": "ZERO-REMAINING: remaining==0; provider field holds the phantom 1-wei sentinel. Both SDKs MUST surface 0/0 payouts, never 1 wei.",
+        "proof": "0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000",
+        "remaining": "0",
+        "expected": {
+          "isSplit": false,
+          "phantomSentinel": true,
+          "requesterAmount": "0",
+          "providerAmount": "0",
+          "providerAtFault": false
+        }
+      },
+      {
+        "name": "drained_split_sentinel",
+        "_comment": "ZERO-REMAINING on the 64-byte SPLIT/CANCELLED branch; remaining==0, requester field holds the phantom 1-wei sentinel. Must surface 0/0.",
+        "proof": "0x000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000aae60",
+        "remaining": "0",
+        "expected": {
+          "isSplit": true,
+          "phantomSentinel": true,
+          "requesterAmount": "0",
+          "providerAmount": "0",
+          "providerAtFault": null
+        }
+      }
+    ]
+  },
+  "splitRate": {
+    "_comment": "OQ-11 split-rate computation. The numerator counts BOTH DisputeSplitRecorded AND kernel DISPUTED->CANCELLED (admin-CANCELLED IS counted) at IDENTICAL weight. Both SDKs' computeSplitRate / compute_split_rate (the P2-5 primitive the DisputeSplitIndexer reuses) MUST return the SAME float for each row. The 14% row is the headline R11 case (1 admin-CANCELLED split / 7 disputes).",
+    "cases": [
+      {
+        "name": "headline_admin_cancelled_14pct",
+        "splitRecorded": 0,
+        "kernelDisputedToCancelled": 1,
+        "totalDisputes": 7,
+        "expectedSplitRate": 0.14285714285714285,
+        "approxPercent": 14
+      },
+      {
+        "name": "mixed_source_equal_weight",
+        "splitRecorded": 1,
+        "kernelDisputedToCancelled": 1,
+        "totalDisputes": 7,
+        "expectedSplitRate": 0.2857142857142857
+      },
+      {
+        "name": "all_mediator_splits",
+        "splitRecorded": 2,
+        "kernelDisputedToCancelled": 0,
+        "totalDisputes": 2,
+        "expectedSplitRate": 1
+      },
+      {
+        "name": "zero_disputes_no_div_by_zero",
+        "splitRecorded": 0,
+        "kernelDisputedToCancelled": 0,
+        "totalDisputes": 0,
+        "expectedSplitRate": 0
+      }
+    ]
+  }
+}

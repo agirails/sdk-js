@@ -54,8 +54,9 @@ import { UnifiedPayParams, UnifiedPayResult } from './types/adapter';
 import { EASHelper, EASConfig } from './protocol/EASHelper';
 import { ERC8004Bridge } from './erc8004/ERC8004Bridge';
 import { ReputationReporter } from './erc8004/ReputationReporter';
+import { DisputeClient } from './dispute/DisputeClient';
 import { ERC8004Network } from './types/erc8004';
-import { getNetwork } from './config/networks';
+import { getNetwork, PIMLICO_SPONSORSHIP_POLICY_ID } from './config/networks';
 import { IWalletProvider } from './wallet/IWalletProvider';
 import { EOAWalletProvider } from './wallet/EOAWalletProvider';
 import { AutoWalletProvider } from './wallet/AutoWalletProvider';
@@ -63,6 +64,7 @@ import { SmartWalletCall } from './wallet/aa/constants';
 import { SmartWalletRouter, createSmartWalletRouter } from './wallet/SmartWalletRouter';
 import { buildActivationBatch, ActivationScenario } from './wallet/aa/TransactionBatcher';
 import { loadPendingPublish, deletePendingPublish, PendingPublish } from './config/pendingPublish';
+import { encodeDeliveryProof, assertRealResultHash } from './utils/deliveryProof';
 import { loadBuyerLink, BuyerLink } from './config/buyerLink';
 import { sdkLogger } from './utils/Logger';
 import { SettleOnInteract } from './settle/SettleOnInteract';
@@ -382,7 +384,25 @@ export interface ACTPClientConfig {
     escrowVault?: string;
     usdc?: string;
     agentRegistry?: string;
+    /**
+     * Dispute-graph overrides (F43). A custom-kernel integrator whose kernel
+     * points at a DIFFERENT BondEscalation / CompositeMediator / UMA OOV3 graph
+     * MUST override these too — otherwise `client.dispute` would read the network
+     * defaults and target the WRONG dispute graph (split-brain). Any omitted
+     * value falls back to the network default.
+     */
+    bondEscalation?: string;
+    compositeMediator?: string;
+    umaOptimisticOracleV3?: string;
   };
+
+  /**
+   * Optional: deployment block of a CUSTOM `contracts.actpKernel`.
+   * Without it, a custom kernel has no known deployment block and event scans
+   * start from genesis (unbounded eth_getLogs — the F-1 re-arm). Set this to the
+   * custom kernel's deploy block to bound the scan window.
+   */
+  actpKernelDeploymentBlock?: number;
 
   /**
    * Optional: Gas settings for blockchain transactions.
@@ -564,6 +584,23 @@ export class ACTPClient {
   public readonly easHelper?: EASHelper;
 
   /**
+   * AIP-14b three-tier dispute facade (PRD P2-9).
+   *
+   * Present (defined) ONLY when the dispute contract addresses
+   * (`bondEscalation` / `compositeMediator` / `umaOptimisticOracleV3`) are
+   * configured for the network — i.e. once the dispute stack is deployed
+   * (testnet in Phase 6, mainnet later). It is `undefined` on mock mode and on
+   * networks where the addresses are still null, so existing flows are
+   * unaffected. Composes BondEscalation + CompositeMediator + EvaluatorClient +
+   * UMAHelper + DisputeSplitIndexer behind one object; see
+   * {@link DisputeClient}.
+   *
+   * For the legacy single-shot kernel path see `ACTPKernel.raiseDispute` /
+   * `resolveDispute` (their JSDoc steers here).
+   */
+  public readonly dispute?: DisputeClient;
+
+  /**
    * Adapter registry for managing available adapters.
    *
    * Used internally by the router but exposed for custom adapter registration.
@@ -671,10 +708,12 @@ export class ACTPClient {
     agentRegistryAddress?: string,
     networkId?: string,
     erc8004IdentityRegistryAddress?: string,
+    disputeClient?: DisputeClient,
   ) {
     this.runtime = runtime;
     this.info = info;
     this.easHelper = easHelper;
+    this.dispute = disputeClient;
     this.reputationReporter = reputationReporter;
     this.walletProvider = walletProvider;
     this.contractAddresses = contractAddresses;
@@ -784,6 +823,10 @@ export class ACTPClient {
     let registryAddr: string | undefined;
     let networkId: string | undefined;
     let erc8004IdentityAddr: string | undefined;
+    // AIP-14b dispute facade (PRD P2-9). Built only when the dispute contract
+    // addresses are configured for the network (Phase 6+); stays undefined
+    // otherwise so mock mode and pre-deployment networks are unaffected.
+    let disputeClient: DisputeClient | undefined;
 
     // If custom runtime provided, use it directly
     if (config.runtime) {
@@ -920,7 +963,7 @@ export class ACTPClient {
               provider,
               chainId: networkConfig.chainId,
               actpKernelAddress: effectiveKernelAddress,
-              actpKernelDeploymentBlock: isCustomKernel ? undefined : networkConfig.actpKernelDeploymentBlock,
+              actpKernelDeploymentBlock: isCustomKernel ? config.actpKernelDeploymentBlock : networkConfig.actpKernelDeploymentBlock,
               bundler: {
                 primaryUrl: bundlerPrimary,
                 backupUrl: bundlerBackup,
@@ -928,6 +971,7 @@ export class ACTPClient {
               paymaster: {
                 primaryUrl: paymasterPrimary,
                 backupUrl: paymasterBackup,
+                sponsorshipPolicyId: PIMLICO_SPONSORSHIP_POLICY_ID,
               },
             });
 
@@ -1074,6 +1118,39 @@ export class ACTPClient {
             signer,
           });
 
+          // AIP-14b DISPUTE FACADE (PRD P2-9): wire client.dispute ONLY when the
+          // dispute contracts are configured for this network. Addresses are null
+          // until Phase 6 (testnet) / later (mainnet), so on undeployed networks
+          // this stays undefined and existing flows are unchanged. Best-effort —
+          // a wiring failure must never block create().
+          // F43: resolve the dispute graph from config.contracts overrides FIRST,
+          // falling back to network defaults. A custom-kernel integrator who
+          // overrode `contracts.actpKernel` (and its dispute graph) now hits the
+          // SAME graph for dispute/approval calls as the rest of the client,
+          // instead of the default Bond/Mediator graph (split-brain fix).
+          const bondEscalationAddr =
+            config.contracts?.bondEscalation ?? networkConfig.contracts.bondEscalation;
+          const compositeMediatorAddr =
+            config.contracts?.compositeMediator ?? networkConfig.contracts.compositeMediator;
+          const umaOptimisticOracleV3Addr =
+            config.contracts?.umaOptimisticOracleV3 ?? networkConfig.contracts.umaOptimisticOracleV3;
+          if (bondEscalationAddr && compositeMediatorAddr) {
+            try {
+              disputeClient = new DisputeClient({
+                signer,
+                provider,
+                bondEscalationAddress: bondEscalationAddr,
+                compositeMediatorAddress: compositeMediatorAddr,
+                umaOptimisticOracleV3Address: umaOptimisticOracleV3Addr,
+                usdcAddress: config.contracts?.usdc ?? networkConfig.contracts.usdc,
+              });
+            } catch (e) {
+              sdkLogger.warn('DisputeClient wiring skipped', {
+                error: e instanceof Error ? e.message : String(e),
+              });
+            }
+          }
+
           // AIP-12: Contract addresses for AA batched payments
           contractAddresses = {
             usdc: config.contracts?.usdc ?? networkConfig.contracts.usdc,
@@ -1129,7 +1206,7 @@ export class ACTPClient {
       runtime, normalizedAddress, info, easHelper,
       erc8004Bridge, reputationReporter, walletProvider, contractAddresses,
       lazyScenario, lazyPending, registryAddr, networkId,
-      erc8004IdentityAddr,
+      erc8004IdentityAddr, disputeClient,
     );
     client.pendingIsStale = pendingIsStale;
 
@@ -1510,18 +1587,28 @@ export class ACTPClient {
    * @param txId - Transaction ID
    * @param disputeWindowSeconds - Optional dispute window override in seconds.
    *                               If not provided, uses transaction's disputeWindow.
-   * @throws {Error} If transaction not found or wrong state
+   * @param resultHash - Optional bytes32 commitment to the delivered result
+   *                     (the SAME value the AIP-4 delivery proof commits to:
+   *                     `computeResultHash(result)` for public delivery, the
+   *                     envelope hash for AIP-16 encrypted delivery). REQUIRED —
+   *                     the delivery path fails closed if it is absent; there is
+   *                     no synthetic fallback.
+   * @throws {Error} If transaction not found, wrong state, or `resultHash` is
+   *                 missing/invalid
    *
    * @example
    * ```typescript
-   * // Use transaction's disputeWindow (recommended)
-   * await client.deliver(txId);
+   * // Commit to the real delivered-result hash (uses the tx's disputeWindow)
+   * await client.deliver(txId, undefined, computeResultHash(result));
    *
    * // Override with custom dispute window (use with caution)
-   * await client.deliver(txId, 7200);
+   * await client.deliver(txId, 7200, computeResultHash(result));
+   *
+   * // Encrypted (AIP-16) delivery commits to the envelope hash
+   * await client.deliver(txId, undefined, envelopeHash);
    * ```
    */
-  async deliver(txId: string, disputeWindowSeconds?: number): Promise<void> {
+  async deliver(txId: string, disputeWindowSeconds?: number, resultHash?: string): Promise<void> {
     this.settleOnInteract.trigger();
     // Fetch transaction
     const tx = await this.runtime.getTransaction(txId);
@@ -1532,11 +1619,11 @@ export class ACTPClient {
     // Use provided disputeWindow or fall back to transaction's disputeWindow
     const effectiveDisputeWindow = disputeWindowSeconds ?? tx.disputeWindow;
 
-    // Encode dispute window as proof
-    const proof = ethers.AbiCoder.defaultAbiCoder().encode(
-      ['uint256'],
-      [effectiveDisputeWindow]
-    );
+    // AIP-14c: the v2 kernel requires a 64-byte (window, resultHash) proof and
+    // rejects the legacy 32-byte window-only blob. Fail closed unless the caller
+    // committed to a REAL deliverable — there is NO synthetic fallback.
+    const effectiveResultHash = assertRealResultHash(resultHash);
+    const proof = encodeDeliveryProof(effectiveDisputeWindow, effectiveResultHash);
 
     if (this.smartWalletRouter?.shouldRoute()) {
       // When using Smart Wallet, batch startWork + deliver if still COMMITTED

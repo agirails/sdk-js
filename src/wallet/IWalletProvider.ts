@@ -78,6 +78,8 @@ export interface CreateACTPTransactionParams {
   deadline: number;
   disputeWindow: number;
   serviceHash: string;
+  /** Canonical v2 agreementHash (bytes32); defaults to bytes32(0) when omitted. */
+  agreementHash?: string;
   agentId: string;
   requesterAgentId?: string;
   contracts: {
@@ -111,6 +113,8 @@ export interface BatchedPayParams {
   deadline: number;
   disputeWindow: number;
   serviceHash: string;
+  /** Canonical v2 agreementHash (bytes32); defaults to bytes32(0) when omitted. */
+  agreementHash?: string;
   agentId: string;
   requesterAgentId?: string;
   contracts: {
