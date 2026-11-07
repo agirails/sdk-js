@@ -14,6 +14,9 @@
  * @module wallet/AutoWalletProvider
  */
 
+import { kernelCreationInterface, kernelCreationArguments } from '../protocol/kernelCreation';
+
+
 import { ethers } from 'ethers';
 import {
   IWalletProvider,
@@ -63,6 +66,8 @@ export interface AutoWalletConfig {
   paymaster: {
     primaryUrl: string;
     backupUrl?: string;
+    /** Pimlico sponsorship policy id — applied on Pimlico endpoints only */
+    sponsorshipPolicyId?: string;
   };
 }
 
@@ -107,6 +112,7 @@ export class AutoWalletProvider implements IWalletProvider {
       primaryUrl: config.paymaster.primaryUrl,
       backupUrl: config.paymaster.backupUrl,
       chainId: config.chainId,
+      sponsorshipPolicyId: config.paymaster.sponsorshipPolicyId,
     });
 
     this.nonceManager = new DualNonceManager(
@@ -444,9 +450,10 @@ export class AutoWalletProvider implements IWalletProvider {
    * Manages ACTP nonce inside the mutex queue for concurrent safety.
    */
   async createACTPTransaction(params: CreateACTPTransactionParams): Promise<CreateACTPTransactionResult> {
-    const kernelIface = new ethers.Interface([
-      'function createTransaction(address provider, address requester, uint256 amount, uint256 deadline, uint256 disputeWindow, bytes32 serviceHash, uint256 agentId, uint256 requesterAgentId)',
-    ]);
+    // Canonical v2 createTransaction: 9-arg with agreementHash 7th (between
+    // serviceHash and agentId). The 8-arg shape derives the WRONG selector.
+    const kernelIface = kernelCreationInterface(params.contracts.actpKernel);
+    const ZERO_BYTES32 = '0x' + '00'.repeat(32);
 
     return this.nonceManager.enqueue(
       async ({ entryPointNonce, actpNonce }) => {
@@ -458,16 +465,17 @@ export class AutoWalletProvider implements IWalletProvider {
           actpNonce
         );
 
-        const createTxData = kernelIface.encodeFunctionData('createTransaction', [
+        const createTxData = kernelIface.encodeFunctionData('createTransaction', kernelCreationArguments(params.contracts.actpKernel, [
           params.provider,
           params.requester,
           BigInt(params.amount),
           params.deadline,
           params.disputeWindow,
           params.serviceHash,
+          params.agreementHash || ZERO_BYTES32,  // v2: agreementHash (7th arg)
           BigInt(params.agentId || '0'),
           BigInt(params.requesterAgentId || '0'),
-        ]);
+        ], params.agreementHash || ZERO_BYTES32));
 
         const calls: SmartWalletCall[] = [
           { target: params.contracts.actpKernel, value: 0n, data: createTxData },

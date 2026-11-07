@@ -64,17 +64,18 @@ describe('P2-2 network-config dispute keys (TS)', () => {
   });
 
   // AIP-14c dispute deployment state. On Base Sepolia the BondEscalation +
-  // CompositeMediator are live (deployed 2026-07-02 / P4-1); Tier-2 UMA still
-  // uses a testnet MockOOV3 so `umaOptimisticOracleV3` stays undefined. On Base
-  // Mainnet none of the three are deployed yet.
+  // CompositeMediator are live (D7 stack, deployed 2026-07-13 against kernel-v2,
+  // supersedes the pre-D7 pair); Tier-2 points at a testnet MockOOV3 (canonical
+  // UMA OOV3 absent on Sepolia, G2). On Base Mainnet none of the three are
+  // deployed yet.
   const DEPLOYED_BASE_SEPOLIA = {
-    bondEscalation: '0x62d5417BFcceDe49047c713362dA1d4D247fffa7',
-    compositeMediator: '0xf8095f8df0102d5f9fA36fF0792c89Db6FB814a0',
-    umaOptimisticOracleV3: undefined,
+    bondEscalation: '0x84CB23F1bCebC286270EE5E62A19a64686D3Ca0A',
+    compositeMediator: '0x45a440a34303AEe597672C1D47d1ce83BEC8aD1C',
+    umaOptimisticOracleV3: '0x64C81e2F8a8f72D20AF24a8d9b3A22A93D80AC6A',
   } as const;
 
   test.each(['base-sepolia', 'base-mainnet'])(
-    '%s exposes all 3 dispute keys (bondEscalation + compositeMediator deployed on sepolia, uma undefined-until-deployed)',
+    '%s exposes all 3 dispute keys (full D7 stack on sepolia incl. MockOOV3, all undefined on mainnet)',
     (network) => {
       const cfg = getNetwork(network);
       for (const key of DISPUTE_KEYS) {
@@ -85,7 +86,7 @@ describe('P2-2 network-config dispute keys (TS)', () => {
       if (network === 'base-sepolia') {
         expect(contracts.bondEscalation).toBe(DEPLOYED_BASE_SEPOLIA.bondEscalation);
         expect(contracts.compositeMediator).toBe(DEPLOYED_BASE_SEPOLIA.compositeMediator);
-        expect(contracts.umaOptimisticOracleV3).toBeUndefined();
+        expect(contracts.umaOptimisticOracleV3).toBe(DEPLOYED_BASE_SEPOLIA.umaOptimisticOracleV3);
       } else {
         // Mainnet: none of the dispute contracts are deployed yet.
         for (const key of DISPUTE_KEYS) {

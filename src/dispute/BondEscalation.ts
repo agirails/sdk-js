@@ -42,7 +42,7 @@ import {
  *        └──> escalateToUMA(cid) (at ceiling + active)      ──> Tier 2 (UMA)
  *                                                                  │
  *   syncExternalResolution() / forceResolveStale() ─────────> RESOLVED
- *   claimEscalationRefund()   (split refunds, post-resolve)
+ *   claimEscalationRefund()   (split or no-winner UMA refunds, post-resolve)
  * ```
  *
  * Reference: AIP-14 §7 (BondEscalation), §7.1 (IBondEscalation),
@@ -90,6 +90,7 @@ export interface IBondEscalationContract {
     estimateGas(...args: unknown[]): Promise<bigint>;
   };
   disputes(disputeId: string): Promise<unknown>;
+  tier1Refundable?(disputeId: string): Promise<boolean>;
 }
 
 /**
@@ -186,7 +187,7 @@ export class BondEscalationClient {
    * Read and decode a dispute's on-chain state from the public
    * `disputes(bytes32)` getter into the shared {@link DisputeState} type.
    *
-   * The raw getter returns the 13-field `DisputeState` storage struct
+   * The raw getter returns the 14-field `DisputeState` storage struct
    * (AIP-14 §7.3). `tier` is decoded 0-based onto {@link Tier} (0=opened,
    * 1=proposed/challenged, 2=UMA). `ruling`/`splitBps` are surfaced only when
    * meaningful (a still-`tier 0` dispute carries the default 0 ruling, so the
@@ -206,7 +207,7 @@ export class BondEscalationClient {
    * exercise it without a contract. Field order is load-bearing (AIP-14 §7.3):
    * `[transactionId, currentRuling, splitBps, currentBond, accumulatedBonds,
    *   livenessEnd, disputedAt, lastProposer, tier, resolved, winnerPaid,
-   *   originalPool, escrowAmount]`.
+   *   originalPool, escrowAmount, escalatedAt]`.
    */
   static decodeDisputeState(disputeId: string, raw: unknown): DisputeState {
     const r = raw as Record<string | number, unknown>;
@@ -403,12 +404,24 @@ export class BondEscalationClient {
   }
 
   /**
-   * Claim a proportional split refund after a split (ruling-2) resolution.
+   * Claim after a split or a UMA verdict with no Tier-1 winning proposer.
+   * The latter preserves ruling 0/1; getTier1Refundable exposes the extra flag.
+   * A caller still needs an unclaimed deposit; the flag does not guarantee one.
    * AIP-14 §7.10. Not pausable.
    */
   async claimEscalationRefund(disputeId: string): Promise<{ ethTxHash: string }> {
     const receipt = await this.send('claimEscalationRefund', [disputeId]);
     return { ethTxHash: receipt.hash };
+  }
+
+  /** Additional refund flag for a no-winner UMA verdict. Splits are refundable
+   * independently of this flag. Unsupported legacy contracts fail explicitly.
+   */
+  async getTier1Refundable(disputeId: string): Promise<boolean> {
+    if (!this.contract.tier1Refundable) {
+      throw new Error('BondEscalation contract does not expose tier1Refundable');
+    }
+    return this.contract.tier1Refundable(disputeId);
   }
 
   /**

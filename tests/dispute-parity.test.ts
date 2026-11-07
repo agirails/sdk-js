@@ -103,6 +103,11 @@ import type {
   AIRuling,
 } from '../src/types/dispute';
 import CompositeMediatorABI from '../src/abi/CompositeMediator.json';
+import {
+  receiptAuthorizationTypedData,
+  authorizePaymentReceipt,
+  postPaidEvaluation,
+} from '../src/dispute/ReceiptAuthorization';
 // The whole package entrypoint — used to assert the `tsOnlyDeExported` wire
 // shapes are NOT re-exported from the public surface (parity de-export lock).
 import * as PUBLIC_SURFACE from '../src';
@@ -169,6 +174,7 @@ const RUNTIME: Record<string, unknown> = {
   decodeDisputeSplitRecorded, decodeResolutionProof, computeSplitRate,
   isSplitKind, outcomeFromSplitRecorded,
   verifyRulingSignatures, selectThirdEvaluator,
+  receiptAuthorizationTypedData, authorizePaymentReceipt, postPaidEvaluation,
   decodeDisputeSubState,
   BondEscalationClient, CompositeMediator, UMAHelper, DisputeSplitIndexer, EvaluatorClient,
   DisputeClient,

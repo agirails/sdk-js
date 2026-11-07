@@ -35,18 +35,32 @@ export function usingPublicRpc(network: string): boolean {
   return !process.env.BASE_SEPOLIA_RPC; // testnet / base-sepolia / default
 }
 
-// Shared AA keys for out-of-the-box UX. These are PUBLIC keys — equivalent
-// to Firebase web apiKey or a Stripe publishable key. The actual security
-// boundary is enforced server-side by paymaster policies on the provider
-// dashboards: gas sponsorship is restricted to AgentRegistry + X402Relay
-// contract addresses, so a third party reusing these keys cannot drain
-// the paymaster balance against arbitrary destinations.
+// Shared Coinbase CDP key for out-of-the-box UX. This is a PUBLIC key —
+// equivalent to a Firebase web apiKey or a Stripe publishable key. The
+// security boundary is enforced server-side: the CDP paymaster policy
+// restricts gas sponsorship to an allowlist of ACTP contract addresses,
+// so a third party reusing this key cannot drain the paymaster balance
+// against arbitrary destinations.
 //
-// Heavy users should still set CDP_API_KEY / PIMLICO_API_KEY env vars to
-// route through their own account for billing isolation and rate-limit
-// headroom.
+// Pimlico (backup) is OPT-IN: unlike CDP, Pimlico has no native per-contract
+// allowlist (only sponsorship policies referenced per-request via
+// sponsorshipPolicyId, which a caller can simply omit), so shipping a shared
+// Pimlico key would let anyone spend the account balance on arbitrary
+// UserOps. Set PIMLICO_API_KEY (and PIMLICO_SPONSORSHIP_POLICY_ID to scope
+// spend) to enable the Pimlico backup.
+//
+// Heavy users should still set CDP_API_KEY to route through their own
+// account for billing isolation and rate-limit headroom.
 const CDP_CLIENT_KEY = process.env.CDP_API_KEY?.trim() || '2txciN85t41erCjveqgNnXYyHRcoo5xP';
-const PIMLICO_KEY = process.env.PIMLICO_API_KEY?.trim() || 'pim_YiHmeAijzTPUvo1UMmXUiN';
+const PIMLICO_KEY = process.env.PIMLICO_API_KEY?.trim() || undefined;
+
+/**
+ * Pimlico sponsorship policy applied to pm_getPaymaster* calls (Pimlico
+ * endpoints only). Scopes spend to the policy's chain allowlist and
+ * per-operation cap. No default: the policy id is account-specific.
+ */
+export const PIMLICO_SPONSORSHIP_POLICY_ID =
+  process.env.PIMLICO_SPONSORSHIP_POLICY_ID?.trim() || undefined;
 
 function resolveOverrideUrl(url?: string): string | undefined {
   const trimmed = url?.trim();
@@ -62,6 +76,7 @@ function resolveCoinbaseRpcUrl(networkPath: string, override?: string): string |
 function resolvePimlicoRpcUrl(chainId: number, override?: string): string | undefined {
   const overrideUrl = resolveOverrideUrl(override);
   if (overrideUrl) return overrideUrl;
+  if (!PIMLICO_KEY) return undefined; // opt-in — see key comment above
   return `https://api.pimlico.io/v2/${chainId}/rpc?apikey=${PIMLICO_KEY}`;
 }
 

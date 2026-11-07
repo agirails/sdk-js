@@ -213,6 +213,13 @@
   },
   {
     "type": "function",
+    "name": "deregisterAgent",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "didToAddress",
     "inputs": [
       {
@@ -704,6 +711,31 @@
         "type": "bool",
         "indexed": false,
         "internalType": "bool"
+      },
+      {
+        "name": "timestamp",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "AgentDeregistered",
+    "inputs": [
+      {
+        "name": "agentAddress",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "did",
+        "type": "string",
+        "indexed": false,
+        "internalType": "string"
       },
       {
         "name": "timestamp",

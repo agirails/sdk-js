@@ -29,11 +29,28 @@ const ACTP_KERNEL_NONCE_ABI = [
   'function requesterNonces(address requester) view returns (uint256)',
 ];
 
-const TX_CREATED_EVENT_TOPIC = ethers.id(
-  'TransactionCreated(bytes32,address,address,uint256,bytes32,uint256,uint256,uint256)'
-);
+const TX_CREATED_EVENT_TOPICS = [
+  ethers.id('TransactionCreated(bytes32,address,address,uint256,bytes32,uint256,uint256,uint256)'),
+  ethers.id('TransactionCreated(bytes32,address,address,uint256,bytes32,uint256,uint256,uint256,bytes32)'),
+];
 const INITIAL_LOG_CHUNK_SIZE = 10_000;
 const MIN_LOG_CHUNK_SIZE = 1_000;
+
+/**
+ * Whether an error from `requesterNonces()` means the method is genuinely ABSENT
+ * (a legacy ACTPKernel deployment that predates it) rather than a transient
+ * RPC/network failure.
+ *
+ * ethers v6 surfaces a call to a non-existent selector as `BAD_DATA` (the node
+ * returns `0x`) or `CALL_EXCEPTION`. Every other code (`SERVER_ERROR`, `TIMEOUT`,
+ * `NETWORK_ERROR`, rate-limit, etc.) is transient and MUST fail closed — treating
+ * it as "legacy" and inferring nonce 0 would recompute an already-used txId and
+ * enable txId/batch replay (F38).
+ */
+function isMissingMethodError(err: unknown): boolean {
+  const code = (err as { code?: string } | null | undefined)?.code;
+  return code === 'BAD_DATA' || code === 'CALL_EXCEPTION';
+}
 
 // ============================================================================
 // Mutex
@@ -156,11 +173,6 @@ export class DualNonceManager {
     return await entryPoint.getNonce(this.senderAddress, 0);
   }
 
-  /**
-   * Read current ACTP nonce for the requester.
-   * requesterNonces is public on ACTPKernel (added in v2).
-   * Older deployments may not expose this — fall back to 0n.
-   */
   private async readActpNonce(): Promise<bigint> {
     try {
       const kernel = new ethers.Contract(
@@ -171,41 +183,51 @@ export class DualNonceManager {
       const nonce = await kernel.requesterNonces(this.senderAddress);
       this.cachedActpNonce = nonce;
       return nonce;
-    } catch {
-      // Older ACTPKernel deployments don't expose requesterNonces.
-      // Derive nonce from TransactionCreated events for this requester.
-      // Uses deployment-block binary search + chunked logs (avoids block-0 scans).
-      sdkLogger.warn(
-        'requesterNonces not available on ACTPKernel — deriving nonce from events (older deployment?)'
-      );
-
-      try {
-        const latestBlock = await this.provider.getBlockNumber();
-        const deploymentBlock = await this.findContractDeploymentBlock(latestBlock);
-        const events = await this.countRequesterTransactionCreatedEvents(
-          deploymentBlock,
-          latestBlock
+    } catch (err) {
+      // FAIL CLOSED: a broad RPC/network failure must NOT be reinterpreted as a
+      // legacy deployment. Only a genuinely-absent selector falls through to
+      // event derivation.
+      if (!isMissingMethodError(err)) {
+        throw new Error(
+          `Failed to read requesterNonces from ACTPKernel (${this.actpKernelAddress}). ` +
+            `Refusing to infer the ACTP nonce — inferring 0 would risk txId/batch replay. ` +
+            `Underlying error: ${err instanceof Error ? err.message : String(err)}`
         );
-        const derivedNonce = BigInt(events.length);
-
-        sdkLogger.info('Derived ACTP nonce from TransactionCreated events', {
-          requester: this.senderAddress,
-          events: events.length,
-          fromBlock: deploymentBlock,
-          toBlock: latestBlock,
-          derivedNonce: derivedNonce.toString(),
-        });
-
-        this.cachedActpNonce = derivedNonce;
-        return derivedNonce;
-      } catch (deriveError) {
-        // Last-resort fallback for very old/limited RPCs.
-        sdkLogger.warn('Could not derive ACTP nonce from events — using 0 as last resort', {
-          error: deriveError instanceof Error ? deriveError.message : String(deriveError),
-        });
-        this.cachedActpNonce = 0n;
-        return 0n;
       }
+    }
+
+    sdkLogger.warn(
+      'requesterNonces not available on ACTPKernel — deriving nonce from events (older deployment?)'
+    );
+
+    try {
+      const latestBlock = await this.provider.getBlockNumber();
+      const deploymentBlock = await this.findContractDeploymentBlock(latestBlock);
+      const events = await this.countRequesterTransactionCreatedEvents(
+        deploymentBlock,
+        latestBlock
+      );
+      const derivedNonce = BigInt(events.length);
+
+      sdkLogger.info('Derived ACTP nonce from TransactionCreated events', {
+        requester: this.senderAddress,
+        events: events.length,
+        fromBlock: deploymentBlock,
+        toBlock: latestBlock,
+        derivedNonce: derivedNonce.toString(),
+      });
+
+      this.cachedActpNonce = derivedNonce;
+      return derivedNonce;
+    } catch (deriveError) {
+      // FAIL CLOSED (F38): never infer 0 on failure — surface an explicit
+      // unprovable-nonce error so the caller aborts instead of replaying a txId.
+      throw new Error(
+        `Could not derive ACTP nonce from TransactionCreated events for ${this.senderAddress} ` +
+          `(requesterNonces absent on ${this.actpKernelAddress}). Refusing to infer nonce 0 ` +
+          `(would risk txId/batch replay). Scan error: ` +
+          `${deriveError instanceof Error ? deriveError.message : String(deriveError)}`
+      );
     }
   }
 
@@ -313,7 +335,7 @@ export class DualNonceManager {
       try {
         const chunkLogs = await this.provider.getLogs({
           address: this.actpKernelAddress,
-          topics: [TX_CREATED_EVENT_TOPIC, null, requesterTopic],
+          topics: [TX_CREATED_EVENT_TOPICS, null, requesterTopic],
           fromBlock: cursor,
           toBlock: chunkEnd,
         });

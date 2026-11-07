@@ -10,8 +10,7 @@
  *
  * Accordingly this client exposes exactly two read surfaces:
  *  1. `getSplitRecordedEvents()` — pull `DisputeSplitRecorded` (every ruling-2
- *     resolution the mediator executed: finalize, forceResolveStale, UMA
- *     no-winner fallback — AIP-14b §3.4).
+ *     resolution the mediator executed: finalize, forceResolveStale — AIP-14b §3.4).
  *  2. `decodeDisputeSplitRecorded(log)` — pure decode of one such event.
  *
  * `resolve()` is **deliberately ABSENT** from the public surface. See
@@ -20,12 +19,14 @@
  * for the normative assertion + rationale.
  *
  * ## ZERO-REMAINING CONSUMER RULE (AIP-14b §6, normative)
- * When on-chain escrow `remaining == 0`, the kernel resolution-proof amounts are
+ * When distributable escrowPrincipal == 0, the kernel resolution-proof amounts are
  * a phantom **1-wei sentinel** (placed only to satisfy the kernel's
  * `require(requesterAmount > 0 || providerAmount > 0)` existence check) and are
  * NOT economic payouts. {@link decodeResolutionProof} enforces this: with
  * `remaining == 0` it surfaces a zero payout for BOTH parties — never a 1-wei
  * payout. The drained-dispute test pins this.
+ *
+ * UMA no-winner refunds preserve ruling 0/1 and are not split outcomes.
  *
  * PARITY: python-sdk-v2/src/agirails/dispute/composite_mediator.py
  * Every public symbol here has a Py twin (same name/arity) and vice-versa.
@@ -89,7 +90,7 @@ export interface DecodedResolutionProof {
    */
   providerAtFault?: boolean;
   /**
-   * The real settlement amounts. When the on-chain escrow `remaining == 0`
+   * The real settlement amounts. When the distributable escrowPrincipal == 0
    * these are BOTH `0n` (the proof carried only a phantom sentinel).
    */
   payouts: { requester: bigint; provider: bigint };
@@ -156,15 +157,16 @@ export function decodeDisputeSplitRecorded(log: EventLog | Log): DisputeSplitRec
  * When `remaining == 0` the prevailing party's amount field holds an **inert
  * 1-wei sentinel** placed solely to pass the kernel's
  * `require(requesterAmount > 0 || providerAmount > 0)` existence check. It is
- * never transferred (the kernel gates every move behind `if (remaining > 0)`).
+ * never transferred (the kernel gates every move behind escrowPrincipal > 0).
  * This decoder therefore ZEROS both payouts when `remaining == 0` and sets
  * {@link DecodedResolutionProof.phantomSentinel}. No 1-wei payout is ever
  * surfaced. PARITY: Py `decode_resolution_proof`.
  *
  * @param proof - the raw proof bytes (0x-hex) passed to `transitionState`.
- * @param remaining - the on-chain escrow `remaining` at resolution time.
+ * @param remaining - Legacy principal alias. For fee-bearing raw balances supply escrowPrincipal separately.
+ * @param escrowPrincipal - Kernel escrowPrincipal snapshot immediately before resolution.
  */
-export function decodeResolutionProof(proof: string, remaining: bigint): DecodedResolutionProof {
+export function decodeResolutionProof(proof: string, remaining: bigint, escrowPrincipal: bigint = remaining): DecodedResolutionProof {
   const coder = AbiCoder.defaultAbiCoder();
   const byteLen = (proof.startsWith('0x') ? proof.length - 2 : proof.length) / 2;
 
@@ -189,7 +191,7 @@ export function decodeResolutionProof(proof: string, remaining: bigint): Decoded
   }
 
   // ZERO-REMAINING CONSUMER RULE: proof amounts are a phantom sentinel — ignore.
-  if (remaining === 0n) {
+  if (escrowPrincipal === 0n) {
     return {
       isSplit,
       providerAtFault,

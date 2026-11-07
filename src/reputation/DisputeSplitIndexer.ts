@@ -13,7 +13,7 @@
  * ## OQ-11 (normative default — PRD §9, P2-8)
  * A dispute counts as a SPLIT for the HEADLINE rate when it resolved via EITHER:
  *   1. `DisputeSplitRecorded` — CompositeMediator ruling-2 (finalize /
- *      forceResolveStale / UMA no-winner fallback), OR
+ *      forceResolveStale), OR
  *   2. kernel `DISPUTED → CANCELLED` — the kernel-level split path, which
  *      includes **admin-CANCELLED** disputes that bypass CompositeMediator.
  * BOTH are counted at **IDENTICAL weight**. Counting only (1) would miss
@@ -30,6 +30,8 @@
  * (remaining==0) still counts as a split — the outcome is a split regardless of
  * whether escrow was already milestone-drained. {@link DisputeSplitIndexer.classifyPayout}
  * delegates to {@link decodeResolutionProof}, which zeros the phantom sentinel.
+ *
+ * UMA no-winner refunds preserve ruling 0/1 and are not split outcomes.
  *
  * PARITY: python-sdk-v2/src/agirails/reputation/dispute_split_indexer.py — every
  * public symbol here has a Py twin (same name/arity) and vice-versa. The shared
@@ -87,7 +89,7 @@ export function isSplitKind(kind: DisputeOutcomeKind): boolean {
  * Assembled from {@link DisputeSplitRecorded} events + kernel
  * `StateTransitioned(DISPUTED→CANCELLED / DISPUTED→SETTLED)` events, joined with
  * the kernel transaction's `provider`/`requester`. `remaining` is the on-chain
- * escrow `remaining` at resolution time and is the ONLY thing (with `kind`) that
+ * principal snapshot immediately before resolution and is the ONLY thing (with `kind`) that
  * drives classification — proof amounts are never trusted (ZERO-REMAINING RULE).
  *
  * PARITY: Py `DisputeOutcome` dataclass.
@@ -99,8 +101,12 @@ export interface DisputeOutcome {
   requester: string;
   /** How the dispute resolved. */
   kind: DisputeOutcomeKind;
-  /** On-chain escrow `remaining` at resolution time (default 0n). */
+  /** On-chain principal snapshot immediately before resolution (default 0n). */
   remaining?: bigint;
+  /** Kernel escrowPrincipal snapshot immediately before resolution. Prefer this
+   * over the deprecated remaining alias, which is valid only as legacy principal.
+   */
+  escrowPrincipal?: bigint;
   /** Split share in bps, when known from a `DisputeSplitRecorded` event. */
   splitBps?: number;
   /**
@@ -263,26 +269,27 @@ export class DisputeSplitIndexer {
    */
   classifyPayout(outcome: DisputeOutcome): DecodedResolutionProof | null {
     if (outcome.proof === undefined) return null;
-    return decodeResolutionProof(outcome.proof, outcome.remaining ?? 0n);
+    return decodeResolutionProof(outcome.proof, outcome.escrowPrincipal ?? outcome.remaining ?? 0n);
   }
 }
 
 /**
  * Build a {@link DisputeOutcome} from a decoded `DisputeSplitRecorded` event.
- * The `remaining` MUST be supplied separately (read from the escrow at
- * resolution time) — it is NOT in the event. PARITY: Py
+ * The `escrowPrincipal` MUST be supplied separately (read via ACTPKernel.getEscrowPrincipal immediately before
+ * resolution) — it is NOT in the event. PARITY: Py
  * `outcome_from_split_recorded`.
  */
 export function outcomeFromSplitRecorded(
   event: DisputeSplitRecorded,
-  remaining: bigint = 0n,
+  escrowPrincipal: bigint = 0n,
   proof?: string
 ): DisputeOutcome {
   return {
     provider: event.provider,
     requester: event.requester,
     kind: 'disputeSplitRecorded',
-    remaining,
+    escrowPrincipal,
+    remaining: escrowPrincipal,
     splitBps: event.splitBps,
     proof,
     txId: event.txId,

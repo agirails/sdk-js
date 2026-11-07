@@ -770,7 +770,8 @@ describe('Init Command', () => {
       delete process.env.ACTP_KEY_PASSWORD;
 
       // Should NOT throw — FIX-3 auto-generates the password.
-      await runInit({ mode: 'testnet' }, mockOutput);
+      // Password generation is local; EOA avoids unrelated live smart-wallet RPC.
+      await runInit({ mode: 'testnet', wallet: 'eoa' }, mockOutput);
 
       // Password is now in env (in-memory) and on disk (.env).
       expect(process.env.ACTP_KEY_PASSWORD).toBeDefined();

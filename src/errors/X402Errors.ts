@@ -182,6 +182,27 @@ export class X402PaymentFailedError extends X402Error {
 }
 
 /**
+ * Thrown when a server's `/evaluate` (or any second-leg) 402 payment requirement
+ * DEVIATES from the terms of the quote the caller already accepted — a different
+ * amount, asset, payTo recipient, or network than the accepted `/quote`.
+ *
+ * This closes the quote→pay rebinding gap (F44 / FR018-002): the global
+ * `maxAmountPerTx` / network / asset caps alone do not pin the SPECIFIC accepted
+ * terms, so a malicious or misconfigured evaluator could re-price the payment
+ * between the quote and the settlement. The adapter fails closed on any mismatch.
+ *
+ * @cause The 402 requirement chosen for settlement does not match the accepted quote (amount/asset/payTo/network drift).
+ * @fix Re-run the quote handshake; do not pay a requirement that differs from the quote you accepted.
+ * @recovery must-investigate
+ */
+export class X402QuoteMismatchError extends X402Error {
+  constructor(message: string, details?: Record<string, unknown>) {
+    super(message, 'X402_QUOTE_MISMATCH', details);
+    this.name = 'X402QuoteMismatchError';
+  }
+}
+
+/**
  * Helper: detect whether an error from the wallet provider indicates the
  * paymaster policy gate (agent not published / not allowlisted / quota).
  *

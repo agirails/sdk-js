@@ -56,7 +56,7 @@ import { ERC8004Bridge } from './erc8004/ERC8004Bridge';
 import { ReputationReporter } from './erc8004/ReputationReporter';
 import { DisputeClient } from './dispute/DisputeClient';
 import { ERC8004Network } from './types/erc8004';
-import { getNetwork } from './config/networks';
+import { getNetwork, PIMLICO_SPONSORSHIP_POLICY_ID } from './config/networks';
 import { IWalletProvider } from './wallet/IWalletProvider';
 import { EOAWalletProvider } from './wallet/EOAWalletProvider';
 import { AutoWalletProvider } from './wallet/AutoWalletProvider';
@@ -384,6 +384,16 @@ export interface ACTPClientConfig {
     escrowVault?: string;
     usdc?: string;
     agentRegistry?: string;
+    /**
+     * Dispute-graph overrides (F43). A custom-kernel integrator whose kernel
+     * points at a DIFFERENT BondEscalation / CompositeMediator / UMA OOV3 graph
+     * MUST override these too — otherwise `client.dispute` would read the network
+     * defaults and target the WRONG dispute graph (split-brain). Any omitted
+     * value falls back to the network default.
+     */
+    bondEscalation?: string;
+    compositeMediator?: string;
+    umaOptimisticOracleV3?: string;
   };
 
   /**
@@ -961,6 +971,7 @@ export class ACTPClient {
               paymaster: {
                 primaryUrl: paymasterPrimary,
                 backupUrl: paymasterBackup,
+                sponsorshipPolicyId: PIMLICO_SPONSORSHIP_POLICY_ID,
               },
             });
 
@@ -1112,15 +1123,25 @@ export class ACTPClient {
           // until Phase 6 (testnet) / later (mainnet), so on undeployed networks
           // this stays undefined and existing flows are unchanged. Best-effort —
           // a wiring failure must never block create().
-          const disputeContracts = networkConfig.contracts;
-          if (disputeContracts.bondEscalation && disputeContracts.compositeMediator) {
+          // F43: resolve the dispute graph from config.contracts overrides FIRST,
+          // falling back to network defaults. A custom-kernel integrator who
+          // overrode `contracts.actpKernel` (and its dispute graph) now hits the
+          // SAME graph for dispute/approval calls as the rest of the client,
+          // instead of the default Bond/Mediator graph (split-brain fix).
+          const bondEscalationAddr =
+            config.contracts?.bondEscalation ?? networkConfig.contracts.bondEscalation;
+          const compositeMediatorAddr =
+            config.contracts?.compositeMediator ?? networkConfig.contracts.compositeMediator;
+          const umaOptimisticOracleV3Addr =
+            config.contracts?.umaOptimisticOracleV3 ?? networkConfig.contracts.umaOptimisticOracleV3;
+          if (bondEscalationAddr && compositeMediatorAddr) {
             try {
               disputeClient = new DisputeClient({
                 signer,
                 provider,
-                bondEscalationAddress: disputeContracts.bondEscalation,
-                compositeMediatorAddress: disputeContracts.compositeMediator,
-                umaOptimisticOracleV3Address: disputeContracts.umaOptimisticOracleV3,
+                bondEscalationAddress: bondEscalationAddr,
+                compositeMediatorAddress: compositeMediatorAddr,
+                umaOptimisticOracleV3Address: umaOptimisticOracleV3Addr,
                 usdcAddress: config.contracts?.usdc ?? networkConfig.contracts.usdc,
               });
             } catch (e) {

@@ -211,6 +211,19 @@ export interface EvaluatorPaymentClient {
     httpBody?: string;
     httpHeaders?: Record<string, string>;
     metadata?: { paymentMethod?: string };
+    /**
+     * F44: the terms the client ACCEPTED at STEP-1 /quote. The x402 buyer
+     * (X402Adapter) rejects any /evaluate 402 requirement that deviates from
+     * these, so a malicious evaluator cannot rebind payment terms between
+     * /quote and /evaluate. Structurally matches `UnifiedPayParams.acceptedQuote`.
+     */
+    acceptedQuote?: {
+      amount?: string;
+      asset?: string;
+      payTo?: string;
+      network?: string;
+      nonce?: string;
+    };
   }): Promise<{ response?: Response }>;
 }
 
@@ -423,6 +436,9 @@ export class EvaluatorClient {
 
     // ---- STEP 0 DECLARE → STEP 1 QUOTE (no money, no LLM) -----------------
     const quote = await this.declare(params, bundleHashHex, declaredTokenCount);
+    if (quote.x402?.['receiptAuthorization'] !== undefined) {
+      throw new EvaluateResponseError('Server requires signed paid receipts; use authorizePaymentReceipt and postPaidEvaluation before any payment');
+    }
 
     // ---- STEP 2 PAY (delegated to the existing x402 buyer stack) ----------
     // ---- STEP 3 VERIFY + STEP 4 RUN + STEP 5 RETURN (server-side) ---------
@@ -435,7 +451,11 @@ export class EvaluatorClient {
       chainId: params.chainId,
       verifyingContract: params.verifyingContract,
     };
-    const response = await this.payAndEvaluate(evaluateBody);
+    // F44: bind the ACCEPTED quote terms so the x402 buyer rejects a rebound
+    // /evaluate 402 requirement (payment-term rebinding between /quote and
+    // /evaluate). Fail closed on any deviation.
+    const acceptedQuote = this.buildAcceptedQuote(quote, params.chainId);
+    const response = await this.payAndEvaluate(evaluateBody, acceptedQuote);
 
     // ---- Parse the §4.3 200 body ------------------------------------------
     const body = await this.parseEvaluateResponse(response, bundleHashHex);
@@ -550,18 +570,72 @@ export class EvaluatorClient {
    * transparently consumes the server 402, signs, retries, and returns the
    * settled 200 `response`.
    */
-  private async payAndEvaluate(evaluateBody: Record<string, unknown>): Promise<Response> {
+  private async payAndEvaluate(
+    evaluateBody: Record<string, unknown>,
+    acceptedQuote?: {
+      amount?: string;
+      asset?: string;
+      payTo?: string;
+      network?: string;
+      nonce?: string;
+    }
+  ): Promise<Response> {
     const result = await this.paymentClient.pay({
       to: `${this.baseUrl}/evaluate`,
       httpMethod: 'POST',
       httpBody: JSON.stringify(evaluateBody),
       httpHeaders: { 'content-type': 'application/json', accept: 'application/json' },
       metadata: { paymentMethod: 'x402' }, // explicit opt-in (X402Adapter §P1-3 gate)
+      acceptedQuote, // F44: pin the accepted /quote terms through to the x402 buyer
     });
     if (!result || !result.response) {
       throw new EvaluateResponseError('payment client returned no HTTP response');
     }
     return result.response;
+  }
+
+  /**
+   * F44: derive the accepted-quote binding from the STEP-1 402 quote body. The
+   * quote's `quote` block carries amount/asset/chainId; the `x402` commit may
+   * carry payTo / network / amount / asset. Only fields we can read are pinned;
+   * `undefined` fields are simply not enforced downstream. Returns `undefined`
+   * when the quote exposes no bindable term (nothing to pin).
+   */
+  private buildAcceptedQuote(quote: QuoteBody, expectedChainId: number):
+    | { amount?: string; asset?: string; payTo?: string; network?: string; nonce?: string }
+    | undefined {
+    const x402 = (quote.x402 ?? {}) as Record<string, unknown>;
+    const str = (v: unknown): string | undefined =>
+      typeof v === 'string' && v.length > 0 ? v : undefined;
+    const num = (v: unknown): number | undefined =>
+      typeof v === 'number' && Number.isFinite(v) ? v : undefined;
+
+    const amount = str(quote.quote?.amount) ?? str(x402['amount']) ?? str(x402['maxAmountRequired']);
+    const asset = str(quote.quote?.asset) ?? str(x402['asset']);
+    const payTo = str(x402['payTo']) ?? str(x402['recipient']);
+    if (!Number.isSafeInteger(expectedChainId) || expectedChainId <= 0) {
+      throw new EvaluateResponseError('dispute has an invalid chainId');
+    }
+    if (x402['chainId'] !== undefined && num(x402['chainId']) === undefined) {
+      throw new EvaluateResponseError('quote x402 chainId is invalid');
+    }
+    const declaredChainIds = [quote.quote?.chainId, num(x402['chainId'])];
+    for (const chainId of declaredChainIds) {
+      if (chainId !== undefined && chainId !== expectedChainId) {
+        throw new EvaluateResponseError('quote chainId conflicts with configured dispute chainId');
+      }
+    }
+    const declaredNetwork = str(x402['network']);
+    const network = `eip155:${expectedChainId}`;
+    if (declaredNetwork?.startsWith('eip155:') && declaredNetwork !== network) {
+      throw new EvaluateResponseError('quote chainId conflicts with x402 network');
+    }
+    const nonce = str(quote.disputeNonce);
+
+    if (amount === undefined && asset === undefined && payTo === undefined && network === undefined) {
+      return undefined;
+    }
+    return { amount, asset, payTo, network, nonce };
   }
 
   /** Parse + validate the §4.3 evaluate response body. */

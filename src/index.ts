@@ -674,3 +674,6 @@ export {
   SwapExecutionError,
   QueryCapExceededError,
 } from './errors';
+
+export { receiptAuthorizationTypedData, authorizePaymentReceipt, postPaidEvaluation } from './dispute/ReceiptAuthorization';
+export type { ReceiptAuthorizationInput, ReceiptAuthorizer, AuthorizedPaymentReceipt } from './dispute/ReceiptAuthorization';
