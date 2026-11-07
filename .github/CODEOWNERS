@@ -20,3 +20,9 @@
 
 # CI and Dependabot config — release-integrity surface.
 /.github/                      @DamirAGI @roosch269
+
+# Factory standard — the checker, its baselines and the lint config. A pull request can edit
+# these, and CI reads the lint config from the pull request, so a code owner approves them.
+/.factory/                     @DamirAGI @roosch269
+/eslint.config.mjs             @DamirAGI @roosch269
+/tsconfig.eslint.json          @DamirAGI @roosch269
