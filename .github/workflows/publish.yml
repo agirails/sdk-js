@@ -22,6 +22,10 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    # The gate below lives in the tagged commit, so a tag on a commit that edits this file could
+    # skip it. The environment is the gate outside the tree: npm Trusted Publishing accepts only
+    # tokens from this environment, and the environment allows only v* tags and a reviewer.
+    environment: npm-publish
     permissions:
       contents: read
       actions: read    # release gate reads factory.yml runs for the tagged commit
