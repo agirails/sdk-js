@@ -12,6 +12,7 @@
 
 import * as crypto from 'crypto';
 import * as path from 'path';
+import { isAddress } from 'ethers';
 
 /**
  * H-7: Constant-time string comparison to prevent timing attacks
@@ -162,10 +163,7 @@ export function isValidAddress(address: string): boolean {
     return false;
   }
 
-  // Note: Full EIP-55 checksum validation would be more complex
-  // For now, we just validate format. In production, consider using ethers.utils.getAddress()
-
-  return true;
+  return isAddress(address);
 }
 
 /**
