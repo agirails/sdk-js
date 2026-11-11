@@ -16,6 +16,7 @@
 
 import { Output, fmt } from '../utils/output';
 import { computeDisplayFee } from '../../config/defaults';
+import type { ReceiptAmounts } from '../../feesplit/display';
 
 // ============================================================================
 // Types
@@ -273,12 +274,23 @@ export interface ReceiptDataV3 {
    * Amounts read from the payout breakdown of an escrow in a FeeSplitVault. When present they
    * replace the fee and net computed from `amountWei`; `note` labels amounts that are not verified.
    */
-  settled?: { netWei?: bigint; feeWei?: bigint; platformFeeWei?: bigint; note?: string };
+  settled?: ReceiptAmounts;
+}
+
+function refundRows(settled: ReceiptDataV3['settled']): [string, string, bigint][] {
+  if (settled?.refundedWei === undefined) return [];
+  return [
+    ['refunded', 'Refunded', settled.refundedWei],
+    ['requesterReceived', 'Received', settled.requesterReceivedWei ?? 0n],
+    ['refundProtocolFee', 'Prot. fee', settled.refundProtocolFeeWei ?? 0n],
+    ['refundPlatformFee', 'Plat. fee', settled.refundPlatformFeeWei ?? 0n],
+  ];
 }
 
 function feePayload(fee: bigint, feePercent: string, settled: ReceiptDataV3['settled']): Record<string, string> {
   const payload: Record<string, string> = { fee: formatUsdc(fee), feePercent: `${feePercent}%` };
   if (settled?.platformFeeWei !== undefined) payload.platformFee = formatUsdc(settled.platformFeeWei);
+  for (const [key, , value] of refundRows(settled)) payload[key] = formatUsdc(value);
   if (settled?.note) payload.note = settled.note;
   return payload;
 }
@@ -291,6 +303,7 @@ function feeCardLines(fee: bigint, feePercent: string, settled: ReceiptDataV3['s
 
 function netCardLines(net: bigint, settled: ReceiptDataV3['settled']): string[] {
   const lines = [`${fmt.label('Net')}        ${fmt.green(formatUsdc(net))}`];
+  for (const [, label, value] of refundRows(settled)) lines.push(`${fmt.label(label)}${' '.repeat(11 - label.length)}${formatUsdc(value)}`);
   if (settled?.note) lines.push(fmt.dim(settled.note));
   return lines;
 }

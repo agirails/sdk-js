@@ -96,7 +96,7 @@ describe('FeeSplitVault in MockRuntime', () => {
   });
 
   describe('profile PAYOUT_ONLY', () => {
-    it('A3 shape: the integrator takes 1% of the amount out of the provider side', async () => {
+    it('A3: provider 980, protocol 10, platform 10, as on the candidate stack', async () => {
       const txId = await fund(payoutOnly);
       const tx = await runtime.getTransaction(txId);
       expect(tx?.escrowContract).toBe(MOCK_FEE_SPLIT_VAULT);
@@ -108,9 +108,10 @@ describe('FeeSplitVault in MockRuntime', () => {
       });
       await settle(txId);
       expect(await runtime.getBalance(INTEGRATOR)).toBe('10000000');
-      expect(await runtime.getBalance(PROVIDER)).toBe('990000000');
+      expect(await runtime.getBalance(PROVIDER)).toBe('980000000');
+      expect(await runtime.getBalance(MOCK_FEE_RECIPIENT)).toBe('10000000');
       const breakdown = await runtime.feeSplit.payoutBreakdown(MOCK_FEE_SPLIT_VAULT, txId);
-      expect(breakdown.totals).toMatchObject({ providerReceived: '990000000', integratorPaid: '10000000', kernelFee: '0' });
+      expect(breakdown.totals).toMatchObject({ providerReceived: '980000000', integratorPaid: '10000000', kernelFee: '10000000' });
     });
 
     it('A9 (D) shape: a refund after a dispute is untouched', async () => {
@@ -147,7 +148,22 @@ describe('FeeSplitVault in MockRuntime', () => {
       const txId = await fund(bothAfterDispute, true);
       await settle(txId);
       expect(await runtime.getBalance(INTEGRATOR)).toBe('10000000');
-      expect(await runtime.getBalance(PROVIDER)).toBe('990000000');
+      expect(await runtime.getBalance(PROVIDER)).toBe('980000000');
+    });
+
+    it('under 5 USDC the kernel minimum of 0.05 applies and the integrator gets less than its rate of gross', async () => {
+      const txId = await runtime.createTransaction({
+        provider: PROVIDER,
+        requester: REQUESTER,
+        amount: '1000000',
+        deadline: runtime.time.now() + 86_400,
+        disputeWindow: 3600,
+      });
+      await runtime.linkEscrow(txId, '1000000', { integrator: payoutOnly });
+      await settle(txId);
+      expect(await runtime.getBalance(MOCK_FEE_RECIPIENT)).toBe('50000');
+      expect(await runtime.getBalance(INTEGRATOR)).toBe('9595');
+      expect(await runtime.getBalance(PROVIDER)).toBe('940405');
     });
 
     it('the actual quote is fee-free until the dispute; the hypothetical quote equals what the refund then pays', async () => {
@@ -256,7 +272,7 @@ describe('FeeSplitVault in MockRuntime', () => {
       await runtime.transitionState(inFlight, 'IN_PROGRESS');
       const notStarted = await fund(payoutOnly);
       const before = { settled: await summary(settled), refunded: await summary(refunded) };
-      expect(before.settled).toBe('990.00 USDC to provider (1000.00 committed, 0.00 protocol fee, 10.00 platform fee)');
+      expect(before.settled).toBe('980.00 USDC to provider (1000.00 committed, 10.00 protocol fee, 10.00 platform fee)');
 
       runtime.feeSplit.configureVaults([{ address: MOCK_FEE_SPLIT_VAULT, funding: false }]);
       await expect(fund(payoutOnly)).rejects.toBeInstanceOf(FeeSplitVaultUnavailableError);

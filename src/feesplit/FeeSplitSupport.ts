@@ -28,6 +28,11 @@ export interface RefundQuotes {
   ifDisputedRefundQuote: DisputeFeeQuote;
 }
 
+/** The part of a wallet provider that FeeSplitVault support sends through. */
+export interface FeeSplitWallet {
+  sendTransaction(tx: { to: string; data: string }): Promise<{ hash: string; success: boolean }>;
+}
+
 /**
  * What the vault of an escrow is to this network: the plain EscrowVault, the FeeSplitVault that
  * funds new escrows, a retired FeeSplitVault, or an address the configuration does not know. A
@@ -38,6 +43,7 @@ export type EscrowVaultKind = 'plain' | 'funding' | 'retired' | 'unrecognized';
 /** FeeSplitVault support of one runtime. */
 export abstract class FeeSplitSupport {
   private defaults?: IntegratorTerms;
+  protected wallet?: FeeSplitWallet;
 
   constructor(
     private readonly vaultList: readonly FeeSplitVaultEntry[],
@@ -52,6 +58,11 @@ export abstract class FeeSplitSupport {
     const entry = this.vaults().find(vault => vault.address.toLowerCase() === address);
     if (!entry) return 'unrecognized';
     return entry.funding ? 'funding' : 'retired';
+  }
+
+  /** The wallet whose address is the client's identity; provider approvals are sent from it. */
+  useWallet(wallet: FeeSplitWallet | undefined): void {
+    this.wallet = wallet;
   }
 
   /** Client-level default terms; a per-call `integrator` replaces them. */

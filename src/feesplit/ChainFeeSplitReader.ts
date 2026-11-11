@@ -105,6 +105,16 @@ export class ChainFeeSplitReader implements FeeSplitReader {
     return { ...quoteOf(principal, result), rateConfirmed: booleanAt(result, 3) };
   }
 
+  /** The kernel's view of an escrow at one block: deposit, escrow id and remaining principal. */
+  async escrowAt(txId: string, blockTag: number): Promise<{ deposit: bigint; escrowId: string; principal: bigint }> {
+    const view: unknown = (await this.kernelCall('getTransaction', [txId], blockTag))[0];
+    if (!Array.isArray(view) || typeof view[4] !== 'bigint' || typeof view[10] !== 'string') {
+      throw new Error('Unexpected kernel transaction view');
+    }
+    const principal = bigintAt(await this.kernelCall('escrowPrincipal', [txId], blockTag), 0);
+    return { deposit: view[4], escrowId: view[10], principal };
+  }
+
   /** What a refund of `amount` would pay in the escrow's current state: fee-free while undisputed. */
   async quoteRefund(vault: string, txId: string, amount: bigint): Promise<DisputeFeeQuote> {
     return quoteOf(amount, await this.vaultCall(vault, 'quoteRefund', [txId, amount]));

@@ -101,6 +101,11 @@ export interface ReceiptAmounts {
   netWei?: bigint;
   feeWei?: bigint;
   platformFeeWei?: bigint;
+  /** Requester side, present when the escrow refunded anything: gross refund, what arrived, the two refund fees. */
+  refundedWei?: bigint;
+  requesterReceivedWei?: bigint;
+  refundProtocolFeeWei?: bigint;
+  refundPlatformFeeWei?: bigint;
   note?: string;
 }
 
@@ -114,10 +119,18 @@ export async function receiptAmountsFor(
   const view = await escrowAmountsView(runtime.feeSplit, tx);
   if (view.kind === 'plain') return undefined;
   if (view.kind === 'unrecognized') return { note: view.note };
-  return {
+  const provider: ReceiptAmounts = {
     netWei: view.amounts.providerReceived,
     feeWei: view.amounts.providerSideProtocolFee,
     platformFeeWei: view.amounts.providerSidePlatformFee,
+  };
+  if (view.amounts.refunded === 0n) return provider;
+  return {
+    ...provider,
+    refundedWei: view.amounts.refunded,
+    requesterReceivedWei: view.amounts.requesterReceived,
+    refundProtocolFeeWei: view.amounts.refundSideProtocolFee,
+    refundPlatformFeeWei: view.amounts.refundSidePlatformFee,
   };
 }
 

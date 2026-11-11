@@ -176,6 +176,9 @@ export interface MockFeeSplitEscrow {
   refundSide: string;
   protocolRefundFee: string;
   integratorRefundFee: string;
+  /** Gross amount released to the provider side so far, and the kernel fee taken from it. */
+  gross?: string;
+  kernelFee?: string;
 }
 
 /**

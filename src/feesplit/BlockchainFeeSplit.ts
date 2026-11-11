@@ -147,7 +147,10 @@ export class BlockchainFeeSplit extends FeeSplitSupport {
   async setIntegratorApproval(integrator: string, maxBps: number): Promise<void> {
     const vault = fundingFeeSplitVault(this.vaults());
     if (!vault) throw new FeeSplitVaultUnavailableError();
-    await this.send(vault, encodeSetIntegratorApproval(integrator, maxBps));
+    const data = encodeSetIntegratorApproval(integrator, maxBps);
+    if (!this.wallet) return this.send(vault, data);
+    const receipt = await this.wallet.sendTransaction({ to: vault, data });
+    if (!receipt.success) throw new Error(`Integrator approval failed: ${receipt.hash}`);
   }
 
   async refundQuotes(vault: string, txId: string): Promise<RefundQuotes> {
@@ -176,13 +179,13 @@ export class BlockchainFeeSplit extends FeeSplitSupport {
   }
 
   async payoutBreakdown(vault: string, txId: string): Promise<PayoutBreakdown> {
-    const tx = await this.config.kernel.getTransaction(txId);
     const toBlock = await this.config.provider.getBlockNumber();
+    const escrow = await this.chainReader.escrowAt(txId, toBlock);
     const fromBlock = this.config.fromBlock ?? 0;
     const kernelTopics = Object.keys(KERNEL_PAYOUTS).map(name => topicOf(KERNEL_INTERFACE, name));
     const vaultTopics = ['IntegratorFeeSplit', 'RefundFeeSplit'].map(name => topicOf(FEE_SPLIT_VAULT_INTERFACE, name));
     const kernelLogs = await this.logs(this.config.kernelAddress, [kernelTopics, txId], fromBlock, toBlock);
-    const vaultLogs = await this.logs(vault, [vaultTopics, tx.escrowId], fromBlock, toBlock);
+    const vaultLogs = await this.logs(vault, [vaultTopics, escrow.escrowId], fromBlock, toBlock);
 
     const kernel: KernelPayout[] = [];
     for (const log of [...kernelLogs].sort(byPosition)) {
@@ -198,8 +201,8 @@ export class BlockchainFeeSplit extends FeeSplitSupport {
     return joinPayoutBreakdown({
       txId,
       vault,
-      deposit: BigInt(tx.amount),
-      principal: await this.config.kernel.getEscrowPrincipal(txId),
+      deposit: escrow.deposit,
+      principal: escrow.principal,
       kernel,
       splits,
     });

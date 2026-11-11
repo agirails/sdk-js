@@ -1060,10 +1060,10 @@ export class MockRuntime implements IACTPRuntime {
       }
 
       const amount = BigInt(escrow.balance);
-      const splitEvents = payMockProviderSide(state, tx, amount, { timestamp: currentTime, blockNumber });
+      const paid = payMockProviderSide(state, tx, amount, { timestamp: currentTime, blockNumber });
       escrow.balance = '0';
       escrow.locked = false;
-      for (const splitEvent of splitEvents) {
+      for (const splitEvent of paid.events) {
         tx.events.push(splitEvent);
         this.persistEvent(splitEvent, state);
       }
@@ -1080,7 +1080,7 @@ export class MockRuntime implements IACTPRuntime {
           txId,
           escrowId,
           provider: tx.provider,
-          amount: amount.toString(),
+          amount: paid.released.toString(),
         },
       };
 

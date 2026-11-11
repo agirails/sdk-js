@@ -721,6 +721,7 @@ export class ACTPClient {
     this.dispute = disputeClient;
     this.reputationReporter = reputationReporter;
     this.walletProvider = walletProvider;
+    runtime.feeSplit?.useWallet(walletProvider);
     this.contractAddresses = contractAddresses;
     this.lazyScenario = lazyScenario;
     this.pendingPublish = pendingPublish;
