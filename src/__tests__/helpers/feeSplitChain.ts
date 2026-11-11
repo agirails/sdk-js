@@ -170,9 +170,9 @@ export class FeeSplitChain {
     if (tx.requester.toLowerCase() !== sender.toLowerCase()) throw new Error('execution reverted: Only requester');
     if ((this.allowances.get(key(sender, vault)) ?? 0n) < tx.amount) throw new Error('execution reverted: Allowance');
     if (vault.toLowerCase() === this.vault) {
+      if (escrowId !== txId) throw new Error('execution reverted: Escrow ID needs matching tx');
       const terms = this.pending.get(key(sender, escrowId));
       if (terms) {
-        if (escrowId !== txId) throw new Error('execution reverted: Terms need txId escrowId');
         if ((this.approvals.get(key(tx.provider, terms.integrator)) ?? 0) < terms.bps) {
           throw new Error('execution reverted: Integrator not approved');
         }
