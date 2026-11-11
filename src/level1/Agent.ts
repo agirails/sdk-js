@@ -29,6 +29,8 @@ import { encodeDeliveryProof } from '../utils/deliveryProof';
 import { ProofGenerator } from '../protocol/ProofGenerator';
 import { DeliveryEnvelopeBuilder } from '../delivery/envelopeBuilder';
 import type { DeliveryChannel } from '../delivery/channel';
+import { checkEscrowIntake, type IntegratorTermsPolicy } from '../feesplit/intake';
+import { receiptAmountsFor } from '../feesplit/display';
 
 /**
  * Agent lifecycle states
@@ -157,6 +159,8 @@ export interface AgentConfig {
      * Auto-accept jobs
      */
     autoAccept?: boolean | ((job: Job) => boolean | Promise<boolean>);
+    /** Policy over the integrator terms a FeeSplitVault locked for a new job; default: accept. */
+    acceptIntegratorTerms?: IntegratorTermsPolicy;
 
     /**
      * Max concurrent jobs
@@ -1159,12 +1163,9 @@ export class Agent extends EventEmitter {
       return;
     }
 
-    // Security: check dedup before acquiring the lock so a TX that finished
-    // on a prior pass returns immediately without disturbing state.
     if (this.processingLocks.has(tx.id) || this.processedJobs.has(tx.id)) return;
     if (this.activeJobs.has(tx.id)) return;
 
-    // Acquire lock (atomic in single-threaded JS). Released in finally below.
     this.processingLocks.add(tx.id);
     try {
       // Authorization: TX provider must match this agent. Case-insensitive
@@ -1180,24 +1181,24 @@ export class Agent extends EventEmitter {
         return;
       }
 
-      // Routing (PRD §5.4): hash-first, string fallback.
+      const intake = await checkEscrowIntake(this._client?.runtime.feeSplit, tx, this.config.behavior?.acceptIntegratorTerms);
+      if (!intake.accept) {
+        this.logger.warn('Job declined: escrow vault', { txId: tx.id, reason: intake.reason });
+        return;
+      }
+
       const serviceHandler = this.findServiceHandler(tx);
       if (!serviceHandler) {
         this.logger.debug('No handler for transaction', { txId: tx.id });
         return;
       }
 
-      // Auto-accept evaluation. PRD §5.4.1: thread the matched handler so
-      // every Job built inside filter/pricing/autoAccept paths carries the
-      // correct service name.
       const shouldAccept = await this.shouldAutoAccept(tx, serviceHandler);
       if (!shouldAccept) {
         this.logger.debug('Auto-accept declined', { txId: tx.id });
         return;
       }
 
-      // Build Job using the matched handler so hash-only TXs carry the
-      // registered service name. PRD §5.4.1.
       const job = this.createJobFromTransaction(tx, serviceHandler);
       this.activeJobs.set(job.id, job);
 
@@ -2010,9 +2011,7 @@ export class Agent extends EventEmitter {
           renderReceiptV3(
             {
               agent: this.name,
-              // counterparty intentionally undefined for raw addresses —
-              // a 42-char hex would overflow the inner card. The renderer
-              // shortAddr-s `requester` for us when counterparty is unset.
+              settled: await receiptAmountsFor(this._client?.runtime, job.id),
               perspective: 'provider',
               service: job.service,
               amountWei,

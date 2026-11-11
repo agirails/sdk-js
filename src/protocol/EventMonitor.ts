@@ -1,4 +1,5 @@
-import { Contract, EventLog, Log } from 'ethers';
+import { Contract, ContractEventPayload, EventLog, Log, type Result } from 'ethers';
+import { FEE_SPLIT_VAULT_INTERFACE } from '../feesplit/calls';
 import { State, Transaction } from '../types';
 import {
   DisputeSplitRecorded,
@@ -43,6 +44,44 @@ export type TransactionWithLogMeta = Transaction & {
  *
  * Previous code had requester/provider swapped which caused wrong filter results.
  */
+/** A FeeSplitVault provider-side fee split. */
+export interface IntegratorFeeSplitEvent {
+  escrowId: string;
+  provider: string;
+  integrator: string;
+  /** What the kernel passed in: the kernel's EscrowReleased amount. */
+  providerSideAmount: bigint;
+  providerAmount: bigint;
+  integratorAmount: bigint;
+  integratorCredited: boolean;
+}
+
+/** A FeeSplitVault refund-side fee split. */
+export interface RefundFeeSplitEvent {
+  escrowId: string;
+  requester: string;
+  integrator: string;
+  /** What the kernel passed in: the kernel's EscrowRefunded amount. */
+  refundSideAmount: bigint;
+  requesterAmount: bigint;
+  protocolFee: bigint;
+  integratorFee: bigint;
+  protocolCredited: boolean;
+  integratorCredited: boolean;
+}
+
+function stringField(args: Result, name: string): string {
+  const value: unknown = args.getValue(name);
+  if (typeof value !== 'string') throw new Error(`Event field ${name} is not a string`);
+  return value;
+}
+
+function bigintField(args: Result, name: string): bigint {
+  const value: unknown = args.getValue(name);
+  if (typeof value !== 'bigint') throw new Error(`Event field ${name} is not an integer`);
+  return value;
+}
+
 /**
  * A surfaced dispute-resolution event (PRD P2-5). One of:
  *  - `'DisputeSplitRecorded'`  — CompositeMediator ruling-2 trace (AIP-14b §3.4)
@@ -327,7 +366,11 @@ export class EventMonitor {
   }
 
   /**
-   * Subscribe to escrow release events
+   * Subscribe to escrow release events.
+   *
+   * The kernel's EscrowReleased and EscrowRefunded amounts are what the kernel passed to the vault,
+   * before the vault's fees. For an escrow in a FeeSplitVault the provider or the requester can
+   * receive less: use `onIntegratorFeeSplit` / `onRefundFeeSplit`, or the payout breakdown.
    */
   onEscrowReleased(callback: (txId: string, amount: bigint) => void): () => void {
     const filter = this.kernelContract.filters.EscrowReleased();
@@ -340,6 +383,60 @@ export class EventMonitor {
 
     return () => {
       this.kernelContract.off(filter, listener);
+    };
+  }
+
+  /**
+   * Subscribe to a FeeSplitVault's provider-side fee splits: what the provider and the integrator
+   * received out of the amount the kernel released.
+   *
+   * @param vault - address of the FeeSplitVault
+   */
+  onIntegratorFeeSplit(vault: string, callback: (event: IntegratorFeeSplitEvent) => void): () => void {
+    return this.onVaultEvent(vault, 'IntegratorFeeSplit', args => {
+      callback({
+        escrowId: stringField(args, 'escrowId'),
+        provider: stringField(args, 'provider'),
+        integrator: stringField(args, 'integrator'),
+        providerSideAmount: bigintField(args, 'providerSideAmount'),
+        providerAmount: bigintField(args, 'providerAmount'),
+        integratorAmount: bigintField(args, 'integratorAmount'),
+        integratorCredited: args.getValue('integratorCredited') === true,
+      });
+    });
+  }
+
+  /**
+   * Subscribe to a FeeSplitVault's refund-side fee splits: what the requester, the protocol and
+   * the integrator received out of a refund that followed a dispute.
+   *
+   * @param vault - address of the FeeSplitVault
+   */
+  onRefundFeeSplit(vault: string, callback: (event: RefundFeeSplitEvent) => void): () => void {
+    return this.onVaultEvent(vault, 'RefundFeeSplit', args => {
+      callback({
+        escrowId: stringField(args, 'escrowId'),
+        requester: stringField(args, 'requester'),
+        integrator: stringField(args, 'integrator'),
+        refundSideAmount: bigintField(args, 'refundSideAmount'),
+        requesterAmount: bigintField(args, 'requesterAmount'),
+        protocolFee: bigintField(args, 'protocolFee'),
+        integratorFee: bigintField(args, 'integratorFee'),
+        protocolCredited: args.getValue('protocolCredited') === true,
+        integratorCredited: args.getValue('integratorCredited') === true,
+      });
+    });
+  }
+
+  private onVaultEvent(vault: string, name: string, handle: (args: Result) => void): () => void {
+    const contract = new Contract(vault, FEE_SPLIT_VAULT_INTERFACE, this.kernelContract.runner);
+    const listener = (...received: unknown[]): void => {
+      const payload = received[received.length - 1];
+      if (payload instanceof ContractEventPayload) handle(payload.args);
+    };
+    void contract.on(name, listener);
+    return () => {
+      void contract.off(name, listener);
     };
   }
 

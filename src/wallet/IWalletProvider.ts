@@ -66,6 +66,8 @@ export interface BatchedPayResult {
   hash: string;
   /** Whether the UserOp succeeded */
   success: boolean;
+  /** Profile BOTH_AFTER_DISPUTE only: the largest refund-side fees the job can incur. */
+  ifDisputedRefundQuote?: import('../feesplit/types').DisputeFeeQuote;
 }
 
 /**
@@ -121,7 +123,14 @@ export interface BatchedPayParams {
     usdc: string;
     actpKernel: string;
     escrowVault: string;
+    /** The network's FeeSplitVault list; needed when `feeSplit` names integrator terms. */
+    feeSplitVaults?: import('../feesplit/types').FeeSplitVaultEntry[];
   };
+  /**
+   * Integrator terms and the per-call dispute-fee acknowledgment. The wallet provider runs the
+   * funding preflight on them before it builds or submits anything.
+   */
+  feeSplit?: import('../feesplit/types').FeeSplitFundingOptions;
 }
 
 // ============================================================================

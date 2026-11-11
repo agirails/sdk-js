@@ -13,6 +13,8 @@
 
 import { MockTransaction, TransactionState } from './types/MockState';
 import type { QuoteMessage } from '../builders/QuoteBuilder';
+import type { FeeSplitSupport } from '../feesplit/FeeSplitSupport';
+import type { FeeSplitFundingOptions } from '../feesplit/types';
 
 /**
  * Parameters for creating a new transaction.
@@ -101,7 +103,13 @@ export interface IACTPRuntime {
    * const escrowId = await runtime.linkEscrow(txId, '1000000');
    * ```
    */
-  linkEscrow(txId: string, amount: string): Promise<string>;
+  linkEscrow(txId: string, amount: string, feeSplit?: FeeSplitFundingOptions): Promise<string>;
+
+  /**
+   * Integrator fee vault support. With integrator terms, per call or as the client default,
+   * `linkEscrow` funds through the FeeSplitVault after the funding preflight.
+   */
+  readonly feeSplit?: FeeSplitSupport;
 
   /**
    * Transitions a transaction to a new state.

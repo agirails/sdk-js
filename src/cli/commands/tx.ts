@@ -19,6 +19,7 @@ import { TransactionState, MockTransaction } from '../../runtime/types/MockState
 import { encodeDeliveryProof, assertRealResultHash } from '../../utils/deliveryProof';
 import { computeResultHash } from '../../utils/canonicalJson';
 import { OperationNotSupportedError } from '../../errors';
+import { breakdownSummary, escrowAmountsView } from '../../feesplit/display';
 
 // ============================================================================
 // Main tx Command
@@ -150,9 +151,11 @@ function createTxStatusCommand(): Command {
           return;
         }
 
-        // Compute fee breakdown for settled transactions
+        const amountsView = await escrowAmountsView(client.runtime.feeSplit, tx);
         let feeBreakdown: string | undefined;
-        if (tx.state === 'SETTLED') {
+        if (amountsView.kind === 'feeSplit') {
+          feeBreakdown = breakdownSummary(amountsView.amounts, tx.amount, formatUsdc);
+        } else if (tx.state === 'SETTLED') {
           const amountWei = BigInt(tx.amount);
           const bps = BigInt(tx.platformFeeBpsLocked ?? 100); // default 1%
           const minFee = 50_000n; // $0.05 in USDC wei
@@ -160,6 +163,7 @@ function createTxStatusCommand(): Command {
           const fee = bpsFee > minFee ? bpsFee : minFee;
           const providerNet = amountWei - fee;
           feeBreakdown = `${formatUsdc(providerNet.toString())} USDC to provider (${formatUsdc(tx.amount)} committed, ${formatUsdc(fee.toString())} protocol fee)`;
+          if (amountsView.kind === 'unrecognized') feeBreakdown += ` (${amountsView.note})`;
         }
 
         const display: TransactionDisplay = {

@@ -68,6 +68,7 @@ import { encodeDeliveryProof, assertRealResultHash } from './utils/deliveryProof
 import { loadBuyerLink, BuyerLink } from './config/buyerLink';
 import { sdkLogger } from './utils/Logger';
 import { SettleOnInteract } from './settle/SettleOnInteract';
+import type { FeeSplitVaultEntry, IntegratorTerms } from './feesplit/types';
 
 // ============================================================================
 // Security: Path Validation
@@ -394,7 +395,11 @@ export interface ACTPClientConfig {
     bondEscalation?: string;
     compositeMediator?: string;
     umaOptimisticOracleV3?: string;
+    feeSplitVaults?: FeeSplitVaultEntry[];
   };
+
+  /** Optional: default integrator fee terms (FeeSplitVault); a per-call `integrator` replaces them. Never a dispute-fee acknowledgment. */
+  integrator?: IntegratorTerms;
 
   /**
    * Optional: deployment block of a CUSTOM `contracts.actpKernel`.
@@ -1080,7 +1085,6 @@ export class ACTPClient {
 
           const requireAttestation = config.requireAttestation ?? Boolean(config.easConfig);
 
-          // Create BlockchainRuntime
           const blockchainRuntime = new BlockchainRuntime({
             network,
             signer,
@@ -1093,9 +1097,7 @@ export class ACTPClient {
             pollingInterval: config.pollingInterval,
           });
 
-          // Initialize async components
           await blockchainRuntime.initialize();
-
           runtime = blockchainRuntime;
 
           // Security: Use the runtime's initialized EASHelper so
@@ -1151,7 +1153,6 @@ export class ACTPClient {
             }
           }
 
-          // AIP-12: Contract addresses for AA batched payments
           contractAddresses = {
             usdc: config.contracts?.usdc ?? networkConfig.contracts.usdc,
             actpKernel: config.contracts?.actpKernel ?? networkConfig.contracts.actpKernel,
@@ -1201,7 +1202,7 @@ export class ACTPClient {
       }
     }
 
-    // Pass wallet provider, contract addresses, and lazy publish state to constructor
+    runtime.feeSplit?.setDefaults(config.integrator);
     const client = new ACTPClient(
       runtime, normalizedAddress, info, easHelper,
       erc8004Bridge, reputationReporter, walletProvider, contractAddresses,
@@ -1209,8 +1210,6 @@ export class ACTPClient {
       erc8004IdentityAddr, disputeClient,
     );
     client.pendingIsStale = pendingIsStale;
-
-    // Drift detection: non-blocking check for AGIRAILS.md sync status
     if (config.mode !== 'mock') {
       client.checkConfigDrift(config).catch(() => {
         // Silently ignore drift check errors — non-critical

@@ -32,6 +32,8 @@ import { ServiceHash, DisputeWindow } from '../utils/Helpers';
 import { IUsedAttestationTracker, createUsedAttestationTracker } from '../utils/UsedAttestationTracker';
 import { IReceivedNonceTracker, createReceivedNonceTracker } from '../utils/ReceivedNonceTracker';
 import { sdkLogger } from '../utils/Logger';
+import { BlockchainFeeSplit } from '../feesplit/BlockchainFeeSplit';
+import type { FeeSplitFundingOptions, FeeSplitVaultEntry } from '../feesplit/types';
 
 /**
  * Configuration for BlockchainRuntime
@@ -49,6 +51,7 @@ export interface BlockchainRuntimeConfig {
     escrowVault?: string;
     usdc?: string;
     eas?: string;
+    feeSplitVaults?: FeeSplitVaultEntry[];
   };
   /** Optional gas settings */
   gasSettings?: {
@@ -127,6 +130,8 @@ export interface BlockchainRuntimeConfig {
  */
 export class BlockchainRuntime implements IACTPRuntime {
   private readonly kernel: ACTPKernel;
+  /** Integrator fee vault support against the deployed contracts. */
+  readonly feeSplit: BlockchainFeeSplit;
   private readonly escrow: EscrowVault;
   private readonly events: EventMonitor;
   // Security: MessageSigner created via factory in initialize()
@@ -242,7 +247,7 @@ export class BlockchainRuntime implements IACTPRuntime {
       config.gasSettings
     );
 
-    // Security: Use public getters instead of private field access
+    this.feeSplit = BlockchainFeeSplit.forRuntime(this.provider, this.signer, this.kernel, this.networkConfig, config);
     this.events = new EventMonitor(
       this.kernel.getContract(),
       this.escrow.getContract()
@@ -491,43 +496,29 @@ export class BlockchainRuntime implements IACTPRuntime {
    * @param amount - Amount to lock (must match transaction amount)
    * @returns Promise resolving to escrow ID (same as txId)
    */
-  async linkEscrow(txId: string, amount: string): Promise<string> {
-    // Security: Enforce initialization
+  async linkEscrow(txId: string, amount: string, feeSplit?: FeeSplitFundingOptions): Promise<string> {
     this.requireInitialized();
-
-    // Security: Ensure provider connection before transaction
     await this.ensureConnected();
 
-    // Validate transaction exists and get details
     const tx = await this.getTransaction(txId);
     if (!tx) {
       throw new Error(`Transaction not found: ${txId}`);
     }
-
-    // Validate state is INITIATED or QUOTED
     if (tx.state !== 'INITIATED' && tx.state !== 'QUOTED') {
       throw new Error(
         `Cannot link escrow in current state ${tx.state}. Must be INITIATED or QUOTED.`
       );
     }
-
-    // Validate amount matches transaction (BigInt comparison to avoid string format mismatches)
     if (BigInt(amount) !== BigInt(tx.amount)) {
       throw new ValidationError('amount', `Amount mismatch: expected ${tx.amount}, got ${amount}`);
     }
 
-    // Approve USDC to escrow vault
+    const funding = await this.feeSplit.resolve(tx.provider, BigInt(amount), feeSplit, txId);
+    if (funding) return this.feeSplit.link(txId, amount, funding);
+
     await this.escrow.approveToken(this.networkConfig.contracts.usdc, BigInt(amount));
-
-    // SIMPLIFICATION (ESCROW-ID): Use txId as escrowId
-    // This aligns with ACTP standard where escrowId = txId
-    // Benefits: No mapping needed, simpler tracking, direct correlation
-    const escrowId = txId;
-
-    // Link escrow to transaction
-    await this.kernel.linkEscrow(txId, this.networkConfig.contracts.escrowVault, escrowId);
-
-    return escrowId;
+    await this.kernel.linkEscrow(txId, this.networkConfig.contracts.escrowVault, txId);
+    return txId;
   }
 
   /**
@@ -655,6 +646,7 @@ export class BlockchainRuntime implements IACTPRuntime {
         deadline: Number(tx.deadline),
         disputeWindow: tx.disputeWindow !== undefined ? Number(tx.disputeWindow) : 172800, // Default 2 days
         escrowId: tx.escrowId,
+        escrowContract: tx.escrowContract === ethers.ZeroAddress ? undefined : tx.escrowContract,
         createdAt: Number(tx.createdAt),
         updatedAt: Number(tx.updatedAt),
         // LIMITATION (V2): completedAt requires event indexing to fetch DELIVERED event timestamp.

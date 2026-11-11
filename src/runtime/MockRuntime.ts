@@ -32,6 +32,9 @@ import { IACTPRuntime, CreateTransactionParams } from './IACTPRuntime';
 import { QuoteBuilder, QuoteMessage } from '../builders/QuoteBuilder';
 import { Wallet as EthersWallet } from 'ethers';
 import { InMemoryNonceManager } from '../utils/NonceManager';
+import { MockFeeSplit } from '../feesplit/MockFeeSplit';
+import { payMockProviderSide, recordMockLink, refundMockRequester } from '../feesplit/mockLedger';
+import type { FeeSplitFundingOptions, ResolvedFeeSplitFunding } from '../feesplit/types';
 
 // ============================================================================
 // Custom Error Classes
@@ -277,6 +280,8 @@ const CANCELLABLE_STATES: TransactionState[] = [
  */
 export class MockRuntime implements IACTPRuntime {
   private stateManager: MockStateManager;
+  /** Integrator fee vault support over the mock state. */
+  readonly feeSplit: MockFeeSplit;
   /**
    * In-memory event log, also persisted to state file.
    *
@@ -335,12 +340,8 @@ export class MockRuntime implements IACTPRuntime {
    */
   constructor(stateManager?: MockStateManager) {
     this.stateManager = stateManager ?? new MockStateManager();
-
-    // Security: Load persisted events from state file
+    this.feeSplit = new MockFeeSplit(this.stateManager, (txId, amount, funding) => this.linkWith(txId, amount, funding));
     this.loadPersistedEvents();
-
-    // Initialize time interface
-    // Security: Time operations now use withLock to prevent race conditions
     this.time = {
       now: () => this.getCurrentTime(),
       advanceTime: (seconds: number) => this.advanceTimeWithLock(seconds),
@@ -736,24 +737,14 @@ export class MockRuntime implements IACTPRuntime {
         const escrow = state.escrows[tx.escrowId];
         if (escrow && BigInt(escrow.balance) > 0n) {
           const refundAmount = BigInt(escrow.balance);
-
-          // Create requester account if doesn't exist
-          if (!state.accounts[tx.requester]) {
-            state.accounts[tx.requester] = {
-              address: tx.requester,
-              usdcBalance: '0',
-            };
-          }
-
-          // Return funds to requester
-          const requesterBalance = BigInt(state.accounts[tx.requester].usdcBalance);
-          state.accounts[tx.requester].usdcBalance = (requesterBalance + refundAmount).toString();
-
-          // Clear escrow balance
+          const at = { timestamp: currentTime, blockNumber };
+          const splitEvents = refundMockRequester(state, tx, refundAmount, oldState === 'DISPUTED', at);
           escrow.balance = '0';
           escrow.locked = false;
-
-          // Record EscrowRefunded event
+          for (const splitEvent of splitEvents) {
+            tx.events.push(splitEvent);
+            this.persistEvent(splitEvent, state);
+          }
           const refundEvent: MockEvent = {
             type: 'EscrowRefunded',
             timestamp: currentTime,
@@ -916,9 +907,12 @@ export class MockRuntime implements IACTPRuntime {
    * const escrowId = await runtime.linkEscrow(txId, '1000000');
    * ```
    */
-  async linkEscrow(txId: string, amount: string): Promise<string> {
+  async linkEscrow(txId: string, amount: string, feeSplit?: FeeSplitFundingOptions): Promise<string> {
+    return this.linkWith(txId, amount, await this.feeSplit.resolveFor(txId, amount, feeSplit));
+  }
+
+  private async linkWith(txId: string, amount: string, funding?: ResolvedFeeSplitFunding): Promise<string> {
     return this.stateManager.withLock(async (state) => {
-      // Validate amount (Issue #2 fix)
       const amountBigInt = BigInt(amount);
       if (amountBigInt <= 0n) {
         throw new InvalidAmountError(amount, 'Amount must be positive');
@@ -929,18 +923,15 @@ export class MockRuntime implements IACTPRuntime {
         throw new TransactionNotFoundError(txId);
       }
 
-      // Validate state - can only link from INITIATED or QUOTED
       if (tx.state !== 'INITIATED' && tx.state !== 'QUOTED') {
         throw new InvalidStateTransitionError(txId, tx.state, 'COMMITTED');
       }
 
-      // Check deadline
       const currentTime = state.blockchain.currentTime;
       if (currentTime > tx.deadline) {
         throw new DeadlinePassedError(txId, tx.deadline, currentTime);
       }
 
-      // Check requester balance
       const requesterAccount = state.accounts[tx.requester];
       const requesterBalance = BigInt(requesterAccount?.usdcBalance ?? '0');
 
@@ -979,9 +970,9 @@ export class MockRuntime implements IACTPRuntime {
 
       state.escrows[escrowId] = escrow;
 
-      // Link to transaction and auto-transition to COMMITTED
       const oldState = tx.state;
       tx.escrowId = escrowId;
+      recordMockLink(tx, funding);
       tx.state = 'COMMITTED';
       tx.updatedAt = currentTime;
 
@@ -1069,24 +1060,13 @@ export class MockRuntime implements IACTPRuntime {
       }
 
       const amount = BigInt(escrow.balance);
-
-      // Create or update provider account
-      if (!state.accounts[tx.provider]) {
-        state.accounts[tx.provider] = {
-          address: tx.provider,
-          usdcBalance: '0',
-        };
-      }
-
-      // Transfer to provider
-      const providerBalance = BigInt(state.accounts[tx.provider].usdcBalance);
-      state.accounts[tx.provider].usdcBalance = (providerBalance + amount).toString();
-
-      // Clear escrow balance
+      const splitEvents = payMockProviderSide(state, tx, amount, { timestamp: currentTime, blockNumber });
       escrow.balance = '0';
       escrow.locked = false;
-
-      // Transition to SETTLED
+      for (const splitEvent of splitEvents) {
+        tx.events.push(splitEvent);
+        this.persistEvent(splitEvent, state);
+      }
       const oldState = tx.state;
       tx.state = 'SETTLED';
       tx.updatedAt = currentTime;

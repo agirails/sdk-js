@@ -211,9 +211,7 @@ async function runRequestCommand(
     // amount is the human-readable USDC string ("0.05", "10"); convert to
     // 6-decimal wei. Strip leading $ if a user passed "$10".
     const amountNum = Number(amount.replace(/^\$/, ''));
-    const amountWei = Number.isFinite(amountNum)
-      ? BigInt(Math.round(amountNum * 1_000_000))
-      : 0n;
+    const amountWei = Number.isFinite(amountNum) ? BigInt(Math.round(amountNum * 1_000_000)) : 0n;
     renderReceiptV3(
       {
         agent: 'your-agent',
@@ -223,6 +221,7 @@ async function runRequestCommand(
         // shortAddr(requester) which always fits.
         counterparty: counterpartySlug,
         perspective: 'buyer',
+        settled: result.settledAmounts,
         service: options.service,
         amountWei,
         network: networkLabel,

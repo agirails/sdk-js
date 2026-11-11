@@ -12,6 +12,7 @@
 
 import { z } from 'zod';
 import type { X402FeeBreakdown } from './x402';
+import type { DisputeFeeQuote, IntegratorTerms } from '../feesplit/types';
 
 // ============================================================================
 // AdapterMetadata - Describes adapter capabilities
@@ -174,6 +175,18 @@ export interface UnifiedPayParams {
   httpHeaders?: Record<string, string>;
 
   /**
+   * Integrator fee terms for this payment (FeeSplitVault). Replaces the client-level default. The
+   * provider must have approved the integrator on chain for at least this rate.
+   */
+  integrator?: IntegratorTerms;
+
+  /**
+   * Required for this call when the profile is BOTH_AFTER_DISPUTE: the caller has shown the payer
+   * the fees a refund pays after a dispute. A client-level default never counts as acknowledgment.
+   */
+  acknowledgeDisputeFee?: boolean;
+
+  /**
    * OPTIONAL accepted-quote binding (F44 / FR018-002).
    *
    * When a caller has ALREADY accepted specific terms in a prior `/quote` (e.g.
@@ -312,6 +325,13 @@ export interface UnifiedPayResult {
    * Use with ReputationReporter.reportSettlement() after release.
    */
   erc8004AgentId?: string;
+
+  /**
+   * Profile BOTH_AFTER_DISPUTE only: the split of a full refund of the whole amount after a dispute,
+   * the largest refund-side fees the job can incur. A hypothetical quote, never the amount a refund
+   * will pay.
+   */
+  ifDisputedRefundQuote?: DisputeFeeQuote;
 
   /**
    * @deprecated Legacy from the pre-v2 x402 flow routed through the

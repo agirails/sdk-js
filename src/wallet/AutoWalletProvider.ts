@@ -41,6 +41,9 @@ import { DualNonceManager } from './aa/DualNonceManager';
 import { buildACTPPayBatch, computeTransactionId } from './aa/TransactionBatcher';
 import { sdkLogger } from '../utils/Logger';
 import { X402SignatureFailedError } from '../errors/X402Errors';
+import { ChainFeeSplitReader } from '../feesplit/ChainFeeSplitReader';
+import { assertFeeSplitTermsLocked, resolveFeeSplitFunding } from '../feesplit/funding';
+import type { ResolvedFeeSplitFunding } from '../feesplit/types';
 
 // ============================================================================
 // Types
@@ -366,6 +369,28 @@ export class AutoWalletProvider implements IWalletProvider {
    * Manages ACTP nonce inside the mutex queue for concurrent safety.
    */
   async payACTPBatched(params: BatchedPayParams, prependCalls?: SmartWalletCall[]): Promise<BatchedPayResult> {
+    const reader = new ChainFeeSplitReader(this.provider, params.contracts.actpKernel);
+    const funding = await resolveFeeSplitFunding({
+      integrator: params.feeSplit?.integrator,
+      acknowledgeDisputeFee: params.feeSplit?.acknowledgeDisputeFee,
+      provider: params.provider,
+      amount: BigInt(params.amount),
+      vaults: params.contracts.feeSplitVaults ?? [],
+      reader,
+    });
+    const result = await this.submitACTPPayBatch(params, funding, prependCalls);
+    if (funding && result.success) {
+      await assertFeeSplitTermsLocked(reader, result.txId, funding);
+      result.ifDisputedRefundQuote = funding.ifDisputedRefundQuote;
+    }
+    return result;
+  }
+
+  private submitACTPPayBatch(
+    params: BatchedPayParams,
+    funding: ResolvedFeeSplitFunding | undefined,
+    prependCalls?: SmartWalletCall[]
+  ): Promise<BatchedPayResult> {
     return this.nonceManager.enqueue(
       async ({ entryPointNonce, actpNonce }) => {
         const MAX_NONCE_BUMPS = 12;
@@ -375,6 +400,7 @@ export class AutoWalletProvider implements IWalletProvider {
           const batch = buildACTPPayBatch({
             ...params,
             actpNonce: candidateNonce,
+            funding,
           });
 
           // Combine activation calls (if any) with payment calls

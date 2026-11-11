@@ -151,6 +151,31 @@ export interface MockTransaction {
 
   /** Platform fee basis points locked at transaction creation (e.g. 100 = 1%) */
   platformFeeBpsLocked?: number;
+
+  /**
+   * Vault the escrow is linked to: the kernel's `escrowContract`. Set when the escrow is linked.
+   * Displays and provider intake read the vault from here and from nowhere else.
+   */
+  escrowContract?: string;
+
+  /** Integrator terms and cumulative fee counters of an escrow funded through the mock FeeSplitVault. */
+  feeSplit?: MockFeeSplitEscrow;
+}
+
+/**
+ * Mock counterpart of a FeeSplitVault escrow: the locked terms and the cumulative counters the fee
+ * rules need. Amounts are USDC wei as strings.
+ */
+export interface MockFeeSplitEscrow {
+  integrator: string;
+  bps: number;
+  profile: 'PAYOUT_ONLY' | 'BOTH_AFTER_DISPUTE';
+  protocolBps: number;
+  providerSide: string;
+  integratorProviderSide: string;
+  refundSide: string;
+  protocolRefundFee: string;
+  integratorRefundFee: string;
 }
 
 /**
@@ -244,6 +269,9 @@ export interface MockState {
    * across CLI invocations.
    */
   events?: MockEvent[];
+
+  /** FeeSplitVault consent: provider address, then integrator address, to the approved maximum bps. */
+  feeSplitApprovals?: Record<string, Record<string, number>>;
 }
 
 /**

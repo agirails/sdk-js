@@ -269,6 +269,30 @@ export interface ReceiptDataV3 {
    * V3 fixtures.
    */
   perspective?: 'buyer' | 'provider';
+  /**
+   * Amounts read from the payout breakdown of an escrow in a FeeSplitVault. When present they
+   * replace the fee and net computed from `amountWei`; `note` labels amounts that are not verified.
+   */
+  settled?: { netWei?: bigint; feeWei?: bigint; platformFeeWei?: bigint; note?: string };
+}
+
+function feePayload(fee: bigint, feePercent: string, settled: ReceiptDataV3['settled']): Record<string, string> {
+  const payload: Record<string, string> = { fee: formatUsdc(fee), feePercent: `${feePercent}%` };
+  if (settled?.platformFeeWei !== undefined) payload.platformFee = formatUsdc(settled.platformFeeWei);
+  if (settled?.note) payload.note = settled.note;
+  return payload;
+}
+
+function feeCardLines(fee: bigint, feePercent: string, settled: ReceiptDataV3['settled']): string[] {
+  const lines = [`${fmt.label('Fee')}        ${formatUsdc(fee)} (${feePercent}%)`];
+  if (settled?.platformFeeWei !== undefined) lines.push(`${fmt.label('Platform')}   ${formatUsdc(settled.platformFeeWei)}`);
+  return lines;
+}
+
+function netCardLines(net: bigint, settled: ReceiptDataV3['settled']): string[] {
+  const lines = [`${fmt.label('Net')}        ${fmt.green(formatUsdc(net))}`];
+  if (settled?.note) lines.push(fmt.dim(settled.note));
+  return lines;
 }
 
 /** Short-form Ethereum address: `0x123456...abcd`. */
@@ -345,8 +369,8 @@ export function renderReceiptV3(data: ReceiptDataV3, output: Output): void {
   // (computeDisplayFee returns MIN_FEE_WEI for amount=0; that would render
   // as $0.05 fee on a $0 transaction, which is nonsensical and trips up
   // the V3 ceremonial framing.)
-  const fee = data.amountWei === 0n ? 0n : computeDisplayFee(data.amountWei);
-  const net = data.amountWei - fee;
+  const fee = data.settled?.feeWei ?? (data.amountWei === 0n ? 0n : computeDisplayFee(data.amountWei));
+  const net = data.settled?.netWei ?? data.amountWei - fee;
   const feePercent = data.amountWei > 0n
     ? ((Number(fee) / Number(data.amountWei)) * 100).toFixed(0)
     : '0';
@@ -372,8 +396,7 @@ export function renderReceiptV3(data: ReceiptDataV3, output: Output): void {
       counterparty: data.counterparty,
       service: data.service,
       earned: formatUsdc(data.amountWei),
-      fee: formatUsdc(fee),
-      feePercent: `${feePercent}%`,
+      ...feePayload(fee, feePercent, data.settled),
       net: formatUsdc(net),
       network: data.network,
       txId: data.txId,
@@ -469,8 +492,8 @@ export function renderReceiptV3(data: ReceiptDataV3, output: Output): void {
   innerLine(`${fmt.label('From')}       ${fromLabel}`);
   innerLine(`${fmt.label('To')}         ${toLabel}`);
   innerLine(`${fmt.label('Amount')}     ${formatUsdc(data.amountWei)}`);
-  innerLine(`${fmt.label('Fee')}        ${formatUsdc(fee)} (${feePercent}%)`);
-  innerLine(`${fmt.label('Net')}        ${fmt.green(formatUsdc(net))}`);
+  feeCardLines(fee, feePercent, data.settled).forEach(innerLine);
+  netCardLines(net, data.settled).forEach(innerLine);
   innerLine(`${fmt.label('Service')}    ${data.service}`);
   innerLine(`${fmt.label('Status')}     ${fmt.green('SETTLED ✓')}`);
   if (data.timing) {

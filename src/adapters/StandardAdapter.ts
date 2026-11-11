@@ -26,6 +26,8 @@ import {
 import { IWalletProvider } from '../wallet/IWalletProvider';
 import { SmartWalletRouter, createSmartWalletRouter, computeDisputeWindowEnds } from '../wallet/SmartWalletRouter';
 import { ServiceHash } from '../utils/Helpers';
+import { feeSplitOptionsOf, fundingOptionsAfterPreflight, preflightFeeSplitFunding } from '../feesplit/options';
+import type { FeeSplitFundingOptions } from '../feesplit/types';
 
 /**
  * Parameters for creating a transaction (standard level).
@@ -246,7 +248,7 @@ export class StandardAdapter extends BaseAdapter implements IAdapter {
    * const escrowId = await adapter.linkEscrow(txId);
    * ```
    */
-  async linkEscrow(txId: string): Promise<string> {
+  async linkEscrow(txId: string, feeSplit?: FeeSplitFundingOptions): Promise<string> {
     // Retry-with-backoff for RPC propagation lag.
     //
     // Callers commonly invoke linkEscrow immediately after createTransaction.
@@ -273,13 +275,13 @@ export class StandardAdapter extends BaseAdapter implements IAdapter {
     // Route through Smart Wallet when available (gasless)
     if (this.smartWalletRouter?.shouldRoute() && this.contractAddresses) {
       await this.smartWalletRouter.sendLinkEscrow(
-        txId, tx.amount, this.contractAddresses.usdc
+        txId, tx.amount, this.contractAddresses.usdc, feeSplit
       );
       return txId; // escrowId = txId (ACTP standard)
     }
 
     // Fallback: EOA / mock path
-    return this.runtime.linkEscrow(txId, tx.amount);
+    return this.runtime.linkEscrow(txId, tx.amount, feeSplit);
   }
 
   /**
@@ -502,11 +504,16 @@ export class StandardAdapter extends BaseAdapter implements IAdapter {
       agentId: params.erc8004AgentId, // Pass ERC-8004 agent ID
     };
 
+    const feeSplit = feeSplitOptionsOf(params);
+    const funding = await preflightFeeSplitFunding(
+      this.runtime, this.validateAddress(params.to, 'to'), this.parseAmount(params.amount), feeSplit
+    );
+
     // Create transaction
     const txId = await this.createTransaction(standardParams);
 
     // Link escrow (auto-transitions to COMMITTED)
-    await this.linkEscrow(txId);
+    await this.linkEscrow(txId, fundingOptionsAfterPreflight(funding, feeSplit));
 
     // Fetch transaction for response
     const tx = await this.runtime.getTransaction(txId);
@@ -524,6 +531,7 @@ export class StandardAdapter extends BaseAdapter implements IAdapter {
       state: 'COMMITTED',
       success: true,
       amount: this.formatAmount(tx.amount),
+      ifDisputedRefundQuote: funding?.ifDisputedRefundQuote,
       releaseRequired: true, // ACTP requires explicit release()
       provider,
       requester: this.requesterAddress,

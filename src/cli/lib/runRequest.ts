@@ -45,6 +45,7 @@ import { ACTPClient } from '../../ACTPClient';
 import { resolvePrivateKey } from '../../wallet/keystore';
 import { TransactionState } from '../../runtime/types/MockState';
 import { Logger } from '../../utils/Logger';
+import { receiptAmountsOrNote, type ReceiptAmounts } from '../../feesplit/display';
 import {
   CANONICAL_EMPTY_BYTES32,
   DeliverySetupBuilder,
@@ -235,6 +236,8 @@ export interface RunRequestResult {
   payload?: unknown;
   /** Whether the requester settled the escrow before returning. */
   settled: boolean;
+  /** Receipt amounts from the payout breakdown when the escrow is not in the plain vault. */
+  settledAmounts?: ReceiptAmounts;
   /**
    * Absolute public receipt URL (https://agirails.app/r/r_...) when the
    * buyer-side V2 push to the AGIRAILS Platform succeeded after SETTLED.
@@ -774,14 +777,10 @@ export async function runRequest(opts: RunRequestOptions): Promise<RunRequestRes
     }
   }
 
-  // Close the envelope subscription before returning. Idempotent per the
-  // DeliverySubscription contract; safe to call even if we never bound one.
   if (envelopeSubscription) {
     try {
       await envelopeSubscription.close();
     } catch (err) {
-      // Subscription teardown failure is purely cosmetic — the subscriber
-      // callback already won't fire (we have the payload or we don't).
       logger.warn('Delivery envelope subscription close failed', {
         txId,
         err: err instanceof Error ? err.message : String(err),
@@ -795,6 +794,7 @@ export async function runRequest(opts: RunRequestOptions): Promise<RunRequestRes
     elapsedMs: monoMillisNow() - startedAt,
     payload,
     settled,
+    settledAmounts: settled ? await receiptAmountsOrNote(client.runtime, txId) : undefined,
     receiptUrl,
     deliveryError,
   };

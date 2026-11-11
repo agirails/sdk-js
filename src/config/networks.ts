@@ -1,4 +1,6 @@
 import { ethers } from 'ethers';
+import { feeSplitVaultListErrors } from '../feesplit/vaults';
+import type { FeeSplitVaultEntry } from '../feesplit/types';
 
 // ============================================================================
 // Security: RPC URL Configuration
@@ -112,6 +114,12 @@ export interface NetworkConfig {
     bondEscalation?: string; // BondEscalation (Tier-1 bonded escalation + AIRuling verifier)
     compositeMediator?: string; // CompositeMediator (canonical 0/1/2 ruling → fund routing)
     umaOptimisticOracleV3?: string; // UMA OptimisticOracleV3 (Tier-2 optimistic oracle)
+    /**
+     * Integrator fee vaults (FeeSplitVault) of this network's kernel. Append-only: an address is
+     * never removed, because receipts and in-flight jobs read their vault from this list. At most
+     * one entry has `funding: true`; a retired vault keeps its entry with `funding: false`.
+     */
+    feeSplitVaults: FeeSplitVaultEntry[];
   };
   eas: {
     deliverySchemaUID: string; // AIP-4 delivery proof schema
@@ -197,6 +205,7 @@ export const BASE_SEPOLIA: NetworkConfig = {
     bondEscalation: '0x84CB23F1bCebC286270EE5E62A19a64686D3Ca0A',
     compositeMediator: '0x45a440a34303AEe597672C1D47d1ce83BEC8aD1C',
     umaOptimisticOracleV3: '0x64C81e2F8a8f72D20AF24a8d9b3A22A93D80AC6A', // testnet MockOOV3 (Tier-2 double)
+    feeSplitVaults: [],
   },
   eas: {
     deliverySchemaUID: '0x1b0ebdf0bd20c28ec9d5362571ce8715a55f46e81c3de2f9b0d8e1b95fb5ffce'
@@ -238,6 +247,7 @@ export const BASE_MAINNET: NetworkConfig = {
     agentRegistry: '0x64Cb18bfb3CC1aCb1370a3B01613391D3561a009',
     archiveTreasury: '0x6159A80Ce8362aBB2307FbaB4Ed4D3F4A4231Acc',
     erc8004IdentityRegistry: '0x8004A169FB4a3325136EB29fA0ceB6D2e539a432',
+    feeSplitVaults: [],
   },
   eas: {
     deliverySchemaUID: '0x166501e7476e2fcf9214c4c5144533c2957d56fe59d639effc1719a0658d9c9a'
@@ -307,7 +317,8 @@ export function getNetwork(network: string): NetworkConfig {
       erc8004IdentityRegistry: config.contracts.erc8004IdentityRegistry,
       bondEscalation: config.contracts.bondEscalation,
       compositeMediator: config.contracts.compositeMediator,
-      umaOptimisticOracleV3: config.contracts.umaOptimisticOracleV3
+      umaOptimisticOracleV3: config.contracts.umaOptimisticOracleV3,
+      feeSplitVaults: config.contracts.feeSplitVaults.map(entry => ({ ...entry }))
     },
     eas: {
       deliverySchemaUID: config.eas.deliverySchemaUID,
@@ -357,6 +368,8 @@ export function validateNetworkConfig(config: NetworkConfig): void {
   if (config.contracts.usdc === zeroAddress) {
     errors.push('USDC address is zero - token contract not configured for this network');
   }
+
+  errors.push(...feeSplitVaultListErrors(config.contracts.feeSplitVaults, config.contracts.escrowVault));
 
   if (errors.length > 0) {
     throw new Error(

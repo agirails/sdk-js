@@ -323,6 +323,28 @@ export { EOAWalletProvider } from './wallet/EOAWalletProvider';
 export { AutoWalletProvider } from './wallet/AutoWalletProvider';
 export type { AutoWalletConfig } from './wallet/AutoWalletProvider';
 
+export type {
+  FeeProfile,
+  IntegratorTerms,
+  FeeSplitVaultEntry,
+  FeeSplitFundingOptions,
+  DisputeFeeQuote,
+  LockedTerms,
+  ResolvedFeeSplitFunding,
+} from './feesplit/types';
+export type { PayoutBreakdown, PayoutMovement } from './feesplit/breakdown';
+export { FeeSplitSupport } from './feesplit/FeeSplitSupport';
+export type { RefundQuotes } from './feesplit/FeeSplitSupport';
+export { resolveFeeSplitFunding } from './feesplit/funding';
+export { fundingFeeSplitVault, isRecognizedFeeSplitVault } from './feesplit/vaults';
+export {
+  FeeSplitVaultUnavailableError,
+  IntegratorNotApprovedError,
+  DisputeFeeNotAcknowledgedError,
+  FeeSplitPreflightMissingError,
+  FeeSplitTermsNotLockedError,
+} from './feesplit/errors';
+
 // Helper utilities
 export {
   USDC,

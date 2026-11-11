@@ -27,6 +27,8 @@ import { SmartWalletCall } from '../wallet/aa/constants';
 import { TransactionStateValue } from '../runtime/types/MockState';
 import { SmartWalletRouter, createSmartWalletRouter, computeDisputeWindowEnds } from '../wallet/SmartWalletRouter';
 import { ethers } from 'ethers';
+import { feeSplitOptionsOf, fundingOptionsAfterPreflight, preflightFeeSplitFunding } from '../feesplit/options';
+import type { DisputeFeeQuote, FeeSplitFundingOptions } from '../feesplit/types';
 
 /**
  * Interface for lazy publish activation call provider.
@@ -54,6 +56,9 @@ export interface BasicPayParams {
 
   /** Optional: Dispute window in seconds. Defaults to 172800 (2 days) */
   disputeWindow?: number;
+
+  /** Optional: integrator fee terms and the per-call dispute-fee acknowledgment (FeeSplitVault). */
+  feeSplit?: FeeSplitFundingOptions;
 }
 
 /**
@@ -79,6 +84,9 @@ export interface BasicPayResult {
 
   /** Transaction state */
   state: string;
+
+  /** Profile BOTH_AFTER_DISPUTE only: the largest refund-side fees the job can incur (hypothetical). */
+  ifDisputedRefundQuote?: DisputeFeeQuote;
 }
 
 /**
@@ -213,6 +221,18 @@ export class BasicAdapter extends BaseAdapter implements IAdapter {
       );
     }
 
+    const funding = await preflightFeeSplitFunding(this.runtime, provider, amount, params.feeSplit);
+    const feeSplit = fundingOptionsAfterPreflight(funding, params.feeSplit);
+    const paid = (txId: string, state: string): BasicPayResult => ({
+      txId,
+      provider,
+      requester,
+      amount: this.formatAmount(amount),
+      deadline: new Date(deadline * 1000).toISOString(),
+      state,
+      ifDisputedRefundQuote: funding?.ifDisputedRefundQuote,
+    });
+
     // ====================================================================
     // AIP-12: Batched payment via AA wallet (1 UserOp = N on-chain calls)
     // With lazy publish: activation calls prepended to first payment.
@@ -241,7 +261,8 @@ export class BasicAdapter extends BaseAdapter implements IAdapter {
           disputeWindow,
           serviceHash,
           agentId: agentId || '0',
-          contracts: this.contractAddresses,
+          contracts: { ...this.contractAddresses, feeSplitVaults: this.runtime.feeSplit?.vaults().slice() },
+          feeSplit,
         },
         prependCalls.length > 0 ? prependCalls : undefined,
       );
@@ -259,14 +280,7 @@ export class BasicAdapter extends BaseAdapter implements IAdapter {
         }
       }
 
-      return {
-        txId: result.txId,
-        provider,
-        requester,
-        amount: this.formatAmount(amount),
-        deadline: new Date(deadline * 1000).toISOString(),
-        state: 'COMMITTED',
-      };
+      return paid(result.txId, 'COMMITTED');
     }
 
     // ====================================================================
@@ -284,7 +298,7 @@ export class BasicAdapter extends BaseAdapter implements IAdapter {
     });
 
     // Link escrow (auto-transitions to COMMITTED)
-    await this.runtime.linkEscrow(txId, amount.toString());
+    await this.runtime.linkEscrow(txId, amount.toString(), feeSplit);
 
     // Fetch transaction details for user-friendly response
     const tx = await this.runtime.getTransaction(txId);
@@ -293,14 +307,7 @@ export class BasicAdapter extends BaseAdapter implements IAdapter {
       throw new Error(`Transaction ${txId} not found after creation`);
     }
 
-    return {
-      txId,
-      provider,
-      requester,
-      amount: this.formatAmount(amount),
-      deadline: new Date(deadline * 1000).toISOString(),
-      state: tx.state,
-    };
+    return paid(txId, tx.state);
   }
 
   /**
@@ -391,6 +398,7 @@ export class BasicAdapter extends BaseAdapter implements IAdapter {
       amount: params.amount,
       deadline: params.deadline,
       disputeWindow: params.disputeWindow,
+      feeSplit: feeSplitOptionsOf(params),
     };
 
     // Call existing payBasic() with optional agentId
@@ -404,6 +412,7 @@ export class BasicAdapter extends BaseAdapter implements IAdapter {
       state: 'COMMITTED',
       success: true,
       amount: result.amount,
+      ifDisputedRefundQuote: result.ifDisputedRefundQuote,
       releaseRequired: true, // ACTP requires explicit release()
       provider: result.provider,
       requester: result.requester,

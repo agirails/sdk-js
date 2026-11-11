@@ -24,6 +24,9 @@ import { kernelCreationInterface, kernelCreationArguments } from '../../protocol
 import { ethers } from 'ethers';
 import { SmartWalletCall } from './constants';
 import { ServiceDescriptor } from '../../types/agent';
+import { encodeSetEscrowTerms, escrowIdOfSetEscrowTerms } from '../../feesplit/calls';
+import { assertFeeSplitPreflight } from '../../feesplit/funding';
+import type { ResolvedFeeSplitFunding } from '../../feesplit/types';
 
 // ============================================================================
 // ABI fragments — minimal for encoding only
@@ -70,6 +73,12 @@ export interface ACTPBatchParams {
     actpKernel: string;
     escrowVault: string;
   };
+  /**
+   * Result of the funding preflight. With it the escrow is funded through the FeeSplitVault and the
+   * batch registers the terms for the transaction id derived in this build. Terms without the
+   * preflight token are refused.
+   */
+  funding?: ResolvedFeeSplitFunding;
 }
 
 export interface ACTPBatchResult {
@@ -110,6 +119,7 @@ export function computeTransactionId(
  * Returns SmartWalletCall[] for executeBatch and the pre-computed txId.
  */
 export function buildACTPPayBatch(params: ACTPBatchParams): ACTPBatchResult {
+  if (params.funding) return buildFeeSplitPayBatch(params, params.funding);
   const amount = BigInt(params.amount);
 
   // Pre-compute txId
@@ -158,6 +168,49 @@ export function buildACTPPayBatch(params: ACTPBatchParams): ACTPBatchResult {
   ];
 
   return { calls, txId };
+}
+
+function buildFeeSplitPayBatch(params: ACTPBatchParams, funding: ResolvedFeeSplitFunding): ACTPBatchResult {
+  assertFeeSplitPreflight(funding);
+  const amount = BigInt(params.amount);
+  const txId = computeTransactionId(params.requester, params.provider, params.amount, params.serviceHash, params.actpNonce);
+  const kernelIface = kernelCreationInterface(params.contracts.actpKernel);
+  const agreementHash = params.agreementHash || ZERO_BYTES32;
+
+  const createTxData = kernelIface.encodeFunctionData('createTransaction', kernelCreationArguments(params.contracts.actpKernel, [
+    params.provider,
+    params.requester,
+    amount,
+    params.deadline,
+    params.disputeWindow,
+    params.serviceHash,
+    agreementHash,
+    BigInt(params.agentId || '0'),
+    BigInt(params.requesterAgentId || '0'),
+  ], agreementHash));
+  const approveData = new ethers.Interface(ERC20_APPROVE_ABI).encodeFunctionData('approve', [funding.vault, amount]);
+  const termsData = encodeSetEscrowTerms(txId, funding.terms);
+  const linkEscrowData = kernelIface.encodeFunctionData('linkEscrow', [txId, funding.vault, txId]);
+
+  const created = kernelIface.decodeFunctionData('createTransaction', createTxData);
+  const createdId = computeTransactionId(
+    String(created[1]), String(created[0]), String(created[2]), String(created[5]), params.actpNonce
+  );
+  const linked = kernelIface.decodeFunctionData('linkEscrow', linkEscrowData);
+  const sameId = [createdId, escrowIdOfSetEscrowTerms(termsData), linked[0], linked[2]].every(id => id === txId);
+  if (!sameId) {
+    throw new Error('FeeSplitVault pay batch: terms, link and transaction id differ');
+  }
+
+  return {
+    calls: [
+      { target: params.contracts.actpKernel, value: 0n, data: createTxData },
+      { target: params.contracts.usdc, value: 0n, data: approveData },
+      { target: funding.vault, value: 0n, data: termsData },
+      { target: params.contracts.actpKernel, value: 0n, data: linkEscrowData },
+    ],
+    txId,
+  };
 }
 
 /**

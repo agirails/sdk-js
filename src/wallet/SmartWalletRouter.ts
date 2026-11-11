@@ -14,6 +14,9 @@ import { IACTPRuntime } from '../runtime/IACTPRuntime';
 import { EASHelper } from '../protocol/EASHelper';
 import { TransactionStateValue } from '../runtime/types/MockState';
 import type { MockTransaction } from '../runtime/types/MockState';
+import { encodeSetEscrowTerms } from '../feesplit/calls';
+import { preflightFeeSplitFunding } from '../feesplit/options';
+import type { FeeSplitFundingOptions, ResolvedFeeSplitFunding } from '../feesplit/types';
 
 /**
  * Pre-compiled ABI interface for ACTPKernel.transitionState().
@@ -125,35 +128,55 @@ export class SmartWalletRouter {
    * Encodes USDC.approve(escrowVault, amount) + ACTPKernel.linkEscrow(txId, escrowVault, txId)
    * and submits them as a single atomic batch.
    *
+   * With integrator terms, per call or as the client default, the funding preflight runs first and
+   * the batch is approve(FeeSplitVault), setEscrowTerms(txId), linkEscrow(txId, FeeSplitVault, txId).
+   *
    * @param txId - Transaction ID (bytes32)
    * @param amount - Amount in USDC wei (string)
    * @param usdcAddress - USDC contract address
+   * @param feeSplit - Integrator terms and the per-call dispute-fee acknowledgment
    * @returns Transaction receipt
    */
-  async sendLinkEscrow(txId: string, amount: string, usdcAddress: string): Promise<TransactionReceipt> {
+  async sendLinkEscrow(
+    txId: string,
+    amount: string,
+    usdcAddress: string,
+    feeSplit?: FeeSplitFundingOptions
+  ): Promise<TransactionReceipt> {
     const amountBn = BigInt(amount);
-
-    const approveData = ERC20_IFACE.encodeFunctionData('approve', [
-      this.contractAddresses.escrowVault,
-      amountBn,
-    ]);
-
-    const linkEscrowData = ACTP_KERNEL_IFACE.encodeFunctionData('linkEscrow', [
-      txId,
-      this.contractAddresses.escrowVault,
-      txId, // escrowId = txId (ACTP standard)
-    ]);
+    const funding = await this.resolveFunding(txId, amountBn, feeSplit);
+    const vault = funding ? funding.vault : this.contractAddresses.escrowVault;
 
     const txs: TransactionRequest[] = [
-      { to: usdcAddress, data: approveData },
-      { to: this.contractAddresses.actpKernel, data: linkEscrowData },
+      { to: usdcAddress, data: ERC20_IFACE.encodeFunctionData('approve', [vault, amountBn]) },
     ];
+    if (funding) {
+      txs.push({ to: vault, data: encodeSetEscrowTerms(txId, funding.terms) });
+    }
+    txs.push({
+      to: this.contractAddresses.actpKernel,
+      data: ACTP_KERNEL_IFACE.encodeFunctionData('linkEscrow', [txId, vault, txId]),
+    });
 
     const receipt = await this.walletProvider.sendBatchTransaction(txs);
     if (!receipt.success) {
       throw new Error(`linkEscrow UserOp failed: ${receipt.hash}`);
     }
+    if (funding) {
+      await this.runtime.feeSplit?.assertLocked(txId, funding);
+    }
     return receipt;
+  }
+
+  private async resolveFunding(
+    txId: string,
+    amount: bigint,
+    feeSplit?: FeeSplitFundingOptions
+  ): Promise<ResolvedFeeSplitFunding | undefined> {
+    if (!this.runtime.feeSplit && !feeSplit?.integrator) return undefined;
+    const tx = await this.runtime.getTransaction(txId);
+    if (!tx) throw new Error(`Transaction ${txId} not found`);
+    return preflightFeeSplitFunding(this.runtime, tx.provider, amount, feeSplit, txId);
   }
 
   /**
