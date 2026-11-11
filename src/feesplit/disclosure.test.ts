@@ -1,4 +1,7 @@
 import { FeeSplitChain, FeeSplitChainProvider } from '../__tests__/helpers/feeSplitChain';
+import { Wallet } from 'ethers';
+import { ACTPKernel } from '../protocol/ACTPKernel';
+import { BlockchainFeeSplit } from './BlockchainFeeSplit';
 import { ChainFeeSplitReader } from './ChainFeeSplitReader';
 
 const TX = '0x' + 'a7'.repeat(32);
@@ -25,6 +28,7 @@ describe('dispute-fee disclosure read from the chain', () => {
       protocolFee: '7500000',
       integratorFee: '7500000',
       rateConfirmed: true,
+      blockTag: 100,
     });
     const fromRawRemaining = RAW_REMAINING - (RAW_REMAINING * 100n) / 10_000n - (RAW_REMAINING * 100n) / 10_000n;
     expect(fromRawRemaining).toBe(737_447_550n);
@@ -50,6 +54,28 @@ describe('dispute-fee disclosure read from the chain', () => {
       protocolFee: '7500000',
       integratorFee: '7500000',
     });
+  });
+
+  it('refundQuotes reads the principal, the hypothetical and the actual quote at one block', async () => {
+    const provider = new FeeSplitChainProvider(chain);
+    const signer = new Wallet('0x' + '11'.repeat(32), provider);
+    const support = new BlockchainFeeSplit({
+      provider,
+      signer,
+      kernel: new ACTPKernel(chain.kernel, signer),
+      kernelAddress: chain.kernel,
+      usdc: chain.usdc,
+      escrowVault: chain.plainVault,
+      vaults: [{ address: chain.vault, funding: true }],
+    });
+    const quotes = await support.refundQuotes(chain.vault, TX);
+    expect(chain.reads).toEqual([
+      { name: 'escrowPrincipal', blockTag: '0x64' },
+      { name: 'quoteRefundIfDisputed', blockTag: '0x64' },
+      { name: 'quoteRefund', blockTag: '0x64' },
+    ]);
+    expect(quotes.actualRefundQuote).toMatchObject({ requesterAmount: '750000000', protocolFee: '0' });
+    expect(quotes.ifDisputedRefundQuote).toMatchObject({ requesterAmount: '735000000', protocolFee: '7500000' });
   });
 
   it('profile PAYOUT_ONLY: the hypothetical quote carries no fee', async () => {

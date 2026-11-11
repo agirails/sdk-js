@@ -98,11 +98,14 @@ export class ChainFeeSplitReader implements FeeSplitReader {
    * principal comes from the kernel (it excludes reserved protocol-fee debt), and both reads use one
    * block. It is the largest refund-side fee the job can incur, not a prediction of a split ruling.
    */
-  async quoteRefundIfDisputed(vault: string, txId: string): Promise<DisputeFeeQuote & { rateConfirmed: boolean }> {
+  async quoteRefundIfDisputed(
+    vault: string,
+    txId: string
+  ): Promise<DisputeFeeQuote & { rateConfirmed: boolean; blockTag: number }> {
     const blockTag = await this.provider.getBlockNumber();
     const principal = bigintAt(await this.kernelCall('escrowPrincipal', [txId], blockTag), 0);
     const result = await this.vaultCall(vault, 'quoteRefundIfDisputed', [txId, principal], blockTag);
-    return { ...quoteOf(principal, result), rateConfirmed: booleanAt(result, 3) };
+    return { ...quoteOf(principal, result), rateConfirmed: booleanAt(result, 3), blockTag };
   }
 
   /** The kernel's view of an escrow at one block: deposit, escrow id and remaining principal. */
@@ -116,7 +119,7 @@ export class ChainFeeSplitReader implements FeeSplitReader {
   }
 
   /** What a refund of `amount` would pay in the escrow's current state: fee-free while undisputed. */
-  async quoteRefund(vault: string, txId: string, amount: bigint): Promise<DisputeFeeQuote> {
-    return quoteOf(amount, await this.vaultCall(vault, 'quoteRefund', [txId, amount]));
+  async quoteRefund(vault: string, txId: string, amount: bigint, blockTag?: number): Promise<DisputeFeeQuote> {
+    return quoteOf(amount, await this.vaultCall(vault, 'quoteRefund', [txId, amount], blockTag));
   }
 }

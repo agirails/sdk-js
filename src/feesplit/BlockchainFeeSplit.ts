@@ -155,7 +155,7 @@ export class BlockchainFeeSplit extends FeeSplitSupport {
 
   async refundQuotes(vault: string, txId: string): Promise<RefundQuotes> {
     const ifDisputed = await this.chainReader.quoteRefundIfDisputed(vault, txId);
-    const actual = await this.chainReader.quoteRefund(vault, txId, BigInt(ifDisputed.refundAmount));
+    const actual = await this.chainReader.quoteRefund(vault, txId, BigInt(ifDisputed.refundAmount), ifDisputed.blockTag);
     return {
       actualRefundQuote: actual,
       ifDisputedRefundQuote: {

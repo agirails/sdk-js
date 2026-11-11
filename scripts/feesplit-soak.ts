@@ -13,8 +13,10 @@
  * recognized in the reports.
  *
  * The requester key must be dedicated to the soak: the reconciler fails on any escrow of that
- * address that no run file names. The run file is written even when a job fails part-way, because
- * every escrow that was funded must be named.
+ * address that no run file names. Every funded escrow is appended to soak-d<day>.journal.jsonl as
+ * soon as it is known to be linked, also when the link call itself failed after the kernel accepted
+ * it; the run file is written from those entries even when a job fails part-way, and the journal is
+ * removed only then. A journal left behind means the run file was not written: recover from it.
  *
  * Not covered here: jobs through a paymaster (smart-wallet path).
  *
@@ -110,9 +112,10 @@ interface Stack {
   requesterKernel: ACTPKernel;
   bond: BondEscalationClient;
   configurations: [Configuration, Configuration];
+  journal: string;
 }
 
-async function loadStack(): Promise<Stack> {
+async function loadStack(outDir: string): Promise<Stack> {
   const day = Number(process.env.SOAK_DAY ?? '1');
   if (!Number.isInteger(day) || day < 1) throw new Error('SOAK_DAY must be a positive integer');
   const confirmations = Number(process.env.SOAK_CONFIRMATIONS ?? '2');
@@ -139,7 +142,10 @@ async function loadStack(): Promise<Stack> {
     await runtime.initialize();
     return runtime;
   };
+  const journal = path.join(outDir, `soak-d${day}.journal.jsonl`);
+  if (fs.existsSync(journal)) throw new Error(`${journal} exists: an earlier run of this day did not finish; recover its entries first`);
   return {
+    journal,
     day,
     chainId,
     confirmations,
@@ -209,11 +215,6 @@ class SoakDay {
       disputeWindow: 3600,
       serviceDescription: SERVICE,
     });
-    await requester.linkEscrow(
-      txId,
-      amount.toString(),
-      configuration ? { integrator: configuration.terms, acknowledgeDisputeFee: configuration.profile === 'B' } : undefined
-    );
     const entry: Entry = {
       label: `soak-d${day}-${this.entries.length + 1}-${kind}${configuration ? `-${configuration.name}` : ''}`,
       row: '',
@@ -230,9 +231,25 @@ class SoakDay {
       earliestExec: 0,
       adminResolved: false,
     };
-    this.entries.push(entry);
-    console.log(`armed ${entry.label} ${txId}`);
+    try {
+      await requester.linkEscrow(
+        txId,
+        amount.toString(),
+        configuration ? { integrator: configuration.terms, acknowledgeDisputeFee: configuration.profile === 'B' } : undefined
+      );
+    } catch (error) {
+      const linked = (await requester.getTransaction(txId))?.escrowContract !== undefined;
+      if (linked) this.record(entry);
+      throw error;
+    }
+    this.record(entry);
     return entry;
+  }
+
+  private record(entry: Entry): void {
+    this.entries.push(entry);
+    fs.appendFileSync(this.stack.journal, JSON.stringify(entry) + '\n');
+    console.log(`armed ${entry.label} ${entry.txId}`);
   }
 
   private async deliver(txId: string): Promise<void> {
@@ -329,13 +346,14 @@ async function writeRunFile(stack: Stack, entries: Entry[], outDir: string): Pro
     entries,
   };
   fs.writeFileSync(file, JSON.stringify(run, null, 2) + '\n', { flag: 'wx' });
+  fs.rmSync(stack.journal);
   console.log(`run file: ${file}`);
 }
 
 async function main(): Promise<void> {
   const outDir = env('SOAK_OUT_DIR');
   if (!fs.statSync(outDir).isDirectory()) throw new Error('SOAK_OUT_DIR is not a directory');
-  const stack = await loadStack();
+  const stack = await loadStack(outDir);
   const soak = new SoakDay(stack);
   try {
     await soak.approveIntegrators();

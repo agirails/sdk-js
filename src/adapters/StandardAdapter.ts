@@ -26,8 +26,8 @@ import {
 import { IWalletProvider } from '../wallet/IWalletProvider';
 import { SmartWalletRouter, createSmartWalletRouter, computeDisputeWindowEnds } from '../wallet/SmartWalletRouter';
 import { ServiceHash } from '../utils/Helpers';
-import { feeSplitOptionsOf, fundingOptionsAfterPreflight, preflightFeeSplitFunding } from '../feesplit/options';
-import type { FeeSplitFundingOptions } from '../feesplit/types';
+import { disputeFeePreview, feeSplitOptionsOf, fundingOptionsAfterPreflight, preflightFeeSplitFunding } from '../feesplit/options';
+import type { DisputeFeeQuote, FeeSplitFundingOptions } from '../feesplit/types';
 
 /**
  * Parameters for creating a transaction (standard level).
@@ -300,6 +300,9 @@ export class StandardAdapter extends BaseAdapter implements IAdapter {
    * @param txId - Transaction ID
    * @param newState - Target state
    * @param proof - Optional proof data (required for DELIVERED transition with dispute window)
+   * @param onDisputeFeePreview - DISPUTED only, escrow in a FeeSplitVault: receives what a refund of
+   *   the whole remaining principal would pay after the dispute, before anything is sent. If it
+   *   throws, the dispute is not opened.
    * @throws {Error} If transition is invalid
    *
    * @example
@@ -316,8 +319,13 @@ export class StandardAdapter extends BaseAdapter implements IAdapter {
   async transitionState(
     txId: string,
     newState: TransactionState,
-    proof?: string
+    proof?: string,
+    onDisputeFeePreview?: (quote: DisputeFeeQuote) => void | Promise<void>
   ): Promise<void> {
+    if (newState === 'DISPUTED') {
+      const quote = await disputeFeePreview(this.runtime, txId);
+      if (quote) await onDisputeFeePreview?.(quote);
+    }
     if (this.smartWalletRouter?.shouldRoute()) {
       const stateValue = TransactionStateValue[newState];
       await this.smartWalletRouter.sendTransition(txId, stateValue, proof ?? '0x', `transitionState(${newState})`);

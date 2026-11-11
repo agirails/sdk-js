@@ -308,6 +308,49 @@ describe('FeeSplitVault funding through a smart wallet', () => {
       expect(batch.map(tx => tx.to)).toEqual([chain.usdc, runtime.feeSplit.vaults()[0]?.address, chain.kernel]);
     });
 
+    it('opening a dispute shows the refund fees first, on the direct and on the smart-wallet route', async () => {
+      await runtime.feeSplit.setIntegratorApproval(INTEGRATOR, 100, PROVIDER);
+      const fundAndDeliver = async (): Promise<string> => {
+        const txId = await runtime.createTransaction({
+          provider: PROVIDER,
+          requester: chain.smartWallet,
+          amount: K,
+          deadline: runtime.time.now() + 86_400,
+        });
+        await runtime.linkEscrow(txId, K, { integrator: bothAfterDispute, acknowledgeDisputeFee: true });
+        await runtime.transitionState(txId, 'IN_PROGRESS');
+        await runtime.transitionState(txId, 'DELIVERED');
+        return txId;
+      };
+      const send = jest.spyOn(wallet, 'sendTransaction').mockResolvedValue({ hash: '0xtx', success: true });
+      const routes = [
+        new StandardAdapter(runtime, chain.smartWallet),
+        new StandardAdapter(runtime, chain.smartWallet, undefined, wallet, addresses()),
+      ];
+      for (const [index, adapter] of routes.entries()) {
+        const txId = await fundAndDeliver();
+        const trace: string[] = [];
+        send.mockImplementation(() => {
+          trace.push('sent');
+          return Promise.resolve({ hash: '0xtx', success: true });
+        });
+        await expect(
+          adapter.transitionState(txId, 'DISPUTED', undefined, () => {
+            throw new Error('declined after the preview');
+          })
+        ).rejects.toThrow('declined after the preview');
+        expect(trace).toEqual([]);
+        expect((await runtime.getTransaction(txId))?.state).toBe('DELIVERED');
+
+        await adapter.transitionState(txId, 'DISPUTED', undefined, quote => {
+          trace.push(`preview ${quote.requesterAmount}/${quote.protocolFee}/${quote.integratorFee}`);
+        });
+        expect(trace[0]).toBe('preview 980000000/10000000/10000000');
+        expect(trace.slice(1)).toEqual(index === 0 ? [] : ['sent']);
+      }
+      expect((await runtime.getTransaction(await fundAndDeliver()))?.state).toBe('DELIVERED');
+    });
+
     it('StandardAdapter.linkEscrow without terms sends the same two calls as before', async () => {
       const send = jest.spyOn(wallet, 'sendBatchTransaction').mockResolvedValue({ hash: '0xtx', success: true });
       const standard = new StandardAdapter(runtime, chain.smartWallet, undefined, wallet, addresses());

@@ -247,6 +247,14 @@ export const UnifiedPayParamsSchema = z.object({
   httpMethod: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']).optional(),
   httpBody: z.union([z.string(), z.custom<Uint8Array>((v) => ArrayBuffer.isView(v) && !(v instanceof DataView))]).optional(),
   httpHeaders: z.record(z.string()).optional(),
+  integrator: z
+    .object({
+      address: z.string().regex(/^0x[0-9a-fA-F]{40}$/),
+      bps: z.number().int().min(1).max(1000),
+      profile: z.enum(['PAYOUT_ONLY', 'BOTH_AFTER_DISPUTE']),
+    })
+    .optional(),
+  acknowledgeDisputeFee: z.boolean().optional(),
   acceptedQuote: z
     .object({
       amount: z.string().optional(),

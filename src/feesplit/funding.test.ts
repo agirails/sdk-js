@@ -1,3 +1,4 @@
+import { safeValidatePayParams, validatePayParams } from '../types/adapter';
 import { ValidationError } from '../errors';
 import {
   DisputeFeeNotAcknowledgedError,
@@ -226,5 +227,16 @@ describe('assertFeeSplitTermsLocked', () => {
       reader.locked = locked;
       await expect(assertFeeSplitTermsLocked(reader, '0x01', funding)).rejects.toBeInstanceOf(FeeSplitTermsNotLockedError);
     }
+  });
+});
+
+describe('validated pay parameters', () => {
+  it('keep the integrator terms and the acknowledgment, and reject malformed terms', () => {
+    const terms = { address: '0x' + '33'.repeat(20), bps: 100, profile: 'BOTH_AFTER_DISPUTE' };
+    const parsed = validatePayParams({ to: '0x' + '22'.repeat(20), amount: '1000', integrator: terms, acknowledgeDisputeFee: true });
+    expect(parsed.integrator).toEqual(terms);
+    expect(parsed.acknowledgeDisputeFee).toBe(true);
+    expect(safeValidatePayParams({ to: '0x' + '22'.repeat(20), amount: '1000', integrator: { ...terms, bps: 1001 } }).success).toBe(false);
+    expect(safeValidatePayParams({ to: '0x' + '22'.repeat(20), amount: '1000', integrator: { ...terms, profile: 'OTHER' } }).success).toBe(false);
   });
 });
