@@ -51,6 +51,8 @@ export interface FeeSplitStack {
   plainVault: string;
   feeSplitVault: string;
   archive: string;
+  /** Funded development account at a derivation index; 0-6 are taken by the stack. */
+  wallet: (index: number) => HDNodeWallet;
   stop: () => void;
 }
 
@@ -164,6 +166,7 @@ export async function startFeeSplitStack(): Promise<FeeSplitStack> {
       plainVault,
       feeSplitVault,
       archive,
+      wallet,
       stop: () => {
         provider.destroy();
         child.kill();
