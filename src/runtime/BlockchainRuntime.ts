@@ -24,7 +24,7 @@ import { EASHelper, EASConfig } from '../protocol/EASHelper';
 import { NetworkConfig, getNetwork } from '../config/networks';
 import { IACTPRuntime, CreateTransactionParams } from './IACTPRuntime';
 import { MockTransaction, TransactionState } from './types/MockState';
-import { ValidationError, TransactionNotFoundError } from '../errors';
+import { ValidationError, TransactionNotFoundError, OperationNotSupportedError } from '../errors';
 import { QuoteBuilder, QuoteMessage } from '../builders/QuoteBuilder';
 import { Wallet as EthersWallet } from 'ethers';
 import { InMemoryNonceManager } from '../utils/NonceManager';
@@ -687,15 +687,12 @@ export class BlockchainRuntime implements IACTPRuntime {
   }
 
   /**
-   * Gets all transactions
-   *
-   * @returns Promise resolving to array of all transactions
+   * @throws OperationNotSupportedError always: a real chain has no global transaction view, only per-txId and
+   * per-address reads.
    */
   async getAllTransactions(): Promise<MockTransaction[]> {
-    // V2: Implement event-based transaction indexing via EventMonitor
-    // For now, return empty array as this requires off-chain indexer
-    sdkLogger.warn('getAllTransactions() not implemented - use EventMonitor for event-based queries');
-    return [];
+    throw new OperationNotSupportedError('getAllTransactions()', 'BlockchainRuntime',
+      'Use getTransaction(txId), getTransactionsByProvider() for one provider, or EventMonitor for live events.');
   }
 
   /**
@@ -977,37 +974,31 @@ export class BlockchainRuntime implements IACTPRuntime {
    * Queries the EscrowVault contract for the actual balance.
    *
    * @param escrowId - Escrow ID or transaction ID
+   * Includes reserved platform fees, but excludes the separately held dispute
+   * bond. For resolution amounts use kernel.getEscrowPrincipal(txId).
+   * Read failures propagate; an unavailable RPC is not a zero balance.
    * @returns Promise resolving to balance as string (in USDC wei)
    */
   async getEscrowBalance(escrowId: string): Promise<string> {
     // Security: Enforce initialization
     this.requireInitialized();
 
+    const match = escrowId.match(/^escrow-(.+)-\d+$/);
+    const txId = match ? match[1] : escrowId;
+    let tx;
     try {
-      // Try to get balance from escrow vault
-      // The escrow vault tracks balances by transaction ID
-      const match = escrowId.match(/^escrow-(.+)-\d+$/);
-      const txId = match ? match[1] : escrowId;
-
-      // Query the transaction to get the locked amount
-      const tx = await this.getTransaction(txId);
-      if (!tx) {
-        return '0';
-      }
-
-      // If transaction is in an active state (COMMITTED, IN_PROGRESS, DELIVERED),
-      // the escrow balance is the transaction amount
-      if (tx.state === 'COMMITTED' || tx.state === 'IN_PROGRESS' || tx.state === 'DELIVERED') {
-        return tx.amount;
-      }
-
-      // For settled or cancelled transactions, escrow is released
-      return '0';
+      // The protocol wrapper preserves RPC errors, unlike the nullable runtime
+      // transaction lookup. Read the vault/id actually linked to this transaction.
+      tx = await this.kernel.getTransaction(txId);
     } catch (error) {
-      // If query fails, return 0
-      sdkLogger.warn('getEscrowBalance query failed', { error: error instanceof Error ? error.message : String(error) });
-      return '0';
+      if (error instanceof TransactionNotFoundError) return '0';
+      throw error;
     }
+    if (tx.escrowContract === ethers.ZeroAddress) return '0';
+    const vault = tx.escrowContract.toLowerCase() === this.escrow.getAddress().toLowerCase()
+      ? this.escrow
+      : new EscrowVault(tx.escrowContract, this.signer);
+    return (await vault.getEscrowBalance(tx.escrowId)).toString();
   }
 
   /**

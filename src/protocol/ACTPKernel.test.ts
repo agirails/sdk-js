@@ -518,6 +518,24 @@ describe('ACTPKernel', () => {
         expect(tx.requesterAgentId).toBeUndefined(); // absent in legacy shape
       });
 
+      it.each([21, 23])('decodes the %s-word layout without shifting agent IDs', async (words) => {
+        mockContract.getTransaction.mockRejectedValue({ code: 'BAD_DATA', message: 'could not decode result data' });
+        const types = 'bytes32,address,address,uint8,uint256,uint256,uint256,uint256,bytes32,address,bytes32,bytes32,uint256,bytes32,uint16,uint16,uint16,uint256,uint256,address,uint256';
+        const values = [TX_ID, REQUESTER, PROVIDER, 6, 1000000n, 1, 1, 2, ethers.ZeroHash, REQUESTER, TX_ID, ethers.ZeroHash, 3600, ethers.ZeroHash, 100, 500, 1000, 42, 7, REQUESTER, 50000];
+        const encoded = ethers.AbiCoder.defaultAbiCoder().encode(
+          ['(' + types + (words === 23 ? ',bytes32,bytes32' : '') + ')'],
+          [words === 23 ? [...values, ethers.ZeroHash, ethers.ZeroHash] : values]);
+        mockContract.runner = { provider: makeLegacyProvider(encoded) };
+        const tx = await kernel.getTransaction(TX_ID);
+        expect(tx.agentId).toBe('42'); expect(tx.requesterAgentId).toBe('7'); expect(tx.platformFeeBpsLocked).toBe(100);
+      });
+
+      it.each([17, 19, 20, 22])('rejects an unknown %s-word historical layout', async (words) => {
+        mockContract.getTransaction.mockRejectedValue({ code: 'BAD_DATA' });
+        mockContract.runner = { provider: makeLegacyProvider('0x' + '00'.repeat(words * 32)) };
+        await expect(kernel.getTransaction(TX_ID)).rejects.toThrow(/Unsupported getTransaction return size/);
+      });
+
       it('preserves "Tx missing" semantics on legacy fallback path too', async () => {
         mockContract.getTransaction.mockRejectedValue({
           code: 'BAD_DATA',

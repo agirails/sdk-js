@@ -63,11 +63,9 @@ export function calculatePrice(strategy: PricingStrategy, job: Job): PriceCalcul
     unitCost = units * strategy.cost.perUnit.rate;
   }
 
-  // Calculate API cost (future enhancement, not in MVP)
   let apiCost: number | undefined;
   if (strategy.cost.api) {
     apiCost = estimateApiCost(strategy.cost.api, job);
-    // Add API cost to total cost
   }
 
   // Total cost = base + per-unit + api
@@ -197,28 +195,7 @@ function estimateUnits(job: Job, unit: string): number {
   }
 }
 
-/**
- * Estimate API cost for a job
- *
- * MVP: Returns 0 for all APIs (placeholder for future implementation)
- *
- * Future implementation will include pricing for:
- * - openai:gpt-4-turbo
- * - openai:gpt-3.5-turbo
- * - anthropic:claude-3-sonnet
- * - anthropic:claude-3-haiku
- *
- * @param api - API identifier (e.g., 'openai:gpt-4-turbo')
- * @param job - Job to estimate cost for
- * @returns Estimated API cost in USDC
- *
- * @internal
- */
 function estimateApiCost(_api: string, _job: Job): number {
-  // Returns 0 for now — API/LLM costs are tracked externally by the agent
-  // implementation. A future revision may integrate per-provider pricing
-  // tables; until then, agents that bill on token usage should override
-  // their pricing strategy directly.
   return 0;
 }
 

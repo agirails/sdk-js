@@ -15,7 +15,7 @@ import {
   ERC8004Bridge,
   IERC8004IdentityRegistry,
 } from './ERC8004Bridge';
-import { ERC8004Error, ERC8004ErrorCode } from '../types/erc8004';
+import { ERC8004ErrorCode } from '../types/erc8004';
 
 // ============================================================================
 // Mock Setup
@@ -27,7 +27,8 @@ import { ERC8004Error, ERC8004ErrorCode } from '../types/erc8004';
 function createMockRegistry(): jest.Mocked<IERC8004IdentityRegistry> {
   return {
     ownerOf: jest.fn(),
-    getAgentURI: jest.fn(),
+    tokenURI: jest.fn(),
+    getAgentWallet: jest.fn(),
     balanceOf: jest.fn(),
     tokenOfOwnerByIndex: jest.fn(),
   };
@@ -104,75 +105,137 @@ describe('ERC8004Bridge', () => {
   });
 
   describe('getAgentWallet()', () => {
-    it('returns metadata.paymentAddress if present', async () => {
-      const paymentAddress = '0x2222222222222222222222222222222222222222';
+    const verifiedWallet = '0x2222222222222222222222222222222222222222';
 
+    it('returns only the verified on-chain agent wallet', async () => {
+      mockRegistry.getAgentWallet.mockResolvedValue(verifiedWallet);
       mockRegistry.ownerOf.mockResolvedValue(validOwner);
-      mockRegistry.getAgentURI.mockResolvedValue(validAgentURI);
-
+      mockRegistry.tokenURI.mockResolvedValue(validAgentURI);
       mockFetch.mockResolvedValue({
         ok: true,
         json: async () => ({
-          name: 'Test Agent',
-          paymentAddress,
+          paymentAddress: '0x3333333333333333333333333333333333333333',
+          wallet: '0x4444444444444444444444444444444444444444',
         }),
       });
 
       const wallet = await bridge.getAgentWallet(validAgentId);
 
-      expect(wallet).toBe(paymentAddress);
+      expect(wallet).toBe(verifiedWallet);
+      expect(mockRegistry.getAgentWallet).toHaveBeenCalledWith(validAgentId);
+      expect(mockRegistry.ownerOf).not.toHaveBeenCalled();
+      expect(mockRegistry.tokenURI).not.toHaveBeenCalled();
+      expect(mockFetch).not.toHaveBeenCalled();
     });
 
-    it('returns metadata.wallet as fallback', async () => {
-      const walletAddress = '0x3333333333333333333333333333333333333333';
-
+    it('rejects the zero address without consulting owner or metadata fallbacks', async () => {
+      mockRegistry.getAgentWallet.mockResolvedValue(
+        '0x0000000000000000000000000000000000000000'
+      );
       mockRegistry.ownerOf.mockResolvedValue(validOwner);
-      mockRegistry.getAgentURI.mockResolvedValue(validAgentURI);
-
+      mockRegistry.tokenURI.mockResolvedValue('ipfs://QmUnavailable');
       mockFetch.mockResolvedValue({
         ok: true,
         json: async () => ({
-          name: 'Test Agent',
-          wallet: walletAddress, // No paymentAddress, but has wallet
+          paymentAddress: '0x3333333333333333333333333333333333333333',
         }),
       });
 
-      const wallet = await bridge.getAgentWallet(validAgentId);
+      await expect(bridge.getAgentWallet(validAgentId)).rejects.toMatchObject({
+        code: ERC8004ErrorCode.WALLET_NOT_FOUND,
+      });
 
-      expect(wallet).toBe(walletAddress);
+      expect(mockRegistry.ownerOf).not.toHaveBeenCalled();
+      expect(mockRegistry.tokenURI).not.toHaveBeenCalled();
+      expect(mockFetch).not.toHaveBeenCalled();
     });
 
-    it('returns owner address as final fallback', async () => {
-      mockRegistry.ownerOf.mockResolvedValue(validOwner);
-      mockRegistry.getAgentURI.mockResolvedValue(validAgentURI);
+    it.each([
+      ['malformed text', 'nonsense'],
+      ['short hex', '0x1234'],
+      ['empty string', ''],
+      ['whitespace', '   '],
+      ['undefined', undefined],
+      ['null', null],
+    ])('rejects malformed registry return: %s', async (_label, registryValue) => {
+      // Contract return values are typed as strings, but this intentionally
+      // exercises malformed runtime/provider output at the trust boundary.
+      mockRegistry.getAgentWallet.mockResolvedValue(registryValue as string);
+
+      await expect(bridge.getAgentWallet(validAgentId)).rejects.toMatchObject({
+        code: ERC8004ErrorCode.WALLET_NOT_FOUND,
+      });
+
+      expect(mockRegistry.ownerOf).not.toHaveBeenCalled();
+      expect(mockRegistry.tokenURI).not.toHaveBeenCalled();
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it('fails closed when the registry read fails', async () => {
+      mockRegistry.getAgentWallet.mockRejectedValue(new Error('RPC timeout'));
+
+      await expect(bridge.getAgentWallet(validAgentId)).rejects.toMatchObject({
+        code: ERC8004ErrorCode.NETWORK_ERROR,
+      });
+    });
+
+    it('rejects an invalid agent ID without reading the registry', async () => {
+      await expect(bridge.getAgentWallet('not-a-number')).rejects.toMatchObject(
+        {
+          code: ERC8004ErrorCode.INVALID_AGENT_ID,
+        }
+      );
+      expect(mockRegistry.getAgentWallet).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('deployed registry shape', () => {
+    it('resolves an agent when the registry serves tokenURI and no getAgentURI', async () => {
+      // Mirrors the deployed canonical registry: agent URI reads go through
+      // ERC-721 tokenURI; getAgentURI does not exist on the contract.
+      const deployedShapeRegistry = new Proxy(
+        {
+          ownerOf: jest.fn().mockResolvedValue(validOwner),
+          tokenURI: jest.fn().mockResolvedValue(validAgentURI),
+          getAgentWallet: jest.fn().mockResolvedValue(validOwner),
+          balanceOf: jest.fn(),
+          tokenOfOwnerByIndex: jest.fn(),
+        },
+        {
+          get(target, property, receiver) {
+            if (property === 'getAgentURI') {
+              throw new Error('deployed registry does not serve getAgentURI');
+            }
+            return Reflect.get(target, property, receiver);
+          },
+        }
+      ) as unknown as IERC8004IdentityRegistry;
+
+      const deployedBridge = new ERC8004Bridge({
+        network: 'base-sepolia',
+        registryAddress: '0x1234567890123456789012345678901234567890',
+        fetchFn: mockFetch,
+        cacheTimeMs: 1000,
+        _testContract: deployedShapeRegistry,
+      });
 
       mockFetch.mockResolvedValue({
         ok: true,
-        json: async () => ({
-          name: 'Test Agent',
-          // No paymentAddress or wallet
-        }),
+        json: async () => ({ name: 'Deployed Shape Agent' }),
       });
 
-      const wallet = await bridge.getAgentWallet(validAgentId);
+      const agent = await deployedBridge.resolveAgent(validAgentId);
 
-      expect(wallet).toBe(validOwner);
-    });
-
-    it('throws for non-existent agent', async () => {
-      mockRegistry.ownerOf.mockRejectedValue(new Error('ERC721: nonexistent token'));
-
-      await expect(bridge.getAgentWallet('99999')).rejects.toThrow(ERC8004Error);
-      await expect(bridge.getAgentWallet('99999')).rejects.toMatchObject({
-        code: ERC8004ErrorCode.AGENT_NOT_FOUND,
-      });
+      expect(agent.agentId).toBe(validAgentId);
+      expect(agent.owner).toBe(validOwner);
+      expect(agent.agentURI).toBe(validAgentURI);
     });
   });
 
   describe('resolveAgent()', () => {
     it('fetches owner and agentURI from registry', async () => {
       mockRegistry.ownerOf.mockResolvedValue(validOwner);
-      mockRegistry.getAgentURI.mockResolvedValue(validAgentURI);
+      mockRegistry.tokenURI.mockResolvedValue(validAgentURI);
 
       mockFetch.mockResolvedValue({
         ok: true,
@@ -189,7 +252,7 @@ describe('ERC8004Bridge', () => {
 
     it('fetches and parses metadata from agentURI', async () => {
       mockRegistry.ownerOf.mockResolvedValue(validOwner);
-      mockRegistry.getAgentURI.mockResolvedValue(validAgentURI);
+      mockRegistry.tokenURI.mockResolvedValue(validAgentURI);
 
       const metadata = {
         name: 'Test Agent',
@@ -212,7 +275,7 @@ describe('ERC8004Bridge', () => {
       const expectedHttpURI = 'https://ipfs.io/ipfs/QmTest1234567890';
 
       mockRegistry.ownerOf.mockResolvedValue(validOwner);
-      mockRegistry.getAgentURI.mockResolvedValue(ipfsURI);
+      mockRegistry.tokenURI.mockResolvedValue(ipfsURI);
 
       mockFetch.mockResolvedValue({
         ok: true,
@@ -231,7 +294,7 @@ describe('ERC8004Bridge', () => {
 
     it('caches results', async () => {
       mockRegistry.ownerOf.mockResolvedValue(validOwner);
-      mockRegistry.getAgentURI.mockResolvedValue(validAgentURI);
+      mockRegistry.tokenURI.mockResolvedValue(validAgentURI);
 
       mockFetch.mockResolvedValue({
         ok: true,
@@ -265,7 +328,7 @@ describe('ERC8004Bridge', () => {
 
     it('handles metadata fetch failure gracefully', async () => {
       mockRegistry.ownerOf.mockResolvedValue(validOwner);
-      mockRegistry.getAgentURI.mockResolvedValue(validAgentURI);
+      mockRegistry.tokenURI.mockResolvedValue(validAgentURI);
 
       mockFetch.mockResolvedValue({
         ok: false,
@@ -311,7 +374,7 @@ describe('ERC8004Bridge', () => {
   describe('caching', () => {
     it('expires cache after cacheTimeMs', async () => {
       mockRegistry.ownerOf.mockResolvedValue(validOwner);
-      mockRegistry.getAgentURI.mockResolvedValue(validAgentURI);
+      mockRegistry.tokenURI.mockResolvedValue(validAgentURI);
 
       mockFetch.mockResolvedValue({
         ok: true,
@@ -332,7 +395,7 @@ describe('ERC8004Bridge', () => {
 
     it('clearCache() invalidates all entries', async () => {
       mockRegistry.ownerOf.mockResolvedValue(validOwner);
-      mockRegistry.getAgentURI.mockResolvedValue(validAgentURI);
+      mockRegistry.tokenURI.mockResolvedValue(validAgentURI);
 
       mockFetch.mockResolvedValue({
         ok: true,

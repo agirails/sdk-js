@@ -14,9 +14,20 @@
  * @module config/pendingPublish
  */
 
+import { randomUUID } from 'crypto';
 import { readFileSync, writeFileSync, unlinkSync, existsSync, mkdirSync, renameSync, lstatSync } from 'fs';
 import { join } from 'path';
 import { ServiceDescriptor } from '../types/agent';
+import { validateCID } from '../utils/validation';
+
+function isErrnoException(error: unknown): error is NodeJS.ErrnoException {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    typeof (error as { code?: unknown }).code === 'string'
+  );
+}
 
 // ============================================================================
 // Types
@@ -39,9 +50,7 @@ interface SerializedServiceDescriptor {
 /**
  * Pending publish state — saved to `.actp/pending-publish.{network}.json`.
  */
-export interface PendingPublish {
-  /** Schema version */
-  version: 1;
+interface PendingPublishBase {
   /** Canonical config hash (bytes32) */
   configHash: string;
   /** IPFS CID of uploaded AGIRAILS.md */
@@ -56,17 +65,31 @@ export interface PendingPublish {
   network?: string;
 }
 
+/** Legacy state. It has no standards-compliant ERC-8004 registration artifact. */
+export interface PendingPublishV1 extends PendingPublishBase {
+  version: 1;
+}
+
+/** Current state with a separate registration-v1 JSON artifact. */
+export interface PendingPublishV2 extends PendingPublishBase {
+  version: 2;
+  erc8004RegistrationCid: string;
+}
+
+export type PendingPublish = PendingPublishV1 | PendingPublishV2;
+
 /**
  * JSON-serializable form of PendingPublish (bigints as strings).
  */
 interface SerializedPendingPublish {
-  version: 1;
+  version: 1 | 2;
   configHash: string;
   cid: string;
   endpoint: string;
   serviceDescriptors: SerializedServiceDescriptor[];
   createdAt: string;
   network?: string;
+  erc8004RegistrationCid?: string;
 }
 
 // ============================================================================
@@ -134,6 +157,9 @@ export function getPendingPublishPath(network?: string): string {
  * Otherwise saves to legacy `pending-publish.json`.
  */
 export function savePendingPublish(pending: PendingPublish): void {
+  if (pending.version === 2) {
+    validateCID(pending.erc8004RegistrationCid, 'erc8004RegistrationCid');
+  }
   const dir = getActpDir();
 
   // Verify .actp/ is a real directory (not a symlink — symlink attack prevention)
@@ -145,8 +171,8 @@ export function savePendingPublish(pending: PendingPublish): void {
       throw new Error(`Security: ${dir} is not a real directory (symlink attack prevention)`);
     }
     dirExists = true;
-  } catch (e: any) {
-    if (e.code !== 'ENOENT') throw e; // Re-throw security errors and unexpected failures
+  } catch (error: unknown) {
+    if (!isErrnoException(error) || error.code !== 'ENOENT') throw error;
   }
   if (!dirExists) {
     mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -159,11 +185,14 @@ export function savePendingPublish(pending: PendingPublish): void {
     endpoint: pending.endpoint,
     serviceDescriptors: pending.serviceDescriptors.map(serializeDescriptor),
     createdAt: pending.createdAt,
+    ...(pending.version === 2
+      ? { erc8004RegistrationCid: pending.erc8004RegistrationCid }
+      : {}),
     ...(pending.network ? { network: pending.network } : {}),
   };
 
   const filePath = getPendingPublishPath(pending.network);
-  const tmpPath = filePath + '.tmp';
+  const tmpPath = `${filePath}.tmp-${process.pid}-${randomUUID()}`;
 
   // Atomic write: write to .tmp with restricted mode, then rename
   writeFileSync(tmpPath, JSON.stringify(serialized, null, 2), { mode: 0o600 });
@@ -231,13 +260,27 @@ export function deletePendingPublish(network?: string): void {
 
 function deserializePendingPublish(raw: string): PendingPublish {
   const serialized: SerializedPendingPublish = JSON.parse(raw);
-  return {
-    version: serialized.version,
+  if (serialized.version !== 1 && serialized.version !== 2) {
+    throw new Error(`Unsupported pending publish version: ${String(serialized.version)}`);
+  }
+  const base = {
     configHash: serialized.configHash,
     cid: serialized.cid,
     endpoint: serialized.endpoint,
     serviceDescriptors: serialized.serviceDescriptors.map(deserializeDescriptor),
     createdAt: serialized.createdAt,
     ...(serialized.network ? { network: serialized.network } : {}),
+  };
+  if (serialized.version === 1) {
+    return { version: 1, ...base };
+  }
+  if (!serialized.erc8004RegistrationCid) {
+    throw new Error('Pending publish v2 is missing erc8004RegistrationCid');
+  }
+  validateCID(serialized.erc8004RegistrationCid, 'erc8004RegistrationCid');
+  return {
+    version: 2,
+    ...base,
+    erc8004RegistrationCid: serialized.erc8004RegistrationCid,
   };
 }

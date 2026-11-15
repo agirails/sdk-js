@@ -1,0 +1,2 @@
+# K9: the public copy has no internal names or their fingerprints, since a short name can be
+# recovered from its fingerprint with a word list. code-check from the source checks them.

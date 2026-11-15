@@ -79,7 +79,7 @@ Reference implementations:
 - In-memory / mock data → mirror [`MockRuntime.getTransactionsByProvider`](../src/runtime/MockRuntime.ts).
 - Event-sourced / on-chain → mirror [`BlockchainRuntime.getTransactionsByProvider`](../src/runtime/BlockchainRuntime.ts) (bounded `EventMonitor.getTransactionHistory` sweep + per-tx hydration).
 
-The previous `getAllTransactions()` method is still on the interface but remains a no-op on `BlockchainRuntime`. The 4.0.0 callers (`Agent.pollForJobs`, `actp agent` watch loop) all moved to `getTransactionsByProvider`.
+The previous `getAllTransactions()` method is still on the interface; on `BlockchainRuntime` it throws `OperationNotSupportedError` (since the release after 4.9.0; before that it returned `[]`). The 4.0.0 callers (`Agent.pollForJobs`, `actp agent` watch loop) all moved to `getTransactionsByProvider`.
 
 ---
 
@@ -284,9 +284,9 @@ Differences from `actp pay`:
 
 ## 11. `actp tx list` on real chains
 
-`actp tx list` previously returned all on-chain transactions in memory via `getAllTransactions()`. On `BlockchainRuntime` that method is a no-op returning `[]` — the on-chain view is per-address, not global.
+`actp tx list` previously returned all on-chain transactions in memory via `getAllTransactions()`. On `BlockchainRuntime` there is no global on-chain view, only per-address reads: that method returned `[]` up to 4.9.0 and throws `OperationNotSupportedError` after it.
 
-4.0.0 emits a clear warning when the list is empty against a `BlockchainRuntime`:
+`actp tx list` emits a clear warning against a `BlockchainRuntime`:
 
 ```
 [!] actp tx list is not yet supported on testnet/mainnet — the on-chain

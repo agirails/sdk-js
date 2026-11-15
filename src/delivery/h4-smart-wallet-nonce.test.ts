@@ -253,9 +253,7 @@ describe('H4 — DeliveryEnvelopeBuilder.buildPublic with smartWalletNonce', () 
 // not in GitHub Actions CI. We skip the suite when the Platform repo is
 // not present; the Platform repo's own EIP-712 unit tests enforce parity
 // from the opposite side.
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 const _fs = require('fs') as typeof import('fs');
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 const _pathLib = require('path') as typeof import('path');
 const _platformDir = _pathLib.resolve(
   __dirname,
@@ -267,7 +265,6 @@ const _platformAvailable =
 const _describeCrossRepo = _platformAvailable ? describe : describe.skip;
 
 _describeCrossRepo('H4 — cross-repo type schema still byte-identical after smartWalletNonce addition', () => {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const platformEip712 = (_platformAvailable
     ? require('../../../../Platform/agirails.app/web/lib/delivery/eip712')
     : {}) as {
@@ -301,7 +298,6 @@ _describeCrossRepo('H4 — cross-repo type schema still byte-identical after sma
   });
 
   it('cross-repo recovery: SDK-signed payload with nonce=7 recovers via Platform helper', async () => {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { recoverSetupSigner: platformRecover } = (_platformAvailable
       ? require('../../../../Platform/agirails.app/web/lib/delivery/eip712')
       : { recoverSetupSigner }) as {
@@ -365,5 +361,4 @@ describe('H4 — raw ethers roundtrip with smartWalletNonce', () => {
 });
 
 // Suppress unused-import lint when test bodies branch on these symbols.
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const _used = CANONICAL_EMPTY_BYTES32;

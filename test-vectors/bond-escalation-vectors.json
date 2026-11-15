@@ -1,0 +1,83 @@
+{
+  "_comment": "Cross-SDK golden fixture for BondEscalationClient (PRD P2-4). Consumed BYTE-IDENTICALLY by both the TS jest suite (sdk-js/tests/bond-escalation.test.ts) and the Py pytest suite (python-sdk-v2/tests/test_dispute/test_bond_escalation.py). Anchors the two quote helpers (quoteInitialBond / quoteEscalationBond) and the getDisputeState() tuple decode. Any change here MUST keep both SDKs green.",
+  "constants": {
+    "ESCALATION_INITIAL_BPS": 200,
+    "MIN_ESCALATION_BOND": 1000000,
+    "MAX_ESCALATION_BOND": 500000000,
+    "ESCALATION_MULTIPLIER": 2,
+    "BPS_DENOMINATOR": 10000
+  },
+  "quoteInitialBond": [
+    { "_note": "tiny escrow -> $1 floor (2% of $5 = $0.10 < $1)", "escrowAmount": "5000000", "expected": "1000000" },
+    { "_note": "exactly-at-floor boundary: 2% of $50 = $1, floor is strict >, so floor wins", "escrowAmount": "50000000", "expected": "1000000" },
+    { "_note": "just over floor: 2% of $50.01 = $1.0002 > $1", "escrowAmount": "50005000", "expected": "1000100" },
+    { "_note": "2% of $100 = $2", "escrowAmount": "100000000", "expected": "2000000" },
+    { "_note": "2% of $1000 = $20", "escrowAmount": "1000000000", "expected": "20000000" },
+    { "_note": "exactly-at-ceiling boundary: 2% of $25000 = $500 = MAX_ESCALATION_BOND (cap is inclusive, not exceeded)", "escrowAmount": "25000000000", "expected": "500000000" },
+    { "_note": "over ceiling: 2% of $30000 = $600 -> clamped to $500 (F-5; uncapped code would return 600000000)", "escrowAmount": "30000000000", "expected": "500000000" },
+    { "_note": "far over ceiling: 2% of $1000000 = $20000 -> clamped to $500 (F-5)", "escrowAmount": "1000000000000", "expected": "500000000" },
+    { "_note": "zero escrow -> $1 floor", "escrowAmount": "0", "expected": "1000000" }
+  ],
+  "quoteEscalationBond": [
+    { "_note": "$1 -> $2 (2x, below ceiling)", "currentBond": "1000000", "expected": "2000000" },
+    { "_note": "$2 -> $4", "currentBond": "2000000", "expected": "4000000" },
+    { "_note": "$200 -> $400 (still below $500 ceiling)", "currentBond": "200000000", "expected": "400000000" },
+    { "_note": "$250 -> $500 (exactly ceiling)", "currentBond": "250000000", "expected": "500000000" },
+    { "_note": "$300 -> capped at $500", "currentBond": "300000000", "expected": "500000000" },
+    { "_note": "$500 (at ceiling) -> still $500", "currentBond": "500000000", "expected": "500000000" }
+  ],
+  "getDisputeState": {
+    "_comment": "Raw tuple returned by the public disputes(bytes32) getter (13 fields, see BondEscalation ABI). Field order: transactionId, currentRuling, splitBps, currentBond, accumulatedBonds, livenessEnd, disputedAt, lastProposer, tier, resolved, winnerPaid, originalPool, escrowAmount. The decoder MUST map this tuple onto the shared DisputeState type identically in both SDKs.",
+    "disputeId": "0x1234567890123456789012345678901234567890123456789012345678901234",
+    "tuple": [
+      "0xabcdef0000000000000000000000000000000000000000000000000000000001",
+      2,
+      6500,
+      "4000000",
+      "7000000",
+      "1700003600",
+      "1700000000",
+      "0x1111111111111111111111111111111111111111",
+      1,
+      false,
+      false,
+      "0",
+      "100000000"
+    ],
+    "expected": {
+      "txId": "0xabcdef0000000000000000000000000000000000000000000000000000000001",
+      "disputeId": "0x1234567890123456789012345678901234567890123456789012345678901234",
+      "tier": 1,
+      "ruling": 2,
+      "splitBps": 6500,
+      "resolved": false
+    }
+  },
+  "getDisputeStateResolved": {
+    "_comment": "A finalized non-split dispute (ruling 0 = provider wins, resolved=true).",
+    "disputeId": "0x2222222222222222222222222222222222222222222222222222222222222222",
+    "tuple": [
+      "0xabcdef0000000000000000000000000000000000000000000000000000000002",
+      0,
+      0,
+      "500000000",
+      "0",
+      "1700007200",
+      "1700000000",
+      "0x2222222222222222222222222222222222222222",
+      1,
+      true,
+      true,
+      "500000000",
+      "200000000"
+    ],
+    "expected": {
+      "txId": "0xabcdef0000000000000000000000000000000000000000000000000000000002",
+      "disputeId": "0x2222222222222222222222222222222222222222222222222222222222222222",
+      "tier": 1,
+      "ruling": 0,
+      "splitBps": 0,
+      "resolved": true
+    }
+  }
+}

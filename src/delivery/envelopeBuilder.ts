@@ -1161,5 +1161,4 @@ export type { BuildEnvelopeResult } from './types';
 // Re-affirm ethers import is used. Like setupBuilder.ts, we keep this
 // guard so very aggressive tree-shakers do not drop the `ethers` symbol
 // while we still depend on its types.
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const _ethersUsed: typeof ethers = ethers;

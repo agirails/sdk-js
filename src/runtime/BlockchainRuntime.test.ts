@@ -8,6 +8,8 @@
 import { BlockchainRuntime, BlockchainRuntimeConfig } from './BlockchainRuntime';
 import { JsonRpcProvider, Wallet, Network, ZeroHash } from 'ethers';
 import { TransactionState } from './types/MockState';
+import { State } from '../types';
+import { TransactionNotFoundError } from '../errors';
 
 // Mock ethers modules
 jest.mock('ethers', () => {
@@ -865,63 +867,54 @@ describe('BlockchainRuntime', () => {
   });
 
   describe('getEscrowBalance()', () => {
-    const TX_ID = '0xabcd1234567890abcd1234567890abcd1234567890abcd1234567890abcd1234';
+    const TX_ID = '0x' + '11'.repeat(32);
+    const ESCROW_ID = '0x' + '22'.repeat(32);
 
     beforeEach(async () => {
       await runtime.initialize();
-    });
-
-    it('should return 0 for non-existent transaction', async () => {
-      jest.spyOn(runtime, 'getTransaction').mockResolvedValue(null);
-
-      const balance = await runtime.getEscrowBalance(TX_ID);
-      expect(balance).toBe('0');
-    });
-
-    it('should return transaction amount for COMMITTED state', async () => {
-      jest.spyOn(runtime, 'getTransaction').mockResolvedValue({
-        id: TX_ID,
-        provider: PROVIDER,
-        requester: REQUESTER,
-        amount: '100000000',
-        state: 'COMMITTED',
-        deadline: Math.floor(Date.now() / 1000) + 86400,
-        disputeWindow: 172800,
-        escrowId: TX_ID,
-        createdAt: 0,
-        updatedAt: 0,
-        completedAt: 0,
-        serviceDescription: '',
-        serviceHash: ZeroHash,
-        deliveryProof: '',
-        events: []
+      const tx = await runtime.getKernel().getTransaction(TX_ID);
+      jest.spyOn(runtime.getKernel(), 'getTransaction').mockResolvedValue({
+        ...tx, escrowContract: runtime.getEscrow().getAddress(), escrowId: ESCROW_ID,
+        amount: 100000000n, state: State.IN_PROGRESS,
       });
-
-      const balance = await runtime.getEscrowBalance(TX_ID);
-      expect(balance).toBe('100000000');
+      jest.spyOn(runtime.getEscrow(), 'getEscrowBalance').mockResolvedValue(60000000n);
     });
 
-    it('should return 0 for SETTLED state', async () => {
-      jest.spyOn(runtime, 'getTransaction').mockResolvedValue({
-        id: TX_ID,
-        provider: PROVIDER,
-        requester: REQUESTER,
-        amount: '100000000',
-        state: 'SETTLED',
-        deadline: Math.floor(Date.now() / 1000) + 86400,
-        disputeWindow: 172800,
-        escrowId: TX_ID,
-        createdAt: 0,
-        updatedAt: 0,
-        completedAt: 0,
-        serviceDescription: '',
-        serviceHash: ZeroHash,
-        deliveryProof: '',
-        events: []
-      });
+    it('reads remaining after a milestone using the actual linked escrow id', async () => {
+      expect(await runtime.getEscrowBalance(TX_ID)).toBe('60000000');
+      expect(runtime.getEscrow().getEscrowBalance).toHaveBeenCalledWith(ESCROW_ID);
+    });
 
-      const balance = await runtime.getEscrowBalance(TX_ID);
-      expect(balance).toBe('0');
+    it.each([State.DISPUTED, State.SETTLED, State.CANCELLED])(
+      'reads real remaining in state %s, including fee-only terminal balances', async state => {
+        const tx = await runtime.getKernel().getTransaction(TX_ID);
+        jest.mocked(runtime.getKernel().getTransaction).mockResolvedValue({ ...tx, state });
+        jest.mocked(runtime.getEscrow().getEscrowBalance).mockResolvedValue(50000n);
+        expect(await runtime.getEscrowBalance(TX_ID)).toBe('50000');
+      },
+    );
+
+    it('returns zero for a confirmed missing transaction', async () => {
+      jest.mocked(runtime.getKernel().getTransaction).mockRejectedValue(new TransactionNotFoundError(TX_ID));
+      expect(await runtime.getEscrowBalance(TX_ID)).toBe('0');
+      expect(runtime.getEscrow().getEscrowBalance).not.toHaveBeenCalled();
+    });
+
+    it('returns zero when escrow has not been linked', async () => {
+      const tx = await runtime.getKernel().getTransaction(TX_ID);
+      jest.mocked(runtime.getKernel().getTransaction).mockResolvedValue({ ...tx, escrowContract: '0x' + '00'.repeat(20) });
+      expect(await runtime.getEscrowBalance(TX_ID)).toBe('0');
+      expect(runtime.getEscrow().getEscrowBalance).not.toHaveBeenCalled();
+    });
+
+    it('propagates vault read failures instead of reporting zero', async () => {
+      jest.mocked(runtime.getEscrow().getEscrowBalance).mockRejectedValue(new Error('vault RPC unavailable'));
+      await expect(runtime.getEscrowBalance(TX_ID)).rejects.toThrow('vault RPC unavailable');
+    });
+
+    it('propagates transaction RPC failures instead of reporting a missing transaction', async () => {
+      jest.mocked(runtime.getKernel().getTransaction).mockRejectedValue(new Error('kernel RPC unavailable'));
+      await expect(runtime.getEscrowBalance(TX_ID)).rejects.toThrow('kernel RPC unavailable');
     });
   });
 

@@ -436,7 +436,6 @@ describe('X402Adapter — P1-3 default cap lowered to $1', () => {
 
 describe('isPaymasterGateError helper', () => {
   // Importing inline to keep the test scoped
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
   const { isPaymasterGateError } = require('../errors/X402Errors');
 
   it('matches Coinbase CDP gas sponsorship error', () => {

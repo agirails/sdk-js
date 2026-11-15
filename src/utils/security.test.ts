@@ -121,7 +121,8 @@ describe('Security Utilities', () => {
   describe('isValidAddress', () => {
     test('validates correct addresses', () => {
       expect(isValidAddress('0x1234567890abcdef1234567890abcdef12345678')).toBe(true);
-      expect(isValidAddress('0xAbCdEf1234567890AbCdEf1234567890AbCdEf12')).toBe(true);
+      expect(isValidAddress('0xabCDEF1234567890ABcDEF1234567890aBCDeF12')).toBe(true);
+      expect(isValidAddress('0xABCDEF1234567890ABCDEF1234567890ABCDEF12')).toBe(true);
       expect(isValidAddress('0x0000000000000000000000000000000000000000')).toBe(true);
     });
 
@@ -130,6 +131,7 @@ describe('Security Utilities', () => {
       expect(isValidAddress('0x123')).toBe(false); // Too short
       expect(isValidAddress('0x1234567890abcdef1234567890abcdef123456789')).toBe(false); // Too long
       expect(isValidAddress('0x1234567890abcdef1234567890abcdef1234567g')).toBe(false); // Invalid char
+      expect(isValidAddress('0xAbCdEf1234567890AbCdEf1234567890AbCdEf12')).toBe(false);
       expect(isValidAddress('')).toBe(false);
       expect(isValidAddress(null as any)).toBe(false);
     });

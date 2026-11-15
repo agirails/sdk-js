@@ -32,6 +32,7 @@ const KERNEL = '0x' + '44'.repeat(20);
 const VAULT = '0x' + '55'.repeat(20);
 const REGISTRY = '0x' + '66'.repeat(20);
 const ERC8004_REGISTRY = '0x8004A818BFB912233c491871b3d84c89A494BD9e';
+const ERC8004_AGENT_URI = 'ipfs://bafy-registration-v1';
 const ZERO_HASH = '0x' + '00'.repeat(32);
 
 describe('TransactionBatcher', () => {
@@ -335,6 +336,7 @@ describe('TransactionBatcher', () => {
         serviceDescriptors: [TEST_SERVICE],
         listed: true,
         erc8004IdentityRegistry: ERC8004_REGISTRY,
+        erc8004AgentURI: ERC8004_AGENT_URI,
       });
       expect(calls).toHaveLength(4);
       // Call 0: ERC-8004 register (identity mint)
@@ -356,6 +358,7 @@ describe('TransactionBatcher', () => {
         serviceDescriptors: [TEST_SERVICE],
         listed: true,
         erc8004IdentityRegistry: ERC8004_REGISTRY,
+        erc8004AgentURI: ERC8004_AGENT_URI,
       });
 
       // Decode ERC-8004 register call
@@ -363,10 +366,10 @@ describe('TransactionBatcher', () => {
         'function register(string agentURI) external returns (uint256 agentId)',
       ]);
       const decoded = iface.decodeFunctionData('register', calls[0].data);
-      expect(decoded[0]).toBe(`ipfs://${TEST_CID}`);
+      expect(decoded[0]).toBe(ERC8004_AGENT_URI);
     });
 
-    it('scenario A with ERC-8004: should sanitize gateway URL in CID', () => {
+    it('scenario A with ERC-8004: never derives agentURI from the Markdown CID', () => {
       const calls = buildActivationBatch({
         scenario: 'A',
         agentRegistryAddress: REGISTRY,
@@ -376,14 +379,30 @@ describe('TransactionBatcher', () => {
         serviceDescriptors: [TEST_SERVICE],
         listed: true,
         erc8004IdentityRegistry: ERC8004_REGISTRY,
+        erc8004AgentURI: 'https://gateway.example/ipfs/bafy-registration-v1',
       });
 
       const iface = new ethers.Interface([
         'function register(string agentURI) external returns (uint256 agentId)',
       ]);
       const decoded = iface.decodeFunctionData('register', calls[0].data);
-      // Should strip gateway prefix
-      expect(decoded[0]).toBe('ipfs://bafybeicid123');
+      expect(decoded[0]).toBe('https://gateway.example/ipfs/bafy-registration-v1');
+    });
+
+    it('scenario A with legacy pending data skips ERC-8004 instead of registering Markdown', () => {
+      const calls = buildActivationBatch({
+        scenario: 'A',
+        agentRegistryAddress: REGISTRY,
+        cid: TEST_CID,
+        configHash: TEST_HASH,
+        endpoint: 'https://agent.example.com',
+        serviceDescriptors: [TEST_SERVICE],
+        listed: true,
+        erc8004IdentityRegistry: ERC8004_REGISTRY,
+      });
+
+      expect(calls).toHaveLength(3);
+      expect(calls.every((call) => call.target === REGISTRY)).toBe(true);
     });
 
     it('scenario B1/B2 with ERC-8004: should NOT include ERC-8004 call (already registered)', () => {

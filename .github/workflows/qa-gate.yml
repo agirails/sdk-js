@@ -35,7 +35,9 @@ on:
       - "package-lock.json"
       - "tsconfig.json"
       - "jest.config.js"
-      - ".eslintrc.cjs"
+      - "eslint.config.mjs"
+      - "tsconfig.eslint.json"
+      - ".factory/**"
       - "docs/GO-LIVE-QA-GATE.md"
       - ".github/workflows/qa-gate.yml"
   push:
@@ -47,7 +49,9 @@ on:
       - "package-lock.json"
       - "tsconfig.json"
       - "jest.config.js"
-      - ".eslintrc.cjs"
+      - "eslint.config.mjs"
+      - "tsconfig.eslint.json"
+      - ".factory/**"
       - "docs/GO-LIVE-QA-GATE.md"
       - ".github/workflows/qa-gate.yml"
 

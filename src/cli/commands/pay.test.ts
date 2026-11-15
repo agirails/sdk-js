@@ -32,10 +32,10 @@ function mockExit(): jest.SpyInstance {
 const WALLET = '0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18';
 
 const AGENT_FIXTURE: agirailsApp.DiscoverAgent = {
-  slug: 'arha',
+  slug: 'translator',
   wallet_address: WALLET,
   published_config: {
-    name: 'Arha',
+    name: 'Translator',
     capabilities: ['code-review'],
     pricing: { amount: 5, currency: 'USDC', unit: 'task' },
     payment_mode: 'actp',
@@ -73,9 +73,9 @@ describe('pay slug resolution', () => {
       basic: { pay: mockPay },
     } as any);
 
-    await runPay('agirails.app/a/arha', '5', { deadline: '+24h', disputeWindow: '172800' }, quietOutput());
+    await runPay('agirails.app/a/translator', '5', { deadline: '+24h', disputeWindow: '172800' }, quietOutput());
 
-    expect(mockDiscover).toHaveBeenCalledWith({ search: 'arha', limit: 10 });
+    expect(mockDiscover).toHaveBeenCalledWith({ search: 'translator', limit: 10 });
     expect(mockPay).toHaveBeenCalledWith(
       expect.objectContaining({ to: WALLET })
     );
@@ -89,9 +89,9 @@ describe('pay slug resolution', () => {
     });
     mockCreateClient.mockResolvedValue({ basic: { pay: mockPay } } as any);
 
-    await runPay('https://agirails.app/a/arha', '5', { deadline: '+24h', disputeWindow: '172800' }, quietOutput());
+    await runPay('https://agirails.app/a/translator', '5', { deadline: '+24h', disputeWindow: '172800' }, quietOutput());
 
-    expect(mockDiscover).toHaveBeenCalledWith({ search: 'arha', limit: 10 });
+    expect(mockDiscover).toHaveBeenCalledWith({ search: 'translator', limit: 10 });
     expect(mockPay).toHaveBeenCalledWith(expect.objectContaining({ to: WALLET }));
   });
 
@@ -103,9 +103,9 @@ describe('pay slug resolution', () => {
     });
     mockCreateClient.mockResolvedValue({ basic: { pay: mockPay } } as any);
 
-    await runPay('https://www.agirails.app/a/arha', '5', { deadline: '+24h', disputeWindow: '172800' }, quietOutput());
+    await runPay('https://www.agirails.app/a/translator', '5', { deadline: '+24h', disputeWindow: '172800' }, quietOutput());
 
-    expect(mockDiscover).toHaveBeenCalledWith({ search: 'arha', limit: 10 });
+    expect(mockDiscover).toHaveBeenCalledWith({ search: 'translator', limit: 10 });
     expect(mockPay).toHaveBeenCalledWith(expect.objectContaining({ to: WALLET }));
   });
 
@@ -117,14 +117,14 @@ describe('pay slug resolution', () => {
     });
     mockCreateClient.mockResolvedValue({ basic: { pay: mockPay } } as any);
 
-    await runPay('agirails.app/a/Arha', '5', { deadline: '+24h', disputeWindow: '172800' }, quietOutput());
+    await runPay('agirails.app/a/Translator', '5', { deadline: '+24h', disputeWindow: '172800' }, quietOutput());
 
-    expect(mockDiscover).toHaveBeenCalledWith({ search: 'arha', limit: 10 });
+    expect(mockDiscover).toHaveBeenCalledWith({ search: 'translator', limit: 10 });
   });
 
   it('finds correct agent among fuzzy results', async () => {
     const fuzzyAgent: agirailsApp.DiscoverAgent = {
-      slug: 'arha-dev', wallet_address: '0x0000000000000000000000000000000000000099',
+      slug: 'translator-dev', wallet_address: '0x0000000000000000000000000000000000000099',
     };
     mockDiscover.mockResolvedValue({ agents: [fuzzyAgent, AGENT_FIXTURE], total: 2 });
     const mockPay = jest.fn().mockResolvedValue({
@@ -133,7 +133,7 @@ describe('pay slug resolution', () => {
     });
     mockCreateClient.mockResolvedValue({ basic: { pay: mockPay } } as any);
 
-    await runPay('agirails.app/a/arha', '5', { deadline: '+24h', disputeWindow: '172800' }, quietOutput());
+    await runPay('agirails.app/a/translator', '5', { deadline: '+24h', disputeWindow: '172800' }, quietOutput());
 
     // Should pick the exact match, not the fuzzy one
     expect(mockPay).toHaveBeenCalledWith(expect.objectContaining({ to: WALLET }));
@@ -151,12 +151,12 @@ describe('pay slug resolution', () => {
 
   it('exits when API returns fuzzy results but no exact match', async () => {
     const fuzzyOnly: agirailsApp.DiscoverAgent = {
-      slug: 'arha-dev', wallet_address: '0x0000000000000000000000000000000000000099',
+      slug: 'translator-dev', wallet_address: '0x0000000000000000000000000000000000000099',
     };
     mockDiscover.mockResolvedValue({ agents: [fuzzyOnly], total: 1 });
 
     await expect(
-      runPay('agirails.app/a/arha', '5', { deadline: '+24h', disputeWindow: '172800' }, quietOutput())
+      runPay('agirails.app/a/translator', '5', { deadline: '+24h', disputeWindow: '172800' }, quietOutput())
     ).rejects.toThrow('EXIT');
 
     expect(exitSpy).toHaveBeenCalled();

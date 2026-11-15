@@ -1,0 +1,49 @@
+{
+  "_comment": "P2-7 cross-SDK golden fixture for the UMA self-dispute DVM helper (AIP-14b §8.6). Consumed BYTE-IDENTICALLY by sdk-js/tests/uma-helper.test.ts AND python-sdk-v2/tests/test_dispute/test_uma_helper.py. The quoteSelfDisputeCost numbers and the requesterForceDVM call sequence are the load-bearing invariants the §8.6 asymmetry note pins: post $500 assertion bond (escalateToUMA) + $500 disputer bond (OOV3.disputeAssertion) = $1000 total; if the DVM rules FALSE (provider did NOT deliver) the requester-as-disputer recovers $750 ($500 own bond + $250 = half the asserter bond) and loses $250 to the UMA Store. All amounts are USDC base units (6 decimals).",
+  "quoteSelfDisputeCost": {
+    "_note": "AIP-14b §8.6 + §8.2 CASE C + §8.3 payout table. Amounts in USDC base units.",
+    "umaBond": "500000000",
+    "total": "1000000000",
+    "recover": "750000000",
+    "lose": "250000000",
+    "totalUsd": "1000",
+    "recoverUsd": "750",
+    "loseUsd": "250"
+  },
+  "requesterForceDVM": {
+    "_note": "The EXACT call sequence requesterForceDVM must issue, in order. step.target identifies which contract the call hits (usdc | bondEscalation | oov3). assertionId is read between the escalateToUMA write and the disputeAssertion write.",
+    "disputeId": "0x1234567890123456789012345678901234567890123456789012345678901234",
+    "evidenceCID": "bafybeigdyrztabcdefghijklmnopqrstuvwxyz1234567890",
+    "reasoningCID": "bafybeigreasoningdyrztabcdefghijklmnopqrstuvwxyz00",
+    "disputer": "0x000000000000000000000000000000000000bEEF",
+    "assertionId": "0xaaaa0000000000000000000000000000000000000000000000000000000000aa",
+    "umaBond": "500000000",
+    "sequence": [
+      {
+        "target": "usdc",
+        "method": "approve",
+        "argsHint": "[bondEscalation, 500000000]"
+      },
+      {
+        "target": "bondEscalation",
+        "method": "escalateToUMA",
+        "argsHint": "[disputeId, evidenceCID]"
+      },
+      {
+        "target": "bondEscalation",
+        "method": "disputeToAssertion",
+        "argsHint": "[disputeId] (read)"
+      },
+      {
+        "target": "usdc",
+        "method": "approve",
+        "argsHint": "[oov3, 500000000]"
+      },
+      {
+        "target": "oov3",
+        "method": "disputeAssertion",
+        "argsHint": "[assertionId, disputer]"
+      }
+    ]
+  }
+}

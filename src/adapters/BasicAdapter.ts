@@ -551,10 +551,13 @@ export class BasicAdapter extends BaseAdapter implements IAdapter {
    * When Smart Wallet is active, routes through walletProvider.sendTransaction().
    *
    * @param txId - Transaction ID
-   * @param proof - Optional delivery proof (ABI-encoded dispute window).
-   *                If not provided, uses transaction's disputeWindow.
+   * @param proof - Optional pre-encoded delivery proof (AIP-14c 64-byte
+   *                `abi.encode(window, resultHash)`). If not provided, one is
+   *                built from the transaction's disputeWindow + `resultHash`.
+   * @param resultHash - Optional bytes32 commitment to the delivered result,
+   *                     used only when `proof` is not supplied.
    */
-  async deliver(txId: string, proof?: string): Promise<void> {
+  async deliver(txId: string, proof?: string, resultHash?: string): Promise<void> {
     let deliveryProof = proof;
 
     if (!deliveryProof) {
@@ -562,7 +565,9 @@ export class BasicAdapter extends BaseAdapter implements IAdapter {
       if (!tx) {
         throw new Error(`Transaction ${txId} not found`);
       }
-      deliveryProof = this.encodeDisputeWindowProof(tx.disputeWindow);
+      // AIP-14c 64-byte (window, resultHash) proof — the v2 kernel rejects the
+      // legacy 32-byte window-only form. Fails closed without a real resultHash.
+      deliveryProof = this.encodeDeliveryProof(tx.disputeWindow, resultHash);
     }
 
     if (this.smartWalletRouter?.shouldRoute()) {

@@ -115,8 +115,6 @@ async function runPull(
   let agentAddress = options.address || options.wallet;
 
   if (options.agentId) {
-    // TODO: Resolve agent-id to wallet address via ERC-8004 ownerOf
-    // For now, require --address alongside --agent-id
     if (!agentAddress) {
       output.error(
         'When using --agent-id, also provide --address (agent wallet).\n' +

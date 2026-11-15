@@ -1046,7 +1046,6 @@ export class MockRuntime implements IACTPRuntime {
         throw new EscrowNotFoundError(escrowId);
       }
 
-      // Get linked transaction (assume single transaction per escrow for now)
       const txId = escrow.transactions[0];
       const tx = state.transactions[txId];
       if (!tx) {

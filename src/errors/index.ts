@@ -516,3 +516,24 @@ export {
   isPaymasterGateError,
 } from './X402Errors';
 
+/**
+ * Thrown when a runtime cannot answer a query at all, as opposed to answering it with an empty result.
+ *
+ * `BlockchainRuntime.getAllTransactions()` throws it: the chain has no global view of all transactions,
+ * only per-address and per-txId reads.
+ *
+ * @cause The runtime has no data source for this query (for example a global transaction list on a real chain).
+ * @fix Use the per-address or per-txId alternative named in `details.alternative`, or an off-chain indexer.
+ * @recovery user-action
+ */
+export class OperationNotSupportedError extends ACTPError {
+  constructor(operation: string, runtime: string, alternative: string) {
+    super(
+      `${operation} is not supported by ${runtime}. ${alternative}`,
+      'OPERATION_NOT_SUPPORTED',
+      undefined,
+      { operation, runtime, alternative }
+    );
+    this.name = 'OperationNotSupportedError';
+  }
+}

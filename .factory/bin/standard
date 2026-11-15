@@ -1,0 +1,635 @@
+#!/usr/bin/env python3
+"""
+standard — the factory standard's registry: generates STANDARD.md, pinned tools and the state of repos under it.
+
+  standard gen [--check] [--rules PATH] [--out PATH]      # STANDARD.md from rules.toml; --check: exit 1 if stale
+  standard install-tools [--lock PATH] [--dest DIR] [--only NAME ...]
+  standard status [--json] [--repos DIR]                  # lint/format/typecheck/code-check measured from the repo
+  standard sync <repo> [--repos DIR] [--apply] [--into WORKTREE]   # copy into .factory/; without --apply only prints
+  standard install-hooks <repo> [--repos DIR] [--apply]   # pre-commit with code-check; without --apply only prints
+
+install-tools downloads only from the URL in the lock, checks sha256 (and sha512 integrity for npm), extracts only the
+named file or the `package/` tree and runs `--version`; install scripts are not run.
+
+sync without --apply prints the list and hashes and writes nothing. With --apply it writes the copy into the repo's
+.factory/ (or, with --into, into the top of a worktree of the same repo) and SOURCE last. It writes only payload files
+and deletes only managed files from the old SOURCE that are gone; baseline and the rest of .factory/ stay untouched.
+Refused (exit 1, nothing written): dirty source, symlink in .factory/, hand-edited copy, foreign file at a copy path.
+
+install-hooks without --apply prints the exact hook content and writes nothing; with --apply it writes <git dir>/hooks/pre-commit.
+The hook runs `code-check diff --staged` from this standard's source, and when it is not on the machine, the public copy
+`.factory/bin/code-check` with a warning that internal names are not checked; without either, the commit is blocked.
+Its own hook is found by its marker (`standard.HOOK_MARKER`) and updated; a foreign pre-commit (or symlink) stays
+untouched: exit 2 with a printout. core.hooksPath in repo/global/system git config is refused (exit 1): hooks inactive.
+
+Exit: 0 ok, 1 refused or stale, 2 could not be measured or fetched (never a pass) or a foreign pre-commit.
+"""
+import argparse, base64, configparser, hashlib, json, os, platform, shutil, subprocess, sys, tarfile, tempfile
+import tomllib, urllib.error, urllib.request
+from pathlib import Path, PurePosixPath
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+from factory import gitsafe, layout, sandbox, standard  # noqa: E402
+from factory.model import MeasureError, sha256, sha256_file  # noqa: E402
+
+MAX_DOWNLOAD = 256 * 1024 * 1024
+FOREIGN_SHOWN = 8192
+VERSION_TIMEOUT = 30
+PLATFORM = f"{platform.system().lower()}-{platform.machine()}"
+
+MARKERS = {
+    "lint": {
+        "py": (("ruff.toml", ".ruff.toml", ".flake8"), (("pyproject.toml", "tool.ruff"), ("setup.cfg", "flake8"))),
+        "ts": (("eslint.config.js", "eslint.config.mjs", "eslint.config.cjs", "eslint.config.ts", ".eslintrc",
+                ".eslintrc.js", ".eslintrc.cjs", ".eslintrc.json", ".eslintrc.yml", ".eslintrc.yaml", "biome.json"),
+               (("package.json", "eslintConfig"),)),
+        "sol": ((".solhint.json", ".solhintrc"), ()),
+        "sh": ((".shellcheckrc",), ()),
+    },
+    "format": {
+        "py": (("ruff.toml", ".ruff.toml"), (("pyproject.toml", "tool.ruff"), ("pyproject.toml", "tool.black"))),
+        "ts": ((".prettierrc", ".prettierrc.json", ".prettierrc.js", ".prettierrc.cjs", ".prettierrc.mjs",
+                ".prettierrc.yml", ".prettierrc.yaml", "prettier.config.js", "prettier.config.mjs",
+                "prettier.config.cjs", "biome.json"),
+               (("package.json", "prettier"), ("package.json", "devDependencies.prettier"))),
+        "sol": (("foundry.toml",), ()),
+    },
+    "typecheck": {
+        "py": (("mypy.ini", ".mypy.ini", "pyrightconfig.json"),
+               (("pyproject.toml", "tool.mypy"), ("pyproject.toml", "tool.pyright"), ("setup.cfg", "mypy"))),
+        "ts": (("tsconfig.json",), ()),
+        "sol": (("foundry.toml",), ()),
+    },
+}
+CODE_CHECK_MARKERS = (f"{layout.SYNC_DIR}/SOURCE", layout.rel(layout.CODE_CHECK))
+
+
+class Refused(Exception):
+    """A refusal with a reason: exit 1, nothing installed or written."""
+
+
+def say(*parts):
+    print(*parts, flush=True)
+
+
+def cmd_gen(args) -> int:
+    want = standard.generate(Path(args.rules))
+    out = Path(args.out)
+    have = out.read_text(encoding="utf-8") if out.is_file() else None
+    if args.check:
+        if have != want:
+            say(f"{out.name} is stale or hand-edited → run bin/standard gen")
+            return 1
+        say(f"{out.name} matches {Path(args.rules).name}")
+        return 0
+    if have == want:
+        say(f"{out.name} is up to date")
+        return 0
+    tmp = out.with_name(f".{out.name}.tmp")
+    tmp.write_text(want, encoding="utf-8")
+    os.replace(tmp, out)
+    say(f"written: {out.name}")
+    return 0
+
+
+def fetch(url: str, target: Path) -> None:
+    part = target.with_name(target.name + ".part")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with urllib.request.urlopen(url, timeout=60) as resp, part.open("wb") as fh:
+            final = resp.geturl()
+            if not final.startswith(standard.URL_SCHEMES):
+                raise Refused(f"redirect to {final} is not https")
+            total = 0
+            for block in iter(lambda: resp.read(1 << 20), b""):
+                total += len(block)
+                if total > MAX_DOWNLOAD:
+                    raise Refused(f"archive is larger than {MAX_DOWNLOAD} bytes")
+                fh.write(block)
+    except (urllib.error.URLError, OSError, TimeoutError) as exc:
+        part.unlink(missing_ok=True)
+        raise MeasureError(f"cannot fetch {url}: {exc}") from exc
+    except Refused:
+        part.unlink(missing_ok=True)
+        raise
+    os.replace(part, target)
+
+
+def verified_archive(tool: standard.Tool, dest: Path) -> Path:
+    rel = tool.archive or f".dl/{PurePosixPath(tool.url).name}"
+    archive = dest / rel
+    if archive.is_file() and sha256_file(archive) == tool.sha256:
+        return archive
+    fetch(tool.url, archive)
+    got = sha256_file(archive)
+    if got != tool.sha256:
+        archive.unlink()
+        raise Refused(f"sha256 does not match: lock {tool.sha256}, downloaded {got}")
+    if tool.integrity:
+        digest = "sha512-" + base64.b64encode(hashlib.sha512(archive.read_bytes()).digest()).decode()
+        if digest != tool.integrity:
+            archive.unlink()
+            raise Refused("npm integrity (sha512) does not match the lock")
+    return archive
+
+
+def run_version(exe: Path, tool: standard.Tool) -> str:
+    with tempfile.TemporaryDirectory() as home:
+        env = {"PATH": os.defpath, "HOME": home, "LANG": "C.UTF-8"}
+        try:
+            res = subprocess.run([str(exe), *tool.version_args], capture_output=True, text=True, env=env, cwd=home,
+                                 timeout=VERSION_TIMEOUT)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise Refused(f"{exe.name} cannot be run: {exc}") from exc
+    out = (res.stdout + res.stderr).strip()
+    if res.returncode != 0 or tool.version not in out:
+        raise Refused(f"{exe.name} {' '.join(tool.version_args)} does not report version {tool.version} ({out[:200]!r})")
+    return out.splitlines()[0] if out else ""
+
+
+def install_binary(tool: standard.Tool, archive: Path, dest: Path) -> str:
+    target = dest / tool.dest
+    staging = target.with_name(f".{target.name}.new")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with tarfile.open(archive, "r:gz") as tf:
+            try:
+                member = tf.getmember(tool.member)
+            except KeyError as exc:
+                raise Refused(f"archive has no {tool.member}") from exc
+            if not member.isfile():
+                raise Refused(f"{tool.member} in the archive is not a regular file")
+            src = tf.extractfile(member)
+            with staging.open("wb") as fh:
+                shutil.copyfileobj(src, fh)
+    except (tarfile.TarError, OSError) as exc:
+        staging.unlink(missing_ok=True)
+        raise Refused(f"archive cannot be read: {exc}") from exc
+    staging.chmod(0o755)
+    try:
+        line = run_version(staging, tool)
+    except Refused:
+        staging.unlink(missing_ok=True)
+        raise
+    os.replace(staging, target)
+    return line
+
+
+def npm_members(tf: tarfile.TarFile) -> dict[str, tarfile.TarInfo]:
+    files = {}
+    for m in tf.getmembers():
+        parts = PurePosixPath(m.name).parts
+        if not parts or parts[0] != "package" or m.name.startswith("/") or ".." in parts:
+            raise Refused(f"disallowed npm archive member: {m.name}")
+        if m.isdir():
+            continue
+        if not m.isfile():
+            raise Refused(f"npm archive member is not a regular file: {m.name}")
+        rel = PurePosixPath(*parts[1:])
+        if not rel.parts:
+            raise Refused(f"disallowed npm archive member: {m.name}")
+        files[str(rel)] = m
+    return files
+
+
+def tree_matches(tf: tarfile.TarFile, files: dict, target: Path) -> bool:
+    if not target.is_dir():
+        return False
+    on_disk = {str(p.relative_to(target).as_posix()) for p in target.rglob("*") if p.is_file() or p.is_symlink()}
+    if on_disk != set(files):
+        return False
+    for rel, m in files.items():
+        path = target / rel
+        if path.is_symlink() or sha256(tf.extractfile(m).read()) != sha256_file(path):
+            return False
+    return True
+
+
+def install_npm(tool: standard.Tool, archive: Path, dest: Path) -> str:
+    target = dest / tool.dest
+    try:
+        with tarfile.open(archive, "r:gz") as tf:
+            files = npm_members(tf)
+            if "package.json" not in files:
+                raise Refused("npm archive has no package/package.json")
+            meta = json.loads(tf.extractfile(files["package.json"]).read())
+            if meta.get("version") != tool.version:
+                raise Refused(f"package.json reports version {meta.get('version')}, lock {tool.version}")
+            if tree_matches(tf, files, target):
+                return f"{tool.name} {tool.version} already installed (content = archive)"
+            staging = target.with_name(f".{target.name}.new")
+            if staging.exists():
+                shutil.rmtree(staging)
+            for rel, m in sorted(files.items()):
+                out = staging / rel
+                out.parent.mkdir(parents=True, exist_ok=True)
+                with out.open("wb") as fh:
+                    shutil.copyfileobj(tf.extractfile(m), fh)
+                out.chmod(0o755 if m.mode & 0o111 else 0o644)
+    except (tarfile.TarError, OSError, json.JSONDecodeError) as exc:
+        raise Refused(f"npm archive cannot be read: {exc}") from exc
+    old = target.with_name(f".{target.name}.old")
+    if target.exists():
+        os.replace(target, old)
+    os.replace(staging, target)
+    if old.exists():
+        shutil.rmtree(old)
+    return f"{tool.name} {tool.version} installed"
+
+
+def install_one(tool: standard.Tool, dest: Path) -> str:
+    if tool.platform and tool.platform != PLATFORM:
+        raise Refused(f"the lock is for {tool.platform}, this system is {PLATFORM}")
+    archive = verified_archive(tool, dest)
+    if tool.kind == "npm":
+        return install_npm(tool, archive, dest)
+    return f"{tool.name} {tool.version} installed → {tool.dest} ({install_binary(tool, archive, dest)})"
+
+
+def cmd_install_tools(args) -> int:
+    lock = standard.load_lock(Path(args.lock))
+    unknown = sorted(set(args.only or ()) - set(lock.tools))
+    if unknown:
+        raise MeasureError(f"not in the lock: {', '.join(unknown)}")
+    dest = Path(args.dest).resolve()
+    worst = 0
+    for name in sorted(lock.tools):
+        if args.only and name not in args.only:
+            continue
+        tool = lock.tools[name]
+        try:
+            say(install_one(tool, dest))
+        except Refused as exc:
+            say(f"refused: {name} {tool.version}: {exc}")
+            worst = max(worst, 1)
+        except MeasureError as exc:
+            say(f"not fetched: {name} {tool.version}: {exc}")
+            worst = 2
+    return worst
+
+
+def has_key(path: Path, dotted: str) -> bool:
+    if not path.is_file():
+        return False
+    try:
+        if path.suffix == ".cfg":
+            cfg = configparser.ConfigParser()
+            cfg.read(path, encoding="utf-8")
+            return cfg.has_section(dotted)
+        data = tomllib.loads(path.read_text(encoding="utf-8")) if path.suffix == ".toml" else \
+            json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, configparser.Error, tomllib.TOMLDecodeError, json.JSONDecodeError) as exc:
+        raise MeasureError(f"{path}: cannot read ({exc})") from exc
+    for part in dotted.split("."):
+        if not isinstance(data, dict) or part not in data:
+            return False
+        data = data[part]
+    return True
+
+
+def measure(root: Path, check: str, langs) -> tuple[bool | None, dict]:
+    per = {}
+    for lang in sorted(langs):
+        spec = MARKERS[check].get(lang)
+        if spec is None:
+            continue
+        files, keys = spec
+        per[lang] = any((root / f).is_file() for f in files) or any(has_key(root / f, k) for f, k in keys)
+    return (all(per.values()) if per else None), per
+
+
+def status_row(repo: standard.Repo) -> dict:
+    row = {"id": repo.id, "name": repo.name, "tier": repo.tier, "enforce_as": repo.enforce_as, "path": str(repo.path),
+           "langs": list(repo.langs), "proof": bool(repo.proof)}
+    if not repo.path.is_dir():
+        row.update(lint=None, format=None, typecheck=None, code_check=None, detail={}, trust="not measured",
+                   trust_reason=f"path does not exist: {repo.path}")
+        return row
+    detail = {}
+    for check in ("lint", "format", "typecheck"):
+        row[check], detail[check] = measure(repo.path, check, standard.code_langs(repo))
+    row["code_check"] = any((repo.path / m).is_file() for m in CODE_CHECK_MARKERS)
+    row["detail"] = detail
+    missing = [k for k in ("proof", "lint", "format", "code_check") if row[k] is False]
+    if missing:
+        row["trust"], row["trust_reason"] = "R0", "R1 needs proof, lint, formatter and code-check; missing: " + ", ".join(missing)
+    else:
+        row["trust"], row["trust_reason"] = "not yet measured", "R1+ needs green checks on the base; measured from F2"
+    return row
+
+
+def mark(value) -> str:
+    return {True: "yes", False: "no", None: "n/a"}[value]
+
+
+def cmd_status(args) -> int:
+    rows = [status_row(r) for r in standard.load_repos(Path(args.repos))]
+    if args.json:
+        say(json.dumps({"repos": rows}, ensure_ascii=False, indent=2, sort_keys=True))
+    else:
+        say(f"{'repo':<14} {'tier':<5} {'proof':<6} {'lint':<5} {'format':<7} {'typecheck':<10} {'code-check':<11} level")
+        for r in rows:
+            say(f"{r['id']:<14} {r['tier'] + '/' + r['enforce_as']:<5} {mark(r['proof']):<6} {mark(r['lint']):<5} "
+                f"{mark(r['format']):<7} {mark(r['typecheck']):<10} {mark(r['code_check']):<11} {r['trust']} "
+                f"({r['trust_reason']})")
+    return 2 if any(r["trust"] == "not measured" for r in rows) else 0
+
+
+def find_repo(args) -> standard.Repo:
+    repos = {r.id: r for r in standard.load_repos(Path(args.repos))}
+    if args.repo not in repos:
+        raise MeasureError(f"no repo {args.repo} in {args.repos} (available: {', '.join(sorted(repos))})")
+    repo = repos[args.repo]
+    if not repo.path.is_dir():
+        raise MeasureError(f"repo path does not exist: {repo.path}")
+    return repo
+
+
+def sync_target(repo: standard.Repo, into: str | None) -> Path:
+    """The root sync writes into: the repo from repos/<id>.toml or, with --into, the top of a worktree of the same repo
+    (same git common dir). Another repo or a subdirectory is refused: the copy would land where CI does not read it."""
+    if into is None:
+        return repo.path
+    target = Path(into).resolve()
+    if not target.is_dir():
+        raise MeasureError(f"--into does not exist: {target}")
+
+    def common(root: Path) -> tuple[str, str]:
+        git = gitsafe.Git(root)
+        return (git.text("rev-parse", "--path-format=absolute", "--show-toplevel"),
+                git.text("rev-parse", "--path-format=absolute", "--git-common-dir"))
+    top, target_common = common(target)
+    if Path(top).resolve() != target:
+        raise Refused(f"--into must be the top of a worktree, but {target} is inside {top}")
+    if Path(target_common).resolve() != Path(common(repo.path)[1]).resolve():
+        raise Refused(f"--into {target} is not a worktree of repo {repo.id} ({repo.path})")
+    return target
+
+
+def sync_refusals(factory: Path, payload: dict[str, bytes]) -> tuple[dict[str, str], list[str]]:
+    """The old manifest and refusal reasons: a symlink on the path, a hand-edited managed file, or a foreign file at a
+    path sync would overwrite. A managed file that already has the new content is left from an interrupted sync and
+    is not a refusal. Files in neither the manifest nor the payload (baseline) stay untouched."""
+    if factory.is_symlink():
+        return {}, [f"{layout.SYNC_DIR} is a symlink"]
+    links = sorted(p.relative_to(factory).as_posix() for p in factory.rglob("*") if p.is_symlink()) \
+        if factory.is_dir() else []
+    if links:
+        return {}, [f"symlink in {layout.SYNC_DIR}: {rel}" for rel in links]
+    source = factory / "SOURCE"
+    old = standard.parse_source(source.read_text(encoding="utf-8"), str(source)) if source.is_file() else {}
+    problems = []
+    for rel, digest in sorted(old.items()):
+        path = factory / rel
+        current = sha256_file(path) if path.is_file() else None
+        if current not in (None, digest) and (rel not in payload or current != sha256(payload[rel])):
+            problems.append(f"hand-edited copy: {layout.SYNC_DIR}/{rel} → make the change in the standard's source")
+    for rel in sorted(payload):
+        if rel not in old and (factory / rel).exists():
+            problems.append(f"foreign file at a copy path: {layout.SYNC_DIR}/{rel}")
+    return old, problems
+
+
+def untracked_payload(git: gitsafe.Git, payload: dict[str, bytes]) -> list[str]:
+    """Payload files from the standard's source that are not exactly what is in HEAD: gitignored, untracked or modified.
+    The generated lists (`PUBLIC_LISTS`) and the copy's `.gitignore` are not from the tree, so they are skipped."""
+    generated = {layout.rel(path) for path in standard.PUBLIC_LISTS} | {".gitignore"}
+    tracked = {}
+    for row in git.text("ls-files", "-s", "-z", "--", *sorted(set(payload) - generated)).split("\0"):
+        if row:
+            meta, _, rel = row.partition("\t")
+            tracked[rel] = meta.split()[1]
+    return [rel for rel, data in sorted(payload.items())
+            if rel not in generated and tracked.get(rel) != git.blob_id(data)]
+
+
+def write_file(target: Path, data: bytes, mode: int) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    staging = target.with_name(f".{target.name}.factory-new")
+    staging.unlink(missing_ok=True)
+    with os.fdopen(os.open(staging, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode), "wb") as fh:
+        fh.write(data)
+    staging.chmod(mode)
+    os.replace(staging, target)
+
+
+def apply_sync(factory: Path, payload: dict[str, bytes], old: dict[str, str], source: str) -> dict[str, int]:
+    """Write the payload, delete managed files that are gone, then SOURCE last, so an interrupted sync leaves the old
+    manifest and the next one recognises it."""
+    counts = {"new": 0, "changed": 0, "same": 0, "deleted": 0}
+    for rel, data in payload.items():
+        path = factory / rel
+        mode = 0o755 if rel in standard.SYNC_EXECUTABLE else 0o644
+        if path.is_file() and sha256_file(path) == sha256(data) and (path.stat().st_mode & 0o777) == mode:
+            counts["same"] += 1
+            continue
+        counts["changed" if path.exists() else "new"] += 1
+        write_file(path, data, mode)
+    for rel in sorted(set(old) - set(payload)):
+        path = factory / rel
+        if path.is_file():
+            path.unlink()
+            counts["deleted"] += 1
+        parent = path.parent
+        while parent != factory and parent.is_dir() and not any(parent.iterdir()):
+            parent.rmdir()
+            parent = parent.parent
+    target = factory / "SOURCE"
+    if not (target.is_file() and target.read_text(encoding="utf-8") == source):
+        write_file(target, source.encode("utf-8"), 0o644)
+    return counts
+
+
+def cmd_sync(args) -> int:
+    repo = find_repo(args)
+    if repo.path == layout.ROOT:
+        raise Refused("this is the standard's source; sync goes only into other repos")
+    if repo.tier == "B" and not repo.consent:
+        raise Refused("tier B: our files in a client tree only by agreement (consent = true in repos/<id>.toml)")
+    root = sync_target(repo, args.into)
+    payload = standard.sync_payload(repo)
+    git = gitsafe.Git(layout.ROOT)
+    commit, dirty = git.text("rev-parse", "HEAD"), bool(git.text("status", "--porcelain"))
+    factory = root / layout.SYNC_DIR
+    source = standard.sync_source(payload, commit, dirty)
+    if args.apply:
+        if dirty:
+            raise Refused("the standard's source has uncommitted changes → commit them before sync, so SOURCE names a real commit")
+        old, problems = sync_refusals(factory, payload)
+        problems += [f"not from HEAD in the source (gitignored, untracked or modified): {rel}"
+                     for rel in untracked_payload(git, payload)]
+        if problems:
+            for line in problems:
+                say(f"  {line}")
+            raise Refused(f"sync {repo.id} → {factory}: nothing written")
+        counts = apply_sync(factory, payload, old, source)
+        changed = counts["new"] + counts["changed"] + counts["deleted"]
+        say(f"sync {repo.id} → {factory}: " + (", ".join(f"{k} {v}" for k, v in counts.items()) if changed
+                                                else f"no changes ({counts['same']} files)"))
+        say(f"  source {commit}")
+        return 0
+    say(f"dry-run: sync {repo.id} → {factory} (nothing written; write with --apply)")
+    for rel, data in payload.items():
+        say(f"  {layout.SYNC_DIR}/{rel} {sha256(data)}")
+    say(f"  {layout.SYNC_DIR}/SOURCE:")
+    for line in source.splitlines():
+        say(f"    {line}")
+    if dirty:
+        say("the standard's source has uncommitted changes → commit them before sync")
+    return 2 if dirty else 0
+
+
+def hooks_dir(root: Path) -> Path:
+    dotgit = root / ".git"
+    if dotgit.is_dir():
+        return dotgit / "hooks"
+    if not dotgit.is_file():
+        raise MeasureError(f"{root} is not a git repo")
+    text = dotgit.read_text(encoding="utf-8").strip()
+    if not text.startswith("gitdir:"):
+        raise MeasureError(f"{dotgit}: unexpected content")
+    gitdir = standard.resolve_path(text.split(":", 1)[1].strip(), root)
+    common = gitdir / "commondir"
+    if common.is_file():
+        gitdir = standard.resolve_path(common.read_text(encoding="utf-8").strip(), gitdir)
+    return gitdir / "hooks"
+
+
+def hooks_path_settings(root: Path) -> list[str]:
+    """core.hooksPath as the user's git sees it in that repo: all scopes, with `[include]` and `[includeIf]`.
+
+    It asks the host git with the user's environment (without GIT_DIR, GIT_WORK_TREE and GIT_INDEX_FILE) from the top
+    of the repo, because only then do `includeIf` conditions (gitdir, onbranch, hasconfig) apply. `git config` only
+    reads configuration: it runs no hooks, fsmonitor or filters. A line is "value (scope, origin)", and the origin is
+    the file that holds the setting, also when it is included from another one.
+    """
+    env = {k: v for k, v in os.environ.items() if k not in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE")}
+    argv = [gitsafe.executable(), "--no-pager", "-C", str(root), "config", "-z", "--show-scope", "--show-origin",
+            "--includes", "--get-all", "core.hooksPath"]
+    try:
+        res = subprocess.run(argv, cwd=root, env=env, capture_output=True, timeout=VERSION_TIMEOUT)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise MeasureError(f"git config core.hooksPath cannot be read: {exc}") from exc
+    if res.returncode not in (0, 1):
+        raise MeasureError(f"git config core.hooksPath failed: {res.stderr.decode(errors='replace').strip()[:200]}")
+    fields = res.stdout.decode("utf-8", "surrogateescape").split("\0")[:-1]
+    if len(fields) % 3:
+        raise MeasureError(f"git config core.hooksPath returned unexpected output: {res.stdout[:200]!r}")
+    return [f"{value} ({scope}, {origin})" for scope, origin, value in zip(*[iter(fields)] * 3)]
+
+
+def symlinked_hooks_dir(hooks: Path) -> str | None:
+    """The real target when the hooks directory is a symlink (the hook would land outside the repo), else None."""
+    return os.path.realpath(hooks) if os.path.islink(hooks) else None
+
+
+def hook_state(target: Path, content: str) -> str:
+    """"new", "same" or "ours" (an older own hook); a foreign hook or a symlink is "foreign"."""
+    if not os.path.lexists(target):
+        return "new"
+    if target.is_symlink() or not target.is_file():
+        return "foreign"
+    have = target.read_bytes()
+    if have == content.encode("utf-8"):
+        return "same"
+    lines = have.split(b"\n", 2)
+    return "ours" if len(lines) > 1 and lines[1].startswith(standard.HOOK_MARKER.encode()) else "foreign"
+
+
+def show_foreign(target: Path, shown) -> None:
+    say(f"refused: {shown} exists and is not a factory hook (no marker \"{standard.HOOK_MARKER}\"), so it is not overwritten")
+    say("→ merge it by hand with the factory hook or remove it, then run install-hooks again")
+    if target.is_symlink():
+        say(f"{shown} is a symlink to {os.readlink(target)}")
+        return
+    data = target.read_bytes() if target.is_file() else b""
+    say(f"--- {shown} ({len(data)} bytes) ---")
+    sys.stdout.write(sandbox.printable(data[:FOREIGN_SHOWN]).decode("utf-8"))
+    say(f"\n--- end ({'truncated' if len(data) > FOREIGN_SHOWN else 'complete'}) ---")
+
+
+def write_hook(target: Path, content: str) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    staging = target.with_name(f".{target.name}.factory-new")
+    staging.unlink(missing_ok=True)
+    with os.fdopen(os.open(staging, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o755), "w", encoding="utf-8") as fh:
+        fh.write(content)
+    staging.chmod(0o755)
+    os.replace(staging, target)
+
+
+def cmd_install_hooks(args) -> int:
+    repo = find_repo(args)
+    target = hooks_dir(repo.path) / "pre-commit"
+    shown = target.relative_to(repo.path) if target.is_relative_to(repo.path) else target
+    settings = hooks_path_settings(repo.path)
+    if settings:
+        raise Refused(f"core.hooksPath is set ({'; '.join(settings)}), so {shown} is not active → remove "
+                      "core.hooksPath or call code-check yourself from that hook")
+    real = symlinked_hooks_dir(target.parent)
+    if real is not None:
+        raise Refused(f"{shown.parent} is a symlink to {real}, so the hook would land in a directory other repos can "
+                      "use too → replace the link with a plain directory or call code-check yourself from that hook")
+    content = standard.pre_commit_hook(layout.ROOT)
+    state = hook_state(target, content)
+    if state == "foreign":
+        show_foreign(target, shown)
+        return 2
+    if not args.apply:
+        say(f"dry-run: install-hooks {repo.id} → {shown} ({state}); nothing written, write with --apply")
+        say(f"the hook runs code-check diff --staged --repo <repo top> from {layout.ROOT}; without the source the public copy "
+            f"{layout.SYNC_DIR}/{layout.rel(layout.CODE_CHECK)}, and without either it blocks the commit")
+        say(f"--- {shown} ---")
+        sys.stdout.write(content)
+        say("--- end ---")
+        return 0
+    if state == "same":
+        say(f"{shown} is up to date")
+        return 0
+    write_hook(target, content)
+    say(f"written: {shown} ({'updated own hook' if state == 'ours' else 'new hook'})")
+    return 0
+
+
+def parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(prog="standard", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = p.add_subparsers(dest="cmd", required=True)
+    g = sub.add_parser("gen")
+    g.add_argument("--check", action="store_true")
+    g.add_argument("--rules", default=str(layout.RULES))
+    g.add_argument("--out", default=str(layout.STANDARD / "STANDARD.md"))
+    i = sub.add_parser("install-tools")
+    i.add_argument("--lock", default=str(layout.LOCK))
+    i.add_argument("--dest", default=str(layout.TOOLS))
+    i.add_argument("--only", nargs="+")
+    s = sub.add_parser("status")
+    s.add_argument("--json", action="store_true")
+    s.add_argument("--repos", default=str(layout.REPOS))
+    for name in ("sync", "install-hooks"):
+        c = sub.add_parser(name)
+        c.add_argument("repo")
+        c.add_argument("--repos", default=str(layout.REPOS))
+        c.add_argument("--apply", action="store_true")
+        if name == "sync":
+            c.add_argument("--into", metavar="WORKTREE")
+    return p
+
+
+COMMANDS = {"gen": cmd_gen, "install-tools": cmd_install_tools, "status": cmd_status, "sync": cmd_sync,
+            "install-hooks": cmd_install_hooks}
+
+
+def main(argv=None) -> int:
+    args = parser().parse_args(argv)
+    try:
+        return COMMANDS[args.cmd](args)
+    except Refused as exc:
+        say(f"refused: {exc}")
+        return 1
+    except MeasureError as exc:
+        say(f"could not be measured: {exc}")
+        return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())

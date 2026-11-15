@@ -126,7 +126,7 @@ async function runRegister(
 
   // Dynamic imports
   const { ethers } = await import('ethers');
-  const { getNetwork } = await import('../../config/networks');
+  const { getNetwork, PIMLICO_SPONSORSHIP_POLICY_ID } = await import('../../config/networks');
   const { AutoWalletProvider } = await import('../../wallet/AutoWalletProvider');
   const { buildRegisterAgentBatch, buildTestnetInitBatch } = await import('../../wallet/aa/TransactionBatcher');
 
@@ -180,6 +180,7 @@ async function runRegister(
     paymaster: {
       primaryUrl: paymasterPrimary,
       backupUrl: paymasterBackup,
+      sponsorshipPolicyId: PIMLICO_SPONSORSHIP_POLICY_ID,
     },
   });
 

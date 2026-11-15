@@ -213,6 +213,12 @@ export async function request(
     if (!tx || (tx.state !== 'DELIVERED' && tx.state !== 'SETTLED')) {
       // Auto-cancel on timeout if still in early state
       if (tx && (tx.state === 'INITIATED' || tx.state === 'COMMITTED')) {
+        // SDK-1: scope the try/catch to the cancel CALL only. Previously the
+        // "cancelled, wasCancelled=true" error was thrown INSIDE the try, so the
+        // catch below swallowed it and the caller got the generic timeout with no
+        // wasCancelled flag. Record success and throw the flagged error AFTER the
+        // try/catch so it propagates (the outer handler re-throws TimeoutError as-is).
+        let cancelled = false;
         try {
           logger.warn('Transaction timed out, cancelling to release funds', {
             txId,
@@ -222,24 +228,22 @@ export async function request(
           if ('cancelTransaction' in client.runtime) {
             await (client.runtime as any).cancelTransaction(txId);
             logger.info('Transaction cancelled successfully', { txId });
-
-            const error = new TimeoutError(maxWaitTime, `Transaction cancelled after timeout`);
-            (error as any).txId = txId;
-            (error as any).wasCancelled = true;
-            throw error;
           } else {
             // Route through StandardAdapter for AA-aware cancel; falls
             // through to runtime.transitionState on EOA/mock paths.
             await client.standard.transitionState(txId, 'CANCELLED');
             logger.info('Transaction cancelled successfully (via transitionState)', { txId });
-
-            const error = new TimeoutError(maxWaitTime, `Transaction cancelled after timeout`);
-            (error as any).txId = txId;
-            (error as any).wasCancelled = true;
-            throw error;
           }
+          cancelled = true;
         } catch (cancelError) {
           logger.error('Failed to cancel timed-out transaction', { txId }, cancelError as Error);
+        }
+
+        if (cancelled) {
+          const error = new TimeoutError(maxWaitTime, `Transaction cancelled after timeout`);
+          (error as any).txId = txId;
+          (error as any).wasCancelled = true;
+          throw error;
         }
       }
 
@@ -336,6 +340,7 @@ export async function request(
         fee: options.budget * 0.01, // 1% ACTP fee
         duration: Date.now() - startTime,
         proof: tx.deliveryProof ?? '',
+        escrowId: tx.escrowId ?? undefined,
       },
     };
 

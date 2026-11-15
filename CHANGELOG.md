@@ -1,5 +1,66 @@
 # Changelog
 
+## [Unreleased]
+
+### Security
+
+- **A DID that names another chain is refused during signature verification.**
+  `MessageSigner.verifySignature()` and `verifySignatureOrThrow()` throw
+  `DID chainId mismatch` when `from` is `did:ethr:<chainId>:<address>` and
+  `<chainId>` differs from the signer's EIP-712 domain, and when `<chainId>` is
+  not a decimal number. Before, a mismatch only logged a warning, and a chainId
+  such as `84532junk` was read as `84532`.
+- **`isValidAddress()` enforces the EIP-55 checksum.** A mixed-case address
+  with a wrong checksum is rejected; all-lowercase and all-uppercase addresses
+  (no checksum) are still accepted.
+- **ERC-8004 payment resolution now fails closed.**
+  `ERC8004Bridge.getAgentWallet()` reads only the Identity Registry's verified
+  on-chain `agentWallet`. Missing, malformed, or unreadable registry values
+  return typed errors instead of falling back to the ERC-721 owner or
+  unverified `agentURI` metadata.
+- **Agent manifest network parsing now fails closed.** Unknown authored
+  `network` values are rejected instead of being silently replaced with
+  `mock`. Fresh wizard output uses the canonical `testnet` value; the two
+  previously documented chain labels (`base-sepolia`, `base-mainnet`) are
+  preserved as explicit compatibility aliases.
+- **ERC-8004 migration inventory is read-only and fail-visible.** The new
+  inventory command reads explicit token IDs without a signer, retains
+  per-agent RPC/content failures, blocks local/private URI targets and unsafe
+  redirects, caps artifact size, and never persists complete RPC URLs.
+
+### Changed
+
+- **Behaviour change:** `BlockchainRuntime.getAllTransactions()` throws the new
+  `OperationNotSupportedError` (code `OPERATION_NOT_SUPPORTED`) instead of
+  returning `[]`, which read as "no transactions". A real chain has no global
+  transaction view; use `getTransaction(txId)`, `getTransactionsByProvider()`
+  or `EventMonitor`. `actp tx list` keeps its testnet/mainnet hint and only
+  hides this error, not other runtime failures. `MockRuntime` is unchanged.
+- `PricingStrategy.cost.api` documentation now states what the SDK does: the
+  named API contributes 0 to the calculated cost, and token-billed agents put
+  that cost in `base` or `perUnit`.
+- `IERC8004IdentityRegistry` now requires `getAgentWallet(agentId)`. Consumers
+  that implement this testing/injection interface directly must add the new
+  read method. `resolveAgent().wallet` remains available for compatibility but
+  is explicitly documented as unverified and unsuitable for payment routing.
+- `actp publish` now uploads a distinct, deterministic `registration-v1` JSON
+  artifact for ERC-8004 `agentURI`; AGIRAILS Markdown remains the AGIRAILS
+  service artifact. Mandatory core registration fields remain present; legacy
+  cards without an authored image receive the stable AGIRAILS favicon URL and
+  fallback descriptions exclude later operational sections. Version-1
+  pending-publish files no longer mint ERC-8004 identities with the legacy
+  Markdown URI.
+
+### Added
+
+- `actp erc8004 inventory` collects a read-only evidence inventory for
+  explicit identities, and `actp erc8004 migration-plan` turns it into a
+  resumable per-agent before/after ledger. Neither command uploads, signs, nor
+  creates transactions.
+- Conservative `registration-v1` builders and validators that publish only
+  evidenced AGIRAILS service metadata and suppress inferred A2A, MCP, x402,
+  and trust claims.
+
 ## [4.9.0] — 2026-06-21
 
 ### Fixed

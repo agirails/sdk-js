@@ -1,0 +1,2 @@
+# sandbox-run: the public copy has no private trees or their fingerprints, since a short path can
+# be recovered from its fingerprint with a word list. The list applies only in the source.

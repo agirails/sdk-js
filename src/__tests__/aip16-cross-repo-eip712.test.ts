@@ -61,9 +61,7 @@ import type {
 // in CI. The contract-equivalence guarantee is still enforced — locally,
 // by this suite; CI-side, by the Platform repo's own EIP-712 unit tests.
 //
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 const fs = require('fs') as typeof import('fs');
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 const pathLib = require('path') as typeof import('path');
 const platformDir = pathLib.resolve(
   __dirname,
@@ -74,7 +72,6 @@ const platformAvailable =
   fs.existsSync(pathLib.join(platformDir, 'eip712.js'));
 const describeCrossRepo = platformAvailable ? describe : describe.skip;
 
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 const platformEip712 = (platformAvailable
   ? require('../../../../Platform/agirails.app/web/lib/delivery/eip712')
   : {}) as {

@@ -355,7 +355,6 @@ describe('AIP-16 Phase 2e — End-to-end stress (100 parallel txs)', () => {
       // operator. We do NOT fail the test on a memory budget because GC
       // timing is non-deterministic, but we do guard the upper bound
       // loosely (300 MB) to catch catastrophic regressions.
-      // eslint-disable-next-line no-console
       console.log(
         `[stress] N=${N} totalMs=${t1 - t0} memDeltaMB=${(memDelta / 1024 / 1024).toFixed(2)}`,
       );

@@ -425,20 +425,33 @@ describe('parseAgirailsMdV4 — full config', () => {
 });
 
 // ============================================================================
-// parseAgirailsMdV4 — network fallback
+// parseAgirailsMdV4 — network validation
 // ============================================================================
 
 describe('parseAgirailsMdV4 — network', () => {
-  test('invalid network falls back to mock', () => {
+  test('invalid network is rejected instead of silently falling back to mock', () => {
     const md = `---\nname: Test\nservices:\n  - testing\npricing:\n  base: 1.00\nnetwork: invalid\n---\nbody`;
-    const config = parseAgirailsMdV4(md);
-    expect(config.network).toBe('mock');
+    expect(() => parseAgirailsMdV4(md)).toThrow(
+      'Invalid network: "invalid". Expected mock | testnet | mainnet'
+    );
   });
 
-  test('accepts mainnet', () => {
-    const md = `---\nname: Test\nservices:\n  - testing\npricing:\n  base: 1.00\nnetwork: mainnet\n---\nbody`;
-    const config = parseAgirailsMdV4(md);
-    expect(config.network).toBe('mainnet');
+  test.each([
+    ['mock', 'mock'],
+    ['testnet', 'testnet'],
+    ['mainnet', 'mainnet'],
+    [' TESTNET ', 'testnet'],
+  ] as const)('accepts canonical network %p as %p', (authored, expected) => {
+    const md = `---\nname: Test\nservices:\n  - testing\npricing:\n  base: 1.00\nnetwork: ${authored}\n---\nbody`;
+    expect(parseAgirailsMdV4(md).network).toBe(expected);
+  });
+
+  test.each([
+    ['base-sepolia', 'testnet'],
+    ['base-mainnet', 'mainnet'],
+  ] as const)('maps legacy chain alias %p explicitly to %p', (authored, expected) => {
+    const md = `---\nname: Test\nservices:\n  - testing\npricing:\n  base: 1.00\nnetwork: ${authored}\n---\nbody`;
+    expect(parseAgirailsMdV4(md).network).toBe(expected);
   });
 });
 

@@ -29,6 +29,13 @@ export interface PaymasterConfig {
   chainId: number;
   /** Request timeout (ms) */
   timeoutMs?: number;
+  /**
+   * Pimlico sponsorship policy id (e.g. "sp_..."). Sent as ERC-7677 context
+   * on Pimlico endpoints only — Pimlico applies a policy solely when the
+   * request references it, and CDP enforces its own server-side policy and
+   * would reject the foreign context field.
+   */
+  sponsorshipPolicyId?: string;
 }
 
 interface JsonRpcResponse<T = unknown> {
@@ -47,6 +54,7 @@ export class PaymasterClient {
   private readonly backupUrl: string | undefined;
   private readonly chainId: number;
   private readonly timeoutMs: number;
+  private readonly sponsorshipPolicyId: string | undefined;
   private requestId = 1;
 
   constructor(config: PaymasterConfig) {
@@ -54,6 +62,7 @@ export class PaymasterClient {
     this.backupUrl = config.backupUrl;
     this.chainId = config.chainId;
     this.timeoutMs = config.timeoutMs ?? 15_000;
+    this.sponsorshipPolicyId = config.sponsorshipPolicyId;
   }
 
   /**
@@ -67,11 +76,11 @@ export class PaymasterClient {
   ): Promise<{ paymasterAndData: string }> {
     return this.callWithFallback<{ paymasterAndData: string }>(
       'pm_getPaymasterStubData',
-      [
+      (url) => [
         serializeUserOp(userOp),
         ENTRYPOINT_V06,
         '0x' + this.chainId.toString(16),
-        {}, // context
+        this.contextFor(url),
       ]
     );
   }
@@ -87,11 +96,11 @@ export class PaymasterClient {
   ): Promise<{ paymasterAndData: string }> {
     return this.callWithFallback<{ paymasterAndData: string }>(
       'pm_getPaymasterData',
-      [
+      (url) => [
         serializeUserOp(userOp),
         ENTRYPOINT_V06,
         '0x' + this.chainId.toString(16),
-        {}, // context
+        this.contextFor(url),
       ]
     );
   }
@@ -100,12 +109,23 @@ export class PaymasterClient {
   // Internal
   // ==========================================================================
 
+  /**
+   * ERC-7677 context for a given endpoint. The sponsorship policy id is
+   * meaningful only to Pimlico; every other endpoint gets an empty context.
+   */
+  private contextFor(url: string): Record<string, unknown> {
+    if (this.sponsorshipPolicyId && url.includes('pimlico.io')) {
+      return { sponsorshipPolicyId: this.sponsorshipPolicyId };
+    }
+    return {};
+  }
+
   private async callWithFallback<T>(
     method: string,
-    params: unknown[]
+    buildParams: (url: string) => unknown[]
   ): Promise<T> {
     try {
-      return await this.jsonRpc<T>(this.primaryUrl, method, params);
+      return await this.jsonRpc<T>(this.primaryUrl, method, buildParams(this.primaryUrl));
     } catch (primaryError) {
       if (!this.backupUrl) {
         throw new Error(
@@ -123,7 +143,7 @@ export class PaymasterClient {
     }
 
     try {
-      return await this.jsonRpc<T>(this.backupUrl!, method, params);
+      return await this.jsonRpc<T>(this.backupUrl!, method, buildParams(this.backupUrl!));
     } catch (backupError) {
       throw new Error(
         'Gas sponsorship temporarily unavailable — both Coinbase and Pimlico paymasters failed. ' +

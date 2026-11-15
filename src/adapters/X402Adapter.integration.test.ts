@@ -70,7 +70,6 @@ maybeDescribe('X402Adapter — integration test (live x402.org/protected)', () =
       expect(result.state).toBe('COMMITTED');
 
       // Log details for manual verification
-      // eslint-disable-next-line no-console
       console.log('x402 integration test success:', {
         txId: result.txId,
         amount: result.amount,

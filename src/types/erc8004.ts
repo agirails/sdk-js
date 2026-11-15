@@ -36,7 +36,11 @@ export interface ERC8004Agent {
   /** Owner address (EOA that controls the NFT) */
   owner: string;
 
-  /** Payment wallet address (checksummed) */
+  /**
+   * Legacy metadata/owner-derived address (checksummed).
+   * @deprecated This field is not on-chain wallet proof. For payments, use
+   * ERC8004Bridge.getAgentWallet(), which reads the verified registry value.
+   */
   wallet: string;
 
   /** Agent URI (IPFS or HTTPS, points to metadata JSON) */
@@ -64,10 +68,10 @@ export interface ERC8004AgentMetadata {
   /** Agent avatar/logo URL */
   image?: string;
 
-  /** Wallet address for receiving payments (overrides owner) */
+  /** Unverified off-chain payment-address claim */
   paymentAddress?: string;
 
-  /** Alternative field name for payment address */
+  /** Unverified off-chain wallet-address claim */
   wallet?: string;
 
   /** List of agent capabilities */
@@ -238,7 +242,8 @@ export const ERC8004_REPUTATION_REGISTRY: Record<ERC8004Network, string> = {
 export const ERC8004_IDENTITY_ABI = [
   // Read (ERC-721 + ERC-8004)
   'function ownerOf(uint256 agentId) view returns (address)',
-  'function getAgentURI(uint256 agentId) view returns (string)',
+  'function tokenURI(uint256 agentId) view returns (string)',
+  'function getAgentWallet(uint256 agentId) view returns (address)',
   'function balanceOf(address owner) view returns (uint256)',
   'function tokenOfOwnerByIndex(address owner, uint256 index) view returns (uint256)',
   // Write (ERC-8004 registration)
@@ -288,6 +293,18 @@ export const ACTP_FEEDBACK_TAGS = {
 
   /** Agent lost dispute (requester won) */
   DISPUTE_LOST: 'actp_dispute_lost',
+
+  /**
+   * Neutral split-outcome trace (AIP-14b §3.4, §3.5, INV-22). A dispute that
+   * resolved to a SPLIT (CompositeMediator ruling-2 or kernel DISPUTED→CANCELLED).
+   * Carries NO on-chain penalty — written with `value: 0` — but is NOT
+   * reputation-invisible: indexers surface per-agent split rates so systematic
+   * dispute-to-split ambiguity griefing is visible to future counterparties.
+   *
+   * PARITY: Py `ACTP_FEEDBACK_TAGS["DISPUTE_SPLIT"]` — the tag STRING
+   * `'actp_dispute_split'` is identical across both SDKs.
+   */
+  DISPUTE_SPLIT: 'actp_dispute_split',
 } as const;
 
 /**

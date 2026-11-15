@@ -196,6 +196,7 @@ export interface IACTPRuntime {
    * Gets all transactions.
    *
    * @returns Promise resolving to array of all transactions
+   * @throws OperationNotSupportedError from BlockchainRuntime, which has no global transaction view on a real chain
    *
    * @example
    * ```typescript
