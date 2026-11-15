@@ -230,10 +230,44 @@ jest.mock('ethers', () => {
 // (Rule `import/first` is not loaded in our eslint config — disable
 // removed 2026-06-09 to fix CI lint "Definition for rule not found".)
 import { createPublishCommand } from './publish';
+import { computeConfigHash } from '../../config/agirailsmd';
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+const realFetch = globalThis.fetch;
+const PROVIDER_CONFIG_CID = 'QmNYdwVLWRCqcVKhd3jvHMT9ZWLcbKnwD4XZZLD54oj2eu';
+const PROVIDER_REGISTRATION_CID = 'QmVXSBoeVM42kUs7N5quENENemN19L3veCgWpnT4oKWMx8';
+
+function isPublishProxyCall(input: string | URL | Request): boolean {
+  const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+  return /\/v1\/publish\/?$/.test(new URL(url).pathname);
+}
+
+async function fakePublishProxy(
+  input: string | URL | Request,
+  init?: RequestInit,
+): Promise<Response> {
+  if (!isPublishProxyCall(input)) return realFetch(input, init);
+
+  const body: unknown = JSON.parse(String(init?.body));
+  const isObject = typeof body === 'object' && body !== null;
+  const content = isObject && 'content' in body && typeof body.content === 'string' ? body.content : '';
+  const isRegistration =
+    isObject && 'artifactType' in body && body.artifactType === 'erc8004-registration-v1';
+  const payload = isRegistration
+    ? { cid: PROVIDER_REGISTRATION_CID, artifactType: 'erc8004-registration-v1' }
+    : {
+        cid: PROVIDER_CONFIG_CID,
+        artifactType: 'agirails-config',
+        configHash: computeConfigHash(content).configHash,
+      };
+  return new Response(JSON.stringify(payload), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
 
 /**
  * Write an AGIRAILS.md identity file for a pay-only buyer into `dir`.
@@ -407,6 +441,7 @@ describe('mintTestnetUsdcForBuyer — publish-flow integration (FIX-6 e2e layer)
   let logSpy: jest.SpiedFunction<typeof console.log>;
   let warnSpy: jest.SpiedFunction<typeof console.warn>;
   let errorSpy: jest.SpiedFunction<typeof console.error>;
+  let fetchSpy: jest.SpiedFunction<typeof fetch>;
 
   beforeEach(() => {
     // Per-test reset of the mock-call state.
@@ -452,6 +487,7 @@ describe('mintTestnetUsdcForBuyer — publish-flow integration (FIX-6 e2e layer)
     logSpy = jest.spyOn(console, 'log').mockImplementation(() => undefined);
     warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
     errorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    fetchSpy = jest.spyOn(globalThis, 'fetch').mockImplementation(fakePublishProxy);
   });
 
   afterEach(() => {
@@ -466,6 +502,7 @@ describe('mintTestnetUsdcForBuyer — publish-flow integration (FIX-6 e2e layer)
     logSpy.mockRestore();
     warnSpy.mockRestore();
     errorSpy.mockRestore();
+    fetchSpy.mockRestore();
     try {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     } catch {
@@ -611,6 +648,11 @@ describe('mintTestnetUsdcForBuyer — publish-flow integration (FIX-6 e2e layer)
     // (no AgentRegistry mocking) — but reaching the activation entry
     // point already proves the routing.
     await runPublishCmd(filePath).catch(() => undefined);
+
+    const configAndRegistrationUploads = fetchSpy.mock.calls.filter(([input]) =>
+      isPublishProxyCall(input),
+    );
+    expect(configAndRegistrationUploads).toHaveLength(2);
 
     const allLogs = joinLogs(logSpy);
     // The buyer-only string must NOT appear for a provider publish.
