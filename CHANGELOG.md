@@ -30,6 +30,15 @@
 
 ### Changed
 
+- **Base Sepolia now points at the `b08c0c6` kernel stack** (deployed
+  2026-11-23): ACTPKernel `0xAfDd8D97…A1a8`, EscrowVault `0x1d7d1dEf…2542`,
+  AgentRegistry, ArchiveTreasury, CompositeMediator, BondEscalation and
+  MockOOV3, replacing the July v2 addresses. `actpKernelDeploymentBlock` is
+  62589379. The new kernel requires the delivery dispute window to be at
+  least the transaction's `disputeWindow`; the SDK's default `deliver()`
+  paths already pass that value. The mediator and AgentRegistry timelocks
+  expire on 2026-11-25 13:16 UTC. Identify Sepolia kernels by address and
+  runtime codehash: `kernelVersion()` is the same constant on every build.
 - **Behaviour change:** `BlockchainRuntime.getAllTransactions()` throws the new
   `OperationNotSupportedError` (code `OPERATION_NOT_SUPPORTED`) instead of
   returning `[]`, which read as "no transactions". A real chain has no global

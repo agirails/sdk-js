@@ -63,15 +63,10 @@ describe('P2-2 network-config dispute keys (TS)', () => {
     expect(GOLDEN.contracts.keys).toEqual(DISPUTE_KEYS);
   });
 
-  // AIP-14c dispute deployment state. On Base Sepolia the BondEscalation +
-  // CompositeMediator are live (D7 stack, deployed 2026-07-13 against kernel-v2,
-  // supersedes the pre-D7 pair); Tier-2 points at a testnet MockOOV3 (canonical
-  // UMA OOV3 absent on Sepolia, G2). On Base Mainnet none of the three are
-  // deployed yet.
   const DEPLOYED_BASE_SEPOLIA = {
-    bondEscalation: '0x84CB23F1bCebC286270EE5E62A19a64686D3Ca0A',
-    compositeMediator: '0x45a440a34303AEe597672C1D47d1ce83BEC8aD1C',
-    umaOptimisticOracleV3: '0x64C81e2F8a8f72D20AF24a8d9b3A22A93D80AC6A',
+    bondEscalation: '0x1F89966780a09daE562d17D0aDd45E7E8BC7E992',
+    compositeMediator: '0xB2C6317752B7CB5Aff56114f6D4183Ba3B9c088A',
+    umaOptimisticOracleV3: '0x07fD9Cb968f9A0aef5CEB2D536322f26164B83b8',
   } as const;
 
   test.each(['base-sepolia', 'base-mainnet'])(
