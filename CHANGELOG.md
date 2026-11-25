@@ -62,6 +62,11 @@
 
 ### Added
 
+- The vendored `ACTPKernel` ABI now includes `retryReputation(bytes32)`, the one
+  function the b08c0c6 kernel adds. It re-runs the reputation write for a
+  SETTLED transaction, or for a disputed CANCELLED one with no committed
+  result. The ABI was re-vendored from the b08c0c6 forge build, and nothing
+  else in it changed.
 - `actp erc8004 inventory` collects a read-only evidence inventory for
   explicit identities, and `actp erc8004 migration-plan` turns it into a
   resumable per-agent before/after ledger. Neither command uploads, signs, nor

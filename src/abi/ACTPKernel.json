@@ -1063,6 +1063,19 @@
   },
   {
     "type": "function",
+    "name": "retryReputation",
+    "inputs": [
+      {
+        "name": "transactionId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "scheduleAgentRegistryUpdate",
     "inputs": [
       {
