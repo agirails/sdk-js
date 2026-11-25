@@ -140,6 +140,7 @@ export class ACTPKernel {
       'resolveDispute': 250000n,      // Complex multi-party settlement
       'cancelTransaction': 60000n,    // Simple state change
       'anchorAttestation': 80000n,    // Attestation storage
+      'retryReputation': 200000n,
       'default': 100000n              // Conservative fallback
     };
 
@@ -329,14 +330,13 @@ export class ACTPKernel {
     return BigInt(await this.contract.escrowPrincipal(txId));
   }
 
-  /** Permissionless fee retry. Completion does not imply a fee existed or moved:
-   * zero debt is a no-op and a still-blocked fee recipient may leave debt pending.
-   */
-  async retryPlatformFee(txId: string): Promise<void> {
+  /** Permissionless retries: fee debt (may stay pending) and b08c0c6 reputation (may record nothing). */
+  retryPlatformFee(txId: string): Promise<void> { return this.sendRetry('retryPlatformFee', txId); }
+  retryReputation(txId: string): Promise<void> { return this.sendRetry('retryReputation', txId); }
+  private async sendRetry(method: 'retryPlatformFee' | 'retryReputation', txId: string): Promise<void> {
     validateTxId(txId, 'txId');
-    const retry = this.contract.getFunction('retryPlatformFee');
-    const estimatedGas = await retry.estimateGas(txId);
-    const tx = await retry(txId, this.buildTxOptions(estimatedGas, 'retryPlatformFee'));
+    const retry = this.contract.getFunction(method);
+    const tx = await retry(txId, this.buildTxOptions(await retry.estimateGas(txId), method));
     await tx.wait(this.confirmations);
   }
 
