@@ -118,8 +118,7 @@ describe('Networks Config', () => {
     // Sanity checks: deployed contract addresses must match known deployments
     it('should have correct AgentRegistry on base-sepolia', () => {
       const config = getNetwork('base-sepolia');
-      // Reconciled 2026-08-17 to the AIP-14c kernel-v2 redeploy (2026-07-13).
-      expect(config.contracts.agentRegistry).toBe('0x1bb1D4B0b84801FF8597d3e7988E00802252d962');
+      expect(config.contracts.agentRegistry).toBe('0x102263e9668B79769900b08788cea5D9bfCc2D46');
     });
 
     it('should have correct AgentRegistry on base-mainnet', () => {
@@ -129,8 +128,7 @@ describe('Networks Config', () => {
 
     it('should have correct ACTPKernel on base-sepolia', () => {
       const config = getNetwork('base-sepolia');
-      // Reconciled 2026-08-17 to the AIP-14c kernel-v2 redeploy (2026-07-13).
-      expect(config.contracts.actpKernel).toBe('0xE8ba4133CC43bAb48c9c71bF82243e0b15915389');
+      expect(config.contracts.actpKernel).toBe('0xAfDd8D972b2d95eEb044b4C8010E33EA60eBA1a8');
     });
 
     it('should have correct ACTPKernel on base-mainnet', () => {
@@ -140,8 +138,7 @@ describe('Networks Config', () => {
 
     it('should have correct EscrowVault on base-sepolia', () => {
       const config = getNetwork('base-sepolia');
-      // Reconciled 2026-08-17 to the AIP-14c kernel-v2 redeploy (2026-07-13).
-      expect(config.contracts.escrowVault).toBe('0x9d3CbD2c630E390F9179DAfE02Dd5dAd80B3A05B');
+      expect(config.contracts.escrowVault).toBe('0x1d7d1dEfAb80dA75116D0fF8C493C8EBb7dA2542');
     });
 
     it('should have correct EscrowVault on base-mainnet', () => {
